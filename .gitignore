@@ -1,0 +1,77 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# --- secrets & sensibles (Pocket Multisig) ---
+# variables d'environnement
+.env
+.env.*
+!.env.example
+# keypairs / wallets (JAMAIS versionnés)
+id.json
+*keypair*.json
+*Keypair*.json
+/keys/
+*.seed
+*.mnemonic
+# clés de la fixture devnet (elles vivent HORS du dépôt, ces règles sont
+# une ceinture de sécurité au cas où elles seraient copiées par erreur)
+creator.json
+createKey.json
+approver.json
+fixture-public.json
+# artefacts de build Android
+*.apk
+*.aab
+app-release*
+# keystores de signature
+*.keystore
+
+# --- divers local / hors publication ---
+# retour d'expérience Gradle copié par prebuild
+android/local.properties
+local.properties
+# journaux et captures de test
+*.log
+/screenshots/
+# fichiers temporaires de l'éditeur
+*.swp
+*~
