@@ -131,9 +131,36 @@ export function ConnectScreen() {
 
   // Revue d'une proposition réelle : prioritaire sur les previews de dev.
   if (review !== null) {
+    // Données déjà chargées uniquement : le guard ne fait aucun appel RPC.
+    const matched = proposals.list?.proposals.find(
+      (entry) => entry.index === review.model.proposalIndex,
+    );
     return (
       <TransactionReviewScreen
         model={review.model}
+        guardContext={{
+          review: review.model,
+          multisig:
+            msig.view === null
+              ? null
+              : {
+                  address: msig.view.address,
+                  vaultAddress: msig.view.vaultAddress,
+                  members: msig.view.members.map((member) => ({
+                    address: member.address,
+                    roles: member.roles,
+                  })),
+                },
+          proposal:
+            matched === undefined
+              ? null
+              : {
+                  index: matched.index,
+                  status: matched.status,
+                  approvedAddresses: matched.approvedAddresses,
+                },
+          walletAddress: account === undefined ? null : account.address.toString(),
+        }}
         onBack={() => {
           setReview(null);
           setReviewError(null);

@@ -32,6 +32,13 @@ export interface ProposalView {
   status: ProposalStatusKind;
   /** Nombre d'approbations déjà enregistrées (`Proposal.approved`). */
   approvals: number;
+  /**
+   * Adresses publiques ayant déjà approuvé, telles que renvoyées par le SDK
+   * officiel. Lues dans le même `getMultipleAccountsInfo` que le reste : aucun
+   * appel RPC supplémentaire. Nécessaire au contrôle « wallet absent de
+   * approved » du guard.
+   */
+  approvedAddresses: string[];
 }
 
 export interface ProposalList {
@@ -128,6 +135,7 @@ export async function loadProposals(
         vaultTransactionAddress: entry.vaultTransactionAddress.toBase58(),
         status: proposal.status.__kind,
         approvals: proposal.approved.length,
+        approvedAddresses: proposal.approved.map((entry) => entry.toBase58()),
       });
     } catch {
       // Compte illisible (autre type ou version) : ignoré sans casser la liste.

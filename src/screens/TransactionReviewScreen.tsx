@@ -5,6 +5,10 @@
 import { useCallback } from 'react';
 import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 
+import { useWalletGuard } from '../wallet/useWalletGuard';
+import { checkReviewAllowlist } from '../squads/instructionAllowlist';
+import type { ReviewGuardContext } from '../wallet/useWalletGuard';
+
 import {
   formatLamportsExact,
   type DecodeStatus,
@@ -33,13 +37,25 @@ function amountText(field: ReviewField<SolAmount>): string {
 export interface TransactionReviewScreenProps {
   model: TransactionReviewModel;
   onBack: () => void;
+  /** Données déjà chargées, injectées par l'appelant. Aucun RPC dans le guard. */
+  guardContext?: ReviewGuardContext | null;
 }
 
-export function TransactionReviewScreen({ model, onBack }: TransactionReviewScreenProps) {
+export function TransactionReviewScreen({
+  model,
+  onBack,
+  guardContext = null,
+}: TransactionReviewScreenProps) {
   // Aucune confirmation n'est possible dans cette mission, y compris pour un
   // décodage complet : le branchement on-chain n'existe pas encore (T11/T12).
   const canConfirm = false;
   const needsWarning = model.decodeStatus !== 'decoded' || model.notes.length > 0;
+
+  // Préparation T11 : évaluation purement informative. `canConfirm` reste faux
+  // et n'est jamais dérivé de ces verdicts — aucun chemin d'écriture n'est
+  // ouvert par ce branchement.
+  const guard = useWalletGuard(guardContext);
+  const allowlist = checkReviewAllowlist(model);
 
   const handleBack = useCallback(() => {
     onBack();
@@ -143,6 +159,23 @@ export function TransactionReviewScreen({ model, onBack }: TransactionReviewScre
 
         <Text style={styles.fieldLabel}>Fees</Text>
         <Text style={styles.fieldValue}>{amountText(model.fee)}</Text>
+      <Text style={styles.fieldLabel}>Wallet guard</Text>
+        <Text style={guard.status === 'allowed' ? styles.fieldValue : styles.warnText}>
+          {guard.status === 'allowed' ? 'allowed' : `blocked — ${guard.reasons.length} reason(s)`}
+        </Text>
+        {guard.reasons.map((reason) => (
+          <Text key={reason} style={styles.warnText}>
+            • {reason}
+          </Text>
+        ))}
+
+        <Text style={styles.fieldLabel}>Instruction allowlist</Text>
+        <Text style={allowlist.allowed ? styles.fieldValue : styles.warnText}>
+          {allowlist.allowed ? 'allowed' : 'blocked'} — {allowlist.reason}
+        </Text>
+        <Text style={styles.secondaryText}>
+          Confirmation remains unavailable: these checks do not enable any write.
+        </Text>
       </View>
 
       <Pressable
