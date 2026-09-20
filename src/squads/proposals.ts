@@ -11,7 +11,12 @@ import {
   modelFromInstructions,
   type ReviewContext,
 } from '../solana/decodeTransactionMessage';
-import type { TransactionReviewModel } from '../types/transactionReview';
+import {
+  abbreviateAddress,
+  formatLamportsExact,
+  SYSTEM_PROGRAM_ID,
+  type TransactionReviewModel,
+} from '../types/transactionReview';
 
 /**
  * Statut de proposition tel qu'exposé par le type officiel du SDK :
@@ -144,6 +149,108 @@ export async function loadProposals(
   }
 
   return { proposals, unreadable, rpcCalls: 1 };
+}
+
+export interface OperationSummary {
+  action: string;
+  amount: string;
+  destination: string;
+}
+
+/**
+ * Résumé d'opération, purement dérivé d'un modèle DÉJÀ décodé. Renvoie `null`
+ * quand aucun modèle n'est disponible : l'appelant décide alors de l'état
+ * affiché (chargement / indisponible), sans rien inventer.
+ */
+export function summarizeOperation(model: TransactionReviewModel | null): OperationSummary | null {
+  if (model === null) return null;
+  const isTransfer =
+    model.program.known &&
+    model.program.value.id === SYSTEM_PROGRAM_ID &&
+    model.action.known &&
+    /transfer/i.test(model.action.value);
+  return {
+    action: isTransfer
+      ? 'SOL transfer'
+      : model.action.known
+        ? model.action.value
+        : 'Unknown action',
+    amount: model.amount.known ? formatLamportsExact(model.amount.value.lamports) : 'Unknown amount',
+    destination: model.destination.known
+      ? abbreviateAddress(model.destination.value)
+      : 'Unknown destination',
+  };
+}
+
+/** État de décision d'une proposition, tel qu'affiché dans la boîte de réception. */
+export type ProposalDecisionKind = 'attention' | 'approved' | 'approved-by-you' | 'none';
+
+export interface ProposalDecision {
+  index: number;
+  kind: ProposalDecisionKind;
+  /** Titre de regroupement affiché en tête de la boîte de réception. */
+  heading: string;
+  /** Ligne d'état, dérivée du statut on-chain réel. */
+  stateLabel: string;
+  approvals: number;
+  threshold: number;
+}
+
+export interface ProposalDecisionInput {
+  index: number;
+  status: ProposalStatusKind;
+  approvedAddresses: readonly string[];
+  rejectedAddresses?: readonly string[];
+  threshold: number;
+  walletAddress: string | null;
+  /** Vrai si le wallet connecté peut encore approuver (membre avec Vote). */
+  walletCanApprove: boolean;
+}
+
+/**
+ * Décision pure, sans I/O : classe une proposition selon le statut RENVOYÉ par
+ * la chaîne et l'état réel des approbations. Aucun état n'est inventé ni codé
+ * en dur pour la fixture.
+ */
+export function computeProposalDecision(input: ProposalDecisionInput): ProposalDecision {
+  const { index, status, approvedAddresses, threshold, walletAddress, walletCanApprove } = input;
+  const approvals = approvedAddresses.length;
+  const walletApproved = walletAddress !== null && approvedAddresses.includes(walletAddress);
+  const base = { index, approvals, threshold };
+
+  // Seuil atteint ET statut réellement `Approved` : seule condition pour
+  // annoncer une exécution possible.
+  if (status === 'Approved' && approvals >= threshold) {
+    return { ...base, kind: 'approved', heading: 'Approved proposals', stateLabel: 'Ready to execute' };
+  }
+  // Le wallet a voté mais le seuil n'est pas atteint.
+  if (status === 'Active' && walletApproved) {
+    const missing = Math.max(threshold - approvals, 0);
+    return {
+      ...base,
+      kind: 'approved-by-you',
+      heading: 'Approved by you',
+      stateLabel: `Waiting for ${missing} more approval${missing > 1 ? 's' : ''}`,
+    };
+  }
+  // Proposition encore ouverte et approuvable par ce wallet.
+  if (status === 'Active' && !walletApproved && walletCanApprove) {
+    return { ...base, kind: 'attention', heading: 'Needs your attention', stateLabel: 'Approval available' };
+  }
+  return { ...base, kind: 'none', heading: 'Other proposals', stateLabel: `Status: ${status}` };
+}
+
+/** Compte les propositions par catégorie de décision. */
+export function summarizeDecisions(decisions: readonly ProposalDecision[]): {
+  attention: number;
+  approved: number;
+  approvedByYou: number;
+} {
+  return {
+    attention: decisions.filter((entry) => entry.kind === 'attention').length,
+    approved: decisions.filter((entry) => entry.kind === 'approved').length,
+    approvedByYou: decisions.filter((entry) => entry.kind === 'approved-by-you').length,
+  };
 }
 
 export type ProposalsStatus = 'idle' | 'loading' | 'loaded' | 'error';

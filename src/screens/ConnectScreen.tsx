@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,13 +12,12 @@ import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { PublicKey } from '@solana/web3.js';
 
 import { connection } from '../solana/connection';
+import type { TransactionReviewModel } from '../types/transactionReview';
 import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
-import {
-  loadProposalReview,
+import { computeProposalDecision, summarizeDecisions, summarizeOperation, loadProposalReview,
   useProposals,
-  type ProposalReviewResult,
-} from '../squads/proposals';
+  type ProposalReviewResult, } from '../squads/proposals';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
@@ -62,6 +61,56 @@ export function ConnectScreen() {
   const [previewCase, setPreviewCase] = useState<DecodeStatus | null>(null);
   const [review, setReview] = useState<ProposalReviewResult | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // Prechargement de l'operation de la proposition PRIORITAIRE : un seul appel
+  // cible (getAccountInfo sur sa VaultTransaction), jamais pour les autres.
+  const [inboxDecoded, setInboxDecoded] = useState<ProposalReviewResult | null>(null);
+  const [inboxDecoding, setInboxDecoding] = useState(false);
+  const [inboxDecodeError, setInboxDecodeError] = useState<string | null>(null);
+  // Ref et non state : marquer la tentative ne doit PAS provoquer un rendu,
+  // sinon l'effet se relance et annule la lecture en cours (cleanup).
+  const inboxAttemptedRef = useRef<number | null>(null);
+
+  // Boite de reception de decisions : classement par etat ON-CHAIN reel.
+  const walletAddress = account === undefined ? null : account.address.toString();
+  const walletCanApprove =
+    msig.view !== null &&
+    walletAddress !== null &&
+    msig.view.members.some(
+      (member) => member.address === walletAddress && member.roles.includes('Vote'),
+    );
+  const decisions =
+    proposals.list === null
+      ? []
+      : proposals.list.proposals.map((proposal) =>
+          computeProposalDecision({
+            index: proposal.index,
+            status: proposal.status,
+            approvedAddresses: proposal.approvedAddresses,
+            threshold: msig.view?.threshold ?? 0,
+            walletAddress,
+            walletCanApprove,
+          }),
+        );
+  const inboxDecisions = decisions.filter((entry) => entry.kind !== 'none');
+  const priorityIndex = inboxDecisions[0]?.index ?? null;
+  const decisionSummary = summarizeDecisions(decisions);
+  const inboxHeading =
+    decisionSummary.attention > 0
+      ? 'Needs your attention'
+      : decisionSummary.approved > 0
+        ? 'Approved proposals'
+        : decisionSummary.approvedByYou > 0
+          ? 'Approved by you'
+          : 'Proposals';
+
+  // Modele deja en memoire pour un index donne : la revue ouverte, ou le
+  // prechargement de la boite de reception. Aucun appel reseau ici.
+  const decodedModelFor = (index: number): TransactionReviewModel | null => {
+    if (review !== null && review.model.proposalIndex === index) return review.model;
+    if (inboxDecoded !== null && inboxDecoded.model.proposalIndex === index) return inboxDecoded.model;
+    return null;
+  };
   const [reviewLoading, setReviewLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -93,10 +142,65 @@ export function ConnectScreen() {
   const busy = phase !== 'idle';
 
   // Charge la revue RÉELLE d'une proposition : un seul appel RPC ciblé.
+  // Une seule lecture par index prioritaire ; aucun retry automatique.
+  // Dependances PRIMITIVES : sans cela, les nouvelles identites d'objet a
+  // chaque rendu relanceraient l'effet et annuleraient la lecture en cours.
+  const viewAddress = msig.view?.address ?? null;
+  const viewVaultAddress = msig.view?.vaultAddress ?? null;
+  const proposalsLoaded = proposals.list !== null;
+
+  useEffect(() => {
+    const view = msig.view;
+    const list = proposals.list;
+    if (view === null || list === null) return;
+    if (priorityIndex === null) return;
+    if (inboxAttemptedRef.current === priorityIndex) return;
+    inboxAttemptedRef.current = priorityIndex;
+    setInboxDecoding(true);
+    setInboxDecodeError(null);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const status =
+          list.proposals.find((entry) => entry.index === priorityIndex)?.status ?? 'Unknown';
+        const result = await loadProposalReview(
+          connection,
+          new PublicKey(view.address),
+          {
+            network: 'devnet',
+            multisigAddress: view.address,
+            vaultAddress: view.vaultAddress,
+            proposalIndex: priorityIndex,
+            proposalStatus: status,
+            signerWallet: account === undefined ? 'Unknown' : account.address.toString(),
+          },
+          priorityIndex,
+        );
+        if (!cancelled) setInboxDecoded(result);
+      } catch (caught: unknown) {
+        if (!cancelled) {
+          setInboxDecoded(null);
+          setInboxDecodeError(caught instanceof Error ? caught.message : String(caught));
+        }
+      } finally {
+        if (!cancelled) setInboxDecoding(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, priorityIndex, proposalsLoaded, viewAddress, viewVaultAddress]);
+
   const openProposalReview = useCallback(
     async (index: number) => {
       const view = msig.view;
       if (view === null) return;
+      // Reutilisation du modele deja en memoire : aucun second appel reseau.
+      if (inboxDecoded !== null && inboxDecoded.model.proposalIndex === index) {
+        setReviewError(null);
+        setReview(inboxDecoded);
+        return;
+      }
       setReviewError(null);
       setReviewLoading(true);
       try {
@@ -290,59 +394,57 @@ export function ConnectScreen() {
 
           {msig.status === 'loaded' && msig.view ? (
             <View style={styles.msigResult}>
-              <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-              <Text style={styles.fieldValue}>{msig.view.address}</Text>
+              <Text style={styles.inboxHeading}>{inboxHeading}</Text>
+              <Text style={styles.inboxCount}>{inboxDecisions.length}</Text>
 
-              <Text style={styles.fieldLabel}>Vault address (index 0)</Text>
-              <Text style={styles.fieldValue}>{msig.view.vaultAddress}</Text>
-
-              <Text style={styles.fieldLabel}>Threshold</Text>
-              <Text style={styles.fieldValue}>
-                {msig.view.threshold} / {msig.view.members.length}
-              </Text>
-
-              <Text style={styles.fieldLabel}>
-                Members ({msig.view.members.length})
-              </Text>
-              {msig.view.members.map((member) => (
-                <Text key={member.address} style={styles.memberLine}>
-                  {member.address}
-                  {member.roles.length > 0 ? `  ·  ${member.roles.join(' + ')}` : ''}
-                </Text>
-              ))}
-
-              <Text style={styles.fieldLabel}>Network</Text>
-              <Text style={styles.fieldValue}>Devnet</Text>
-
-              <Text style={styles.fieldLabel}>Proposals</Text>
               {proposals.status === 'loading' ? (
-                <Text style={styles.fieldValue}>Loading…</Text>
+                <Text style={styles.hint}>Lecture…</Text>
               ) : null}
-              {proposals.status === 'loaded' && proposals.list?.proposals.length === 0 ? (
-                <Text style={styles.fieldValue}>No proposals yet</Text>
+
+              {proposals.status === 'loaded' && inboxDecisions.length === 0 ? (
+                <Text style={styles.hint}>No proposals yet</Text>
               ) : null}
-              {proposals.status === 'loaded' && proposals.list !== null
-                ? proposals.list.proposals.map((proposal) => (
+
+              {inboxDecisions.map((decision) => {
+                const model = decodedModelFor(decision.index);
+                const summary = summarizeOperation(model);
+                const operationLine =
+                  summary === null
+                    ? inboxDecodeError !== null
+                      ? 'Operation details unavailable'
+                      : inboxDecoding
+                        ? 'Loading operation…'
+                        : 'Operation details unavailable'
+                    : summary.action;
+                const detailLine =
+                  summary === null
+                    ? 'Open View details'
+                    : `${summary.amount} · Devnet · to ${summary.destination}`;
+                return (
+                  <View key={decision.index} style={styles.decisionCard}>
+                    <Text style={styles.decisionAction}>{operationLine}</Text>
+                    <Text style={styles.decisionMeta}>{detailLine}</Text>
+                    <Text style={styles.decisionMeta}>
+                      {decision.approvals} of {decision.threshold} approvals
+                    </Text>
+                    <Text style={styles.decisionState}>{decision.stateLabel}</Text>
                     <Pressable
-                      key={proposal.index}
                       accessibilityRole="button"
+                      accessibilityLabel={`View details of proposal ${decision.index}`}
                       onPress={() => {
-                        void openProposalReview(proposal.index);
+                        void openProposalReview(decision.index);
                       }}
-                      style={styles.proposalRow}
+                      style={styles.retry}
                     >
-                      <Text style={styles.memberLine}>
-                        #{proposal.index} · {proposal.status} · {proposal.approvals} approval(s)
-                      </Text>
                       <Text style={styles.proposalAction}>
-                        {reviewLoading ? 'Loading…' : 'Review →'}
+                        {reviewLoading ? 'Loading…' : 'View details'}
                       </Text>
                     </Pressable>
-                  ))
-                : null}
-              {reviewError !== null ? (
-                <Text style={styles.rpcDetail}>{reviewError}</Text>
-              ) : null}
+                  </View>
+                );
+              })}
+
+              {reviewError !== null ? <Text style={styles.rpcDetail}>{reviewError}</Text> : null}
               {proposals.status === 'loaded' && (proposals.list?.unreadable ?? 0) > 0 ? (
                 <Text style={styles.rpcDetail}>
                   {proposals.list?.unreadable} compte(s) illisible(s) ignoré(s)
@@ -351,26 +453,64 @@ export function ConnectScreen() {
               {proposals.status === 'error' && proposals.error ? (
                 <View style={styles.errorBox}>
                   <Text style={styles.errorText}>{proposals.error}</Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    onPress={proposals.retry}
-                    style={styles.retry}
-                  >
+                  <Pressable accessibilityRole="button" onPress={proposals.retry} style={styles.retry}>
                     <Text style={styles.retryText}>Retry</Text>
                   </Pressable>
                 </View>
               ) : null}
 
+              {/* Details secondaires : replies par defaut, sans duplication du resume. */}
               <Pressable
                 accessibilityRole="button"
-                onPress={() => {
-                  setMultisigInput('');
-                  msig.clear();
-                }}
-                style={styles.retry}
+                accessibilityState={{ expanded: detailsOpen }}
+                accessibilityLabel="Toggle multisig details"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                onPress={() => setDetailsOpen((previous) => !previous)}
+                style={styles.detailsToggle}
               >
-                <Text style={styles.retryText}>Clear</Text>
+                <Text style={styles.detailsToggleText}>
+                  {detailsOpen ? '▾ Details' : '▸ Details'}
+                </Text>
               </Pressable>
+
+              {detailsOpen ? (
+                <View style={styles.detailsBody}>
+                  <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+                  <Text selectable style={styles.fieldValue}>{msig.view.address}</Text>
+
+                  <Text style={styles.fieldLabel}>Vault address (index 0)</Text>
+                  <Text selectable style={styles.fieldValue}>{msig.view.vaultAddress}</Text>
+
+                  <Text style={styles.fieldLabel}>Threshold</Text>
+                  <Text style={styles.fieldValue}>
+                    {msig.view.threshold} / {msig.view.members.length}
+                  </Text>
+
+                  <Text style={styles.fieldLabel}>Members ({msig.view.members.length})</Text>
+                  {msig.view.members.map((member) => (
+                    <Text key={member.address} selectable style={styles.memberLine}>
+                      {member.address}
+                      {member.roles.length > 0 ? `  ·  ${member.roles.join(' + ')}` : ''}
+                    </Text>
+                  ))}
+
+                  <Text style={styles.fieldLabel}>Network</Text>
+                  <Text style={styles.fieldValue}>Devnet</Text>
+                  <Text style={styles.rpcLine}>RPC: {rpcStatus}</Text>
+                  {rpcDetail ? <Text style={styles.rpcDetail}>{rpcDetail}</Text> : null}
+
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => {
+                      setMultisigInput('');
+                      msig.clear();
+                    }}
+                    style={styles.retry}
+                  >
+                    <Text style={styles.retryText}>Clear</Text>
+                  </Pressable>
+                </View>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -419,6 +559,67 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     paddingBottom: 48,
+  },
+  inboxHeading: {
+    color: '#111827',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 12,
+  },
+  inboxCount: {
+    color: '#6b7280',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  decisionCard: {
+    alignSelf: 'stretch',
+    backgroundColor: '#f9fafb',
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginTop: 8,
+    padding: 14,
+  },
+  decisionAction: {
+    color: '#111827',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  decisionMeta: {
+    color: '#4b5563',
+    fontSize: 13,
+    marginTop: 2,
+  },
+  decisionState: {
+    color: '#065f46',
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 6,
+  },
+  detailsToggle: {
+    alignItems: 'center',
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  detailsToggleText: {
+    color: '#374151',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  detailsBody: {
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 8,
+    padding: 12,
   },
   proposalRow: {
     alignSelf: 'stretch',
