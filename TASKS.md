@@ -294,8 +294,20 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 - Fichiers : `src/squads/proposalApproval.ts`, `src/wallet/useWalletGuard.ts`,
   `src/squads/instructionAllowlist.ts`, `src/screens/TransactionReviewScreen.tsx`,
   `src/screens/ConnectScreen.tsx`.
+- **Second vote local (approver) confirmé on-chain** : signature
+  `3mA6MacCAAfQAN1SGYZwmEiwGVPwGPqTmLD333qG5cXrbSbkTjRfdcZ5AjEwUNS316V4Tb9Zjjig6DYpEGS47jPX`,
+  `meta.err = null`, simulation `err = null` avant envoi, un seul envoi.
+- État final de Proposal #1 : **`Approved`** (seuil 2/2 atteint),
+  **`approved.length = 2`** = wallet Seeker
+  `7QYS4eNEF4givC2HPDhu6GYV1tR3bAji6Y5Fz3xdNKXg` + approver local
+  `8PdEGQV8GnfTvTsxrmkKyyMPTHCDjb844YGbRABs6Uin`, `rejected.length = 0`.
+- Script contrôlé du second vote publié : `scripts/approve-test-proposal.ts`
+  (mode `--check` sans écriture, clés lues hors dépôt, préconditions complètes,
+  simulation obligatoire, un seul envoi, aucune reconstruction).
+- Au seuil atteint, la revue affiche « Approved », « 2 of 2 approvals
+  confirmed » et « Ready to execute » — **aucun bouton Execute actif**.
 - Aucune exécution : `vaultTransactionExecute` n'est jamais atteignable, le vault
-  reste non financé (0 lamport). T12 reste **non réalisé**.
+  reste non financé (0 lamport). **T12 reste NON RÉALISÉ.**
 
 ### T12 · Exécuter une transaction
 

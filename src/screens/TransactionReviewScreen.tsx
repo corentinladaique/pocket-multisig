@@ -92,6 +92,18 @@ export function TransactionReviewScreen({
   const alreadyApproved = isAlreadyApprovedVerdict(guard);
   const approvalsConfirmed = guardContext?.proposal?.approvedAddresses.length ?? 0;
   const guardThreshold = guardContext?.multisig?.threshold ?? 0;
+  // Seuil atteint : la proposition est passée `Approved` côté chaîne.
+  const proposalApproved = model.proposalStatus === 'Approved';
+  // Le wallet connecté figure-t-il déjà parmi les approbateurs ?
+  const walletInApproved =
+    guardContext !== null &&
+    guardContext.walletAddress !== null &&
+    (guardContext.proposal?.approvedAddresses.includes(guardContext.walletAddress) ?? false);
+  // Affichage utilisateur positif : soit le seul blocage est « déjà approuvé »,
+  // soit le seuil est atteint et ce wallet a voté. Tous les autres cas `blocked`
+  // gardent la liste de raisons brute.
+  const showApprovedState = proposalApproved && walletInApproved;
+  const showUserState = showApprovedState || alreadyApproved;
 
   // T11c : étape « ready to approve ». Le bouton final est branché sur la
   // PRÉPARATION uniquement — aucune ouverture du wallet, aucune signature,
@@ -456,14 +468,27 @@ export function TransactionReviewScreen({
         <Text style={styles.fieldLabel}>Fees</Text>
         <Text style={styles.fieldValue}>{amountText(model.fee)}</Text>
       <Text style={styles.fieldLabel}>Wallet guard</Text>
-        {alreadyApproved ? (
-          <>
-            <Text style={styles.onchainLine}>Approved by this wallet</Text>
-            <Text style={styles.fieldValue}>
-              {approvalsConfirmed} of {guardThreshold} approvals confirmed on Devnet
-            </Text>
-            <Text style={styles.fieldValue}>Waiting for 1 more approval</Text>
-          </>
+        {showUserState ? (
+          proposalApproved ? (
+            <>
+              <Text style={styles.onchainLine}>Approved</Text>
+              <Text style={styles.fieldValue}>
+                {approvalsConfirmed} of {guardThreshold} approvals confirmed
+              </Text>
+              <Text style={styles.fieldValue}>Ready to execute</Text>
+              <Text style={styles.secondaryText}>
+                Execution is not implemented yet (T12). No Execute button is active.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.onchainLine}>Approved by this wallet</Text>
+              <Text style={styles.fieldValue}>
+                {approvalsConfirmed} of {guardThreshold} approvals confirmed on Devnet
+              </Text>
+              <Text style={styles.fieldValue}>Waiting for 1 more approval</Text>
+            </>
+          )
         ) : (
           <>
             <Text style={guard.status === 'allowed' ? styles.fieldValue : styles.warnText}>
