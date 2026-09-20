@@ -3,7 +3,7 @@
 // ni signTransaction, ni signAndSendTransaction, ni aucune fonction RPC.
 // Il affiche un modèle déjà construit (voir src/types/transactionReview.ts).
 import { useCallback } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 
 import {
   formatLamportsExact,
@@ -53,9 +53,18 @@ export function TransactionReviewScreen({ model, onBack }: TransactionReviewScre
       <Text style={styles.badge}>DEVNET</Text>
       <Text style={styles.title}>Transaction review</Text>
 
-      {model.isPreview ? (
-        <Text style={styles.previewBanner}>Development preview — not on-chain data</Text>
-      ) : null}
+      <Text style={[styles.previewBanner, model.isPreview ? null : styles.onchainBanner]}>
+        {model.isPreview
+          ? 'Development preview — not on-chain data'
+          : 'On-chain proposal — Devnet'}
+      </Text>
+
+      {model.isPreview ? null : (
+        <Text style={styles.onchainLine}>
+          Proposal #{model.proposalIndex} · {fieldText(model.action)} · approved:{' '}
+          {model.proposalStatus === 'Active' ? '0' : 'n/a'}
+        </Text>
+      )}
 
       <View style={styles.card}>
         <Text style={styles.summaryLabel}>Action</Text>
@@ -164,6 +173,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ffffff',
     padding: 24,
+    // Inset haut : sans ce décalage, le titre et le bandeau passent sous la
+    // barre d'état du Seeker (Android 16, API 36). Basé uniquement sur l'API
+    // React Native déjà présente, sans nouvelle dépendance.
+    // Doit rester APRÈS `padding` pour ne pas être écrasé par le raccourci.
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) + 16 : 16,
     paddingBottom: 48,
   },
   badge: {
@@ -194,6 +208,18 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingHorizontal: 10,
     paddingVertical: 6,
+    textAlign: 'center',
+  },
+  onchainBanner: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#6ee7b7',
+    color: '#065f46',
+  },
+  onchainLine: {
+    color: '#065f46',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 16,
     textAlign: 'center',
   },
   card: {

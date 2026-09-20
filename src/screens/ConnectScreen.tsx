@@ -9,10 +9,16 @@ import {
   View,
 } from 'react-native';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+import { PublicKey } from '@solana/web3.js';
 
+import { connection } from '../solana/connection';
 import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
-import { useProposals } from '../squads/proposals';
+import {
+  loadProposalReview,
+  useProposals,
+  type ProposalReviewResult,
+} from '../squads/proposals';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
@@ -54,6 +60,9 @@ export function ConnectScreen() {
   );
   const [multisigInput, setMultisigInput] = useState('');
   const [previewCase, setPreviewCase] = useState<DecodeStatus | null>(null);
+  const [review, setReview] = useState<ProposalReviewResult | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -82,6 +91,56 @@ export function ConnectScreen() {
   }, [disconnect]);
 
   const busy = phase !== 'idle';
+
+  // Charge la revue RÉELLE d'une proposition : un seul appel RPC ciblé.
+  const openProposalReview = useCallback(
+    async (index: number) => {
+      const view = msig.view;
+      if (view === null) return;
+      setReviewError(null);
+      setReviewLoading(true);
+      try {
+        const status =
+          proposals.list?.proposals.find((entry) => entry.index === index)?.status ?? 'Unknown';
+        const result = await loadProposalReview(
+          connection,
+          new PublicKey(view.address),
+          {
+            network: 'devnet',
+            multisigAddress: view.address,
+            vaultAddress: view.vaultAddress,
+            proposalIndex: index,
+            proposalStatus: status,
+            signerWallet: account === undefined ? 'Unknown' : account.address.toString(),
+          },
+          index,
+        );
+        setReview(result);
+      } catch (caught: unknown) {
+        setReviewError(
+          `Lecture de la proposition impossible : ${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        );
+      } finally {
+        setReviewLoading(false);
+      }
+    },
+    [account, msig.view, proposals.list],
+  );
+
+  // Revue d'une proposition réelle : prioritaire sur les previews de dev.
+  if (review !== null) {
+    return (
+      <TransactionReviewScreen
+        model={review.model}
+        onBack={() => {
+          setReview(null);
+          setReviewError(null);
+        }}
+      />
+    );
+  }
 
   // Preview locale (développement uniquement) : affiche un modèle fictif.
   // Aucun appel réseau, aucune action au montage, fermeture par Back seulement.
@@ -236,11 +295,26 @@ export function ConnectScreen() {
               ) : null}
               {proposals.status === 'loaded' && proposals.list !== null
                 ? proposals.list.proposals.map((proposal) => (
-                    <Text key={proposal.index} style={styles.memberLine}>
-                      #{proposal.index} · {proposal.status} · {proposal.approvals} approval(s)
-                    </Text>
+                    <Pressable
+                      key={proposal.index}
+                      accessibilityRole="button"
+                      onPress={() => {
+                        void openProposalReview(proposal.index);
+                      }}
+                      style={styles.proposalRow}
+                    >
+                      <Text style={styles.memberLine}>
+                        #{proposal.index} · {proposal.status} · {proposal.approvals} approval(s)
+                      </Text>
+                      <Text style={styles.proposalAction}>
+                        {reviewLoading ? 'Loading…' : 'Review →'}
+                      </Text>
+                    </Pressable>
                   ))
                 : null}
+              {reviewError !== null ? (
+                <Text style={styles.rpcDetail}>{reviewError}</Text>
+              ) : null}
               {proposals.status === 'loaded' && (proposals.list?.unreadable ?? 0) > 0 ? (
                 <Text style={styles.rpcDetail}>
                   {proposals.list?.unreadable} compte(s) illisible(s) ignoré(s)
@@ -317,6 +391,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     paddingBottom: 48,
+  },
+  proposalRow: {
+    alignSelf: 'stretch',
+    backgroundColor: '#f9fafb',
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  proposalAction: {
+    color: '#1a56db',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
   },
   previewBlock: {
     alignSelf: 'stretch',

@@ -6,6 +6,12 @@ import { PublicKey, type Connection } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 
 import { connection } from '../solana/connection';
+import { decodeVaultTransactionMessage } from '../solana/decodeVaultTransaction';
+import {
+  modelFromInstructions,
+  type ReviewContext,
+} from '../solana/decodeTransactionMessage';
+import type { TransactionReviewModel } from '../types/transactionReview';
 
 /**
  * Statut de proposition tel qu'exposé par le type officiel du SDK :
@@ -133,6 +139,49 @@ export async function loadProposals(
 }
 
 export type ProposalsStatus = 'idle' | 'loading' | 'loaded' | 'error';
+
+/** Contexte public de revue, sans le marqueur de preview. */
+export type ProposalReviewContext = Omit<ReviewContext, 'isPreview'>;
+
+export interface ProposalReviewResult {
+  model: TransactionReviewModel;
+  /** Instrumentation : nombre d'appels RPC réellement effectués (0 ou 1). */
+  rpcCalls: number;
+}
+
+/**
+ * Charge la revue d'une proposition : un seul appel RPC ciblé sur la
+ * VaultTransaction PDA dérivée de l'index déjà connu. Désérialisation
+ * exclusivement par le SDK officiel.
+ */
+export async function loadProposalReview(
+  connection_: Connection,
+  multisigPda: PublicKey,
+  context: ProposalReviewContext,
+  index: number,
+): Promise<ProposalReviewResult> {
+  const [transactionPda] = multisig.getTransactionPda({
+    multisigPda,
+    index: BigInt(index),
+  });
+
+  const info = await connection_.getAccountInfo(transactionPda, 'confirmed');
+  if (info === null) {
+    const model = modelFromInstructions([], { ...context, isPreview: false });
+    model.decodeStatus = 'unknown';
+    model.notes = [`No vault transaction found at ${transactionPda.toBase58()}.`];
+    return { model, rpcCalls: 1 };
+  }
+
+  const [vaultTransaction] = multisig.accounts.VaultTransaction.fromAccountInfo(info);
+  return {
+    model: decodeVaultTransactionMessage(vaultTransaction.message, {
+      ...context,
+      isPreview: false,
+    }),
+    rpcCalls: 1,
+  };
+}
 
 export interface ProposalsState {
   error: string | null;

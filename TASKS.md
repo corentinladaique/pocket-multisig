@@ -204,11 +204,31 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
   `Active` et l'exclusion liée à `staleTransactionIndex` restent non observés
   sur la chaîne.
 
-### T09 · Décodage local d'un message de transaction
+### T09 · Décodage local + lecture réelle d'une VaultTransaction
 
-- Statut : **PARTIEL**. Le décodeur pur local est implémenté ; il n'est branché
-  à **aucune `VaultTransaction` Squads réelle** et aucune donnée on-chain n'a
-  été validée à ce titre. Ce n'est pas un écran de détail on-chain terminé.
+- Statut : **FAIT** pour le périmètre « lecture et décodage de
+  `SystemProgram.transfer` sans ALT ». Aucune écriture, aucune signature.
+- Fichiers : `src/solana/decodeVaultTransaction.ts` (adaptateur
+  `VaultTransactionMessage` → `TransactionInstruction[]`),
+  `src/solana/decodeTransactionMessage.ts`, `src/squads/proposals.ts`
+  (`loadProposalReview`), `src/screens/ConnectScreen.tsx`,
+  `src/screens/TransactionReviewScreen.tsx`.
+- Lecture réelle : **validée** sur la proposition d'index 1 de la fixture.
+- Adaptateur : chaque `TransactionInstruction` web3.js est reconstruite depuis
+  `accountKeys`, `programIdIndex`, `accountIndexes` et les données brutes ; les
+  `AccountMeta` proviennent **uniquement** de `utils.isSignerIndex` et
+  `utils.isStaticWritableIndex` du SDK officiel.
+- Contrôles de bornes sur `programIdIndex` et chaque `accountIndex` avant
+  reconstruction : toute incohérence donne `unknown` avec une note, sans
+  exception levée.
+- Les règles de revue ne sont pas dupliquées : les deux chemins (décompilation
+  web3.js et reconstruction Squads) passent par le noyau partagé
+  `modelFromInstructions()`.
+- Résultat réel constaté : `SystemProgram.transfer`, source = vault attendu,
+  destination conforme, montant **0 lamport**, `decodeStatus = decoded`.
+- Revue réelle validée sur le Seeker ; **un seul appel RPC ciblé** par ouverture
+  de revue (`getAccountInfo` sur le PDA de vault transaction dérivé de l'index).
+  Aucun `getProgramAccounts`, aucun scan, aucune écriture.
 - Fichier créé : `src/solana/decodeTransactionMessage.ts` —
   `decodeTransactionMessage(message, context, args?)`, fonction pure sans
   `Connection`, sans RPC, sans wallet, sans stockage, sans hook React.
@@ -228,17 +248,20 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 - Validation : **sept scénarios hors ligne** (0 lamport, montant positif, source
   inattendue, programme inconnu, multi-instructions, ALT non résolue, données
   invalides) + le formatage exact, tous passés sans réseau ni signature.
-- Reste à faire : alimenter le décodeur avec `vaultTransaction.message` d'une
-  proposition réelle, puis n'autoriser la confirmation que pour `decoded` —
-  T11 et T12 restent **non réalisés**.
+- Hors périmètre (explicitement non traité) : programmes autres que System
+  Program ; Address Lookup Tables réelles ; plusieurs propositions réelles ;
+  statuts on-chain autres que `Active` ; approbation ; exécution.
+- T11 et T12 restent **non réalisés**.
 
 ## Phase 2 — Écriture (chemin sensible)
 
 ### T10 · Écran de confirmation (revue locale)
 
-- Statut : **PARTIEL**. La revue locale existe et affiche les champs exigés,
-  mais elle n'est **branchée à aucune donnée on-chain** et **ne permet aucune
-  confirmation active** : le bouton de confirmation est désactivé en permanence.
+- Statut : **PARTIEL**. L'écran de revue réelle on-chain est validé : bandeau
+  « On-chain proposal — Devnet », données réelles affichées (proposition #1,
+  statut `Active`, source, destination, montant, statut de décodage). Le bouton
+  de confirmation reste **désactivé** : aucune action on-chain n'est active.
+  Les previews `__DEV__` restent présentes et strictement séparées du réel.
 - Fichiers créés : `src/types/transactionReview.ts` (modèle strict +
   `DecodeStatus` + jeux de données preview locaux),
   `src/screens/TransactionReviewScreen.tsx` (composant de revue, lecture seule).
@@ -249,9 +272,9 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 - Sécurité : aucune fonction d'écriture importée, aucun appel RPC, aucune
   action au montage, aucune fermeture automatique, retour par bouton explicite,
   confirmation impossible pour tous les états y compris `decoded`.
-- Reste à faire (T11/T12) : décoder une vraie `VaultTransaction` du SDK, brancher
-  le modèle sur ces données réelles, puis activer la confirmation après
-  l'implémentation de la liste blanche et de `useWalletGuard`.
+- Reste à faire (T11/T12) : activer la confirmation après implémentation de la
+  liste blanche et de `useWalletGuard` ; aucune approbation ni exécution n'est
+  implémentée à ce jour.
 
 ### T11 · Approuver une proposition
 

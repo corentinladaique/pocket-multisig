@@ -120,6 +120,20 @@ export function decodeTransactionMessage(
     return model;
   }
 
+  return modelFromInstructions(instructions, context);
+}
+
+/**
+ * Cœur de règles de revue, partagé par les deux chemins d'entrée :
+ * la décompilation d'un `VersionedMessage` web3.js et la reconstruction depuis
+ * un `VaultTransactionMessage` Squads. Aucune règle n'est dupliquée.
+ */
+export function modelFromInstructions(
+  instructions: TransactionInstruction[],
+  context: ReviewContext,
+): TransactionReviewModel {
+  const model = baseModel(context);
+
   if (instructions.length === 0) {
     model.decodeStatus = 'unknown';
     model.notes.push('The message contains no instruction to review.');

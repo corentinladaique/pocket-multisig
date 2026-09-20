@@ -115,6 +115,22 @@ affichée par `TransactionReviewScreen` :
 
 Aucune approbation, aucune exécution et aucune signature n'est implémentée.
 
+### 6.1 Revue réelle on-chain (lecture seule)
+
+- La revue réelle est **strictement en lecture seule** : aucun chemin d'écriture
+  n'est branché sur l'écran.
+- Les comptes `VaultTransaction` et `Proposal` sont désérialisés par le **SDK
+  officiel** (`VaultTransaction.fromAccountAddress` / `fromAccountInfo`,
+  `Proposal.fromAccountAddress`).
+- **Aucun parsing manuel** du compte Squads : aucun offset, aucune lecture
+  d'octets bruts du compte.
+- Chaque index d'instruction (`programIdIndex`, `accountIndexes`) est **contrôlé
+  avant reconstruction** ; une incohérence produit `unknown` sans exception.
+- Les drapeaux `isSigner` / `isWritable` viennent des helpers **officiels** du
+  SDK (`utils.isSignerIndex`, `utils.isStaticWritableIndex`).
+- Les Address Lookup Tables non résolues **bloquent le décodage** (aucun RPC
+  automatique, aucune résolution heuristique).
+
 ## 7. Journalisation et erreurs
 
 - Erreurs affichées avec : contexte utilisateur + message brut du RPC.
