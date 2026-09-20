@@ -14,10 +14,10 @@ Ces règles ne sont pas des recommandations. Elles sont vérifiées à chaque
   (`SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`) : la seule barrière est donc
   la constante RPC et le `chain` passé à `MobileWalletProvider`. Le second est
   aujourd'hui porté par la constante gelée `DEVNET_CHAIN` (`src/config.ts`).
-  *(PLANNED / non implémenté : le module `src/wallet/useWalletGuard.ts`, qui
-  refuserait explicitement toute session dont `chain !== "solana:devnet"`.
-  Aucune protection de ce type n'est active pour l'instant — il n'existe aucun
-  chemin de signature dans l'application.)*
+  Ce refus est **effectif** : le module `src/wallet/useWalletGuard.ts` est actif
+  et bloque toute session dont `chain !== "solana:devnet"` ou dont l'endpoint
+  RPC diffère de l'endpoint devnet gelé. Validé sur la proposition #1 réelle
+  depuis le Seeker. Aucune exécution n'est implémentée à ce jour.
 
 ## 2. Clés et secrets
 
@@ -80,9 +80,13 @@ illisible — vérifier sur l'explorer »), jamais masquée.
 
 ## 5. Instructions autorisées (liste blanche MVP)
 
-**PLANNED / non implémenté.** La liste blanche n'est pas encore appliquée dans
-le code : elle n'a de sens qu'accompagnée de l'écran de confirmation (§4).
-Liste prévue :
+**IMPLÉMENTÉE ET ACTIVE.** `src/squads/instructionAllowlist.ts` évalue chaque
+revue et bloque tout programme hors liste, en complément du guard (§1) ; les
+deux ont été validés sur la proposition #1 réelle. Elle ne reconnaît aujourd'hui
+qu'**une seule** instruction : `SystemProgram.transfer`
+(`11111111111111111111111111111111`). Toute autre instruction — y compris les
+instructions Squads ci-dessous — reste refusée tant qu'elle n'est pas
+explicitement autorisée :
 
 - `multisig.instructions.proposalApprove`
 - `multisig.instructions.vaultTransactionExecute`
