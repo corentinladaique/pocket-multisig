@@ -61,6 +61,16 @@ export interface TransactionReviewModel {
 export const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
 
 /**
+ * Abrège une adresse publique pour l'affichage mobile (`7QYS…NKXg`).
+ * Purement cosmétique : la valeur complète reste disponible dans le modèle et
+ * n'est jamais modifiée par cette fonction.
+ */
+export function abbreviateAddress(address: string, keep = 4): string {
+  if (address.length <= keep * 2 + 1) return address;
+  return `${address.slice(0, keep)}…${address.slice(-keep)}`;
+}
+
+/**
  * Convertit des lamports en SOL **sans arrondi** : la partie entière et la
  * partie fractionnaire sont calculées en arithmétique entière (`bigint`),
  * jamais via une division flottante.

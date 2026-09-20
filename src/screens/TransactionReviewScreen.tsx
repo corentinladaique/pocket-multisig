@@ -5,6 +5,7 @@
 import { useCallback, useState } from 'react';
 import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import * as multisig from '@sqds/multisig';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
 import {
@@ -14,10 +15,13 @@ import {
 import { checkReviewAllowlist } from '../squads/instructionAllowlist';
 import { planProposalApproval, type ApprovalPlan } from '../squads/proposalApproval';
 import { connection } from '../solana/connection';
+import { TransactionTechnicalDetails } from './TransactionTechnicalDetails';
 import type { GuardVerdict, ReviewGuardContext } from '../wallet/useWalletGuard';
 
 import {
+  abbreviateAddress,
   formatLamportsExact,
+  SYSTEM_PROGRAM_ID,
   type DecodeStatus,
   type ReviewField,
   type SolAmount,
@@ -104,6 +108,44 @@ export function TransactionReviewScreen({
   // gardent la liste de raisons brute.
   const showApprovedState = proposalApproved && walletInApproved;
   const showUserState = showApprovedState || alreadyApproved;
+
+  // Libelle d'action principal, derive des champs REELLEMENT decodes (programme
+  // + action). La valeur brute du modele reste affichee dans les details.
+  const isSystemTransfer =
+    model.program.known &&
+    model.program.value.id === SYSTEM_PROGRAM_ID &&
+    model.action.known &&
+    /transfer/i.test(model.action.value);
+  const primaryActionLabel = isSystemTransfer ? 'SOL transfer' : fieldText(model.action);
+
+  // Hierarchie n°1 de l'ecran : mise en avant de ce qui est deja calcule.
+  const decisionTitle = proposalApproved
+    ? 'Approved'
+    : alreadyApproved
+      ? 'Approved by this wallet'
+      : DECODE_LABEL[model.decodeStatus];
+  const decisionSub =
+    showUserState || alreadyApproved
+      ? `${approvalsConfirmed} of ${guardThreshold} approvals confirmed`
+      : fieldText(model.action);
+  const decisionState = proposalApproved
+    ? 'Ready to execute'
+    : alreadyApproved
+      ? 'Waiting for 1 more approval'
+      : 'Execution is not implemented yet';
+
+  // PDA de la proposition : derivation locale par le SDK, aucun appel RPC.
+  const proposalAddress = (() => {
+    const address = guardContext?.multisig?.address ?? model.multisigAddress;
+    try {
+      return multisig.getProposalPda({
+        multisigPda: new PublicKey(address),
+        transactionIndex: BigInt(model.proposalIndex),
+      })[0].toBase58();
+    } catch {
+      return null;
+    }
+  })();
 
   // T11c : étape « ready to approve ». Le bouton final est branché sur la
   // PRÉPARATION uniquement — aucune ouverture du wallet, aucune signature,
@@ -385,20 +427,44 @@ export function TransactionReviewScreen({
 
       {model.isPreview ? null : (
         <Text style={styles.onchainLine}>
-          Proposal #{model.proposalIndex} · {fieldText(model.action)} · approved:{' '}
-          {model.proposalStatus === 'Active' ? '0' : 'n/a'}
+          Proposal #{model.proposalIndex} · {primaryActionLabel} · approved{' '}
+          {approvalsConfirmed} of {guardThreshold}
         </Text>
       )}
 
-      <View style={styles.card}>
-        <Text style={styles.summaryLabel}>Action</Text>
-        <Text style={styles.summaryValue}>{fieldText(model.action)}</Text>
-        <Text style={[styles.decode, needsWarning && styles.decodeWarn]}>
-          {DECODE_LABEL[model.decodeStatus]}
-        </Text>
+      <Text style={[styles.decode, needsWarning && styles.decodeWarn]}>
+        {DECODE_LABEL[model.decodeStatus]}
+      </Text>
+
+      {/* 1. Statut de decision */}
+      <View style={proposalApproved && walletInApproved ? styles.decisionOk : styles.decisionNeutral}>
+        <Text style={styles.decisionTitle}>{decisionTitle}</Text>
+        <Text style={styles.decisionSub}>{decisionSub}</Text>
+        <Text style={styles.decisionState}>{decisionState}</Text>
       </View>
 
-      {needsWarning ? (
+      {/* 2. Action */}
+      <Text style={styles.fieldLabel}>Action</Text>
+      <Text style={styles.actionValue}>{primaryActionLabel}</Text>
+
+      {/* 3. Montant */}
+      <Text style={styles.fieldLabel}>Amount</Text>
+      <Text style={styles.amountValue}>{amountText(model.amount)}</Text>
+
+      {/* 4. Destination, abregee ; adresse complete dans les details. */}
+      <Text style={styles.fieldLabel}>Destination</Text>
+      <Text style={styles.fieldValue}>
+        {model.destination.known ? abbreviateAddress(model.destination.value) : 'Unknown'}
+      </Text>
+
+      {/* 5. Progression des approbations */}
+      <Text style={styles.fieldLabel}>Approvals</Text>
+      <Text style={styles.fieldValue}>
+        {approvalsConfirmed} of {guardThreshold} confirmed
+      </Text>
+
+      {/* 6. Avertissement ou prochaine etape */}
+      {needsWarning || (guard.status === 'blocked' && !showUserState) ? (
         <View style={styles.warnBox}>
           {model.decodeStatus !== 'decoded' ? (
             <Text style={styles.warnText}>
@@ -407,6 +473,13 @@ export function TransactionReviewScreen({
                 : 'Warning: program not recognized. No interpretation was attempted. Verify on a devnet explorer before acting.'}
             </Text>
           ) : null}
+          {guard.status === 'blocked' && !showUserState
+            ? guard.reasons.map((reason) => (
+                <Text key={reason} style={styles.warnText}>
+                  • {reason}
+                </Text>
+              ))
+            : null}
           {model.notes.map((note) => (
             <Text key={note} style={styles.warnText}>
               {note}
@@ -414,102 +487,17 @@ export function TransactionReviewScreen({
           ))}
         </View>
       ) : null}
+      <Text style={styles.secondaryText}>
+        Execution is not implemented yet — no Execute button is active in this build.
+      </Text>
 
-      <View style={styles.card}>
-        <Text style={styles.fieldLabel}>Network</Text>
-        <Text style={styles.fieldValue}>Devnet</Text>
-
-        <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-        <Text selectable style={styles.fieldValue}>
-          {model.multisigAddress}
-        </Text>
-
-        <Text style={styles.fieldLabel}>Vault address</Text>
-        <Text selectable style={styles.fieldValue}>
-          {model.vaultAddress}
-        </Text>
-
-        <Text style={styles.fieldLabel}>Proposal index</Text>
-        <Text style={styles.fieldValue}>#{model.proposalIndex}</Text>
-
-        <Text style={styles.fieldLabel}>Proposal status</Text>
-        <Text style={styles.fieldValue}>{model.proposalStatus}</Text>
-
-        <Text style={styles.fieldLabel}>Signer wallet</Text>
-        <Text selectable style={styles.fieldValue}>
-          {model.signerWallet}
-        </Text>
-
-        <Text style={styles.fieldLabel}>Program called</Text>
-        {model.program.known ? (
-          <>
-            <Text style={styles.fieldValue}>{model.program.value.label}</Text>
-            <Text selectable style={styles.fieldValue}>
-              {model.program.value.id}
-            </Text>
-          </>
-        ) : (
-          <Text style={styles.fieldValue}>Unknown</Text>
-        )}
-
-        <Text style={styles.fieldLabel}>Source</Text>
-        <Text selectable style={styles.fieldValue}>
-          {fieldText(model.source)}
-        </Text>
-
-        <Text style={styles.fieldLabel}>Destination</Text>
-        <Text selectable style={styles.fieldValue}>
-          {fieldText(model.destination)}
-        </Text>
-
-        <Text style={styles.fieldLabel}>Amount</Text>
-        <Text style={styles.fieldValue}>{amountText(model.amount)}</Text>
-
-        <Text style={styles.fieldLabel}>Fees</Text>
-        <Text style={styles.fieldValue}>{amountText(model.fee)}</Text>
-      <Text style={styles.fieldLabel}>Wallet guard</Text>
-        {showUserState ? (
-          proposalApproved ? (
-            <>
-              <Text style={styles.onchainLine}>Approved</Text>
-              <Text style={styles.fieldValue}>
-                {approvalsConfirmed} of {guardThreshold} approvals confirmed
-              </Text>
-              <Text style={styles.fieldValue}>Ready to execute</Text>
-              <Text style={styles.secondaryText}>
-                Execution is not implemented yet (T12). No Execute button is active.
-              </Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.onchainLine}>Approved by this wallet</Text>
-              <Text style={styles.fieldValue}>
-                {approvalsConfirmed} of {guardThreshold} approvals confirmed on Devnet
-              </Text>
-              <Text style={styles.fieldValue}>Waiting for 1 more approval</Text>
-            </>
-          )
-        ) : (
-          <>
-            <Text style={guard.status === 'allowed' ? styles.fieldValue : styles.warnText}>
-              {guard.status === 'allowed' ? 'allowed' : `blocked — ${guard.reasons.length} reason(s)`}
-            </Text>
-            {guard.reasons.map((reason) => (
-              <Text key={reason} style={styles.warnText}>
-                • {reason}
-              </Text>
-            ))}
-          </>
-        )}
-
-        <Text style={styles.fieldLabel}>Instruction allowlist</Text>
-        <Text style={allowlist.allowed ? styles.fieldValue : styles.warnText}>
-          {allowlist.allowed ? 'allowed' : 'blocked'} — {allowlist.reason}
-        </Text>
-        <Text style={styles.secondaryText}>
-          No write is enabled: the final approval stays disabled in this build.
-        </Text>
-      </View>
+      {/* 7. Details techniques, replies par defaut */}
+      <TransactionTechnicalDetails
+        model={model}
+        guard={guard}
+        allowlist={allowlist}
+        proposalAddress={proposalAddress}
+      />
 
       <Pressable
         accessibilityRole="button"
@@ -589,6 +577,50 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 16,
     textAlign: 'center',
+  },
+  decisionOk: {
+    alignSelf: 'stretch',
+    backgroundColor: '#ecfdf5',
+    borderColor: '#6ee7b7',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+    padding: 16,
+  },
+  decisionNeutral: {
+    alignSelf: 'stretch',
+    backgroundColor: '#f3f4f6',
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 16,
+    padding: 16,
+  },
+  decisionTitle: {
+    color: '#065f46',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  decisionSub: {
+    color: '#065f46',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  decisionState: {
+    color: '#065f46',
+    fontSize: 13,
+    marginTop: 6,
+  },
+  actionValue: {
+    color: '#111827',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  amountValue: {
+    color: '#111827',
+    fontSize: 26,
+    fontWeight: '800',
   },
   card: {
     alignSelf: 'stretch',
