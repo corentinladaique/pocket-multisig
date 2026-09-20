@@ -24,15 +24,16 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
     devnet), permissions Initiate + Vote + Execute pour les deux
   - transaction de création :
     `4sHZmbyiFDeP4LxjYPXh1M7Y9YMrz9UK9WeE4vzG3sBDthmjEWD3Bdgfa6BmhF3cszH7iJXGBNy6a2kAPriofMGc`
-  - aucune proposition créée, aucune approbation testée, aucune exécution testée
+  - proposition de test d'index 1 : créée et confirmée (voir T00bis)
+  - aucune approbation testée, aucune exécution testée, vault non financé
 - Livrable : `scripts/create-devnet-fixture.ts`.
 - Contenu (réellement réalisé) : lecture du compte officiel `ProgramConfig`,
   dérivation des PDA `getMultisigPda` / `getVaultPda`, création du multisig
   **2/2** via `multisigCreateV2` (`configAuthority: null`, `timeLock: 0`,
   `rentCollector: null`), puis relecture et contrôle des invariants via le SDK.
-  Le vault d'index 0 est dérivé mais **non financé**. Ce multisig ne contient
-  encore **aucune vault transaction et aucune proposition**
-  (`transactionIndex = 0`) — c'est cet état qui a servi à valider T08.
+  Le vault d'index 0 est dérivé mais **non financé**. Le multisig ne contenait
+  **aucune vault transaction et aucune proposition** (`transactionIndex = 0`)
+  lors de sa création — c'est cet état qui a servi à valider T08 en liste vide.
 - Fichiers : `scripts/create-devnet-fixture.ts`, `.gitignore`.
 - Commande : `npx tsx scripts/create-devnet-fixture.ts` (avec `--check` pour un
   passage en lecture seule). **Ne pas relancer : la fixture existe.**
@@ -41,6 +42,32 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
   (`getAccountInfo` non nul).
 - Risque : *airdrops devnet rate-limités* → prévoir 2 essais et un fallback
   `solana airdrop`.
+
+### T00bis · Proposition de test contrôlée (index 1)
+
+- Statut : FAIT. Une **VaultTransaction** et une **Proposal** d'index 1 créées
+  et confirmées sur devnet. `transactionIndex = 1`.
+- Rôles : `approver.json` (member local, Initiate + Vote + Execute) est le
+  **creator Squads** des deux instructions ; `creator.json` est **uniquement
+  fee payer et rent payer** — il n'est pas membre du multisig et ne doit jamais
+  servir de creator Squads.
+- Livrable : `scripts/create-test-proposal.ts` (mode `--check` sans écriture).
+- Adresses :
+  - Proposal PDA : `7XKcg9tfNATE9GsGh1fDfE5qsBfcghCgYwjpVy7z431M`
+  - VaultTransaction PDA : `DApK9oeoSwG8KXWChZEsJ56Z2Gxk2S1CdHP3GZsoz635`
+- Contenu enveloppé : une seule instruction `SystemProgram.transfer`, source =
+  vault d'index 0, destination = approver local public, **montant = 0 lamport**,
+  aucune Address Lookup Table, aucun memo, aucun autre programme.
+- État on-chain constaté : statut **Active**, `approved.length = 0`,
+  `rejected.length = 0`, vault **non financé** (0 lamport).
+- Chaîne d'écriture : simulation sans erreur avant envoi, **un seul envoi**,
+  signature vérifiée après coup (jamais de seconde tentative).
+- Garde-fous du script : refuse toute création si `transactionIndex != 0`, si un
+  PDA d'index 1 existe déjà, si les adresses publiques attendues diffèrent, ou
+  si le creator Squads n'a pas Initiate + Vote. Aucune approbation, aucune
+  exécution, aucun airdrop, aucun financement du vault.
+- Aucune approbation ni exécution n'a été réalisée : T11 et T12 restent **non
+  réalisés**.
 
 ### T01 · Scaffold Expo + TypeScript strict
 
@@ -165,12 +192,17 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 - Règle dure : si `transactionIndex === 0`, retour immédiat d'une liste vide,
   **aucun PDA dérivé, aucun appel RPC** — instrumenté par le champ `rpcCalls`
   du résultat (vérifié : 0 appel).
-- Statut : FAIT — état vide validé sur le Seeker : la fixture affiche
+- Statut : FAIT — état vide validé sur le Seeker : la fixture affichait
   « No proposals yet » (18 tests hors ligne passés, dont l'absence d'appel RPC
   quand `transactionIndex = 0`).
-- Reste à faire : aucune proposition on-chain ne peut être affichée tant
-  qu'aucune vault transaction n'existe ; le cas « liste non vide » reste donc
-  non démontré sur la chaîne (seuls des comptes absents ont été testés).
+- Statut complémentaire : **FAIT avec liste non vide** — après création de la
+  proposition d'index 1 (T00bis), l'application affiche sur le Seeker la ligne
+  réelle `#1 · Active · 0 approval(s)`, lue depuis la chaîne via ce même chemin
+  de lecture (aucune preview).
+- Reste à faire : aucun écart connu sur ce périmètre. La lecture n'a été
+  démontrée que sur une seule proposition d'index 1 ; les statuts autres que
+  `Active` et l'exclusion liée à `staleTransactionIndex` restent non observés
+  sur la chaîne.
 
 ### T09 · Décodage local d'un message de transaction
 
