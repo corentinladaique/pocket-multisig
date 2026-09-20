@@ -24,6 +24,8 @@ export interface ReviewGuardContext {
   multisig: {
     address: string;
     vaultAddress: string;
+    /** Seuil du multisig, pour l'affichage « approvals x / seuil ». */
+    threshold: number;
     members: readonly GuardMember[];
   } | null;
   proposal: {

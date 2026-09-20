@@ -146,6 +146,7 @@ export function ConnectScreen() {
               : {
                   address: msig.view.address,
                   vaultAddress: msig.view.vaultAddress,
+                  threshold: msig.view.threshold,
                   members: msig.view.members.map((member) => ({
                     address: member.address,
                     roles: member.roles,

@@ -4,9 +4,12 @@
 // Il affiche un modèle déjà construit (voir src/types/transactionReview.ts).
 import { useCallback, useState } from 'react';
 import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { PublicKey } from '@solana/web3.js';
 
 import { useWalletGuard } from '../wallet/useWalletGuard';
 import { checkReviewAllowlist } from '../squads/instructionAllowlist';
+import { planProposalApproval, type ApprovalPlan } from '../squads/proposalApproval';
+import { connection } from '../solana/connection';
 import type { GuardVerdict, ReviewGuardContext } from '../wallet/useWalletGuard';
 
 import {
@@ -78,6 +81,12 @@ export function TransactionReviewScreen({
   // confirmation reste désactivé dans cette mission.
   const canConfirm = computeCanConfirm(model, guard.status, allowlist.status);
 
+  // T11c : étape « ready to approve ». Le bouton final est branché sur la
+  // PRÉPARATION uniquement — aucune ouverture du wallet, aucune signature,
+  // aucun envoi. L'appel MWA reste hors de portée de cette mission.
+  const [plan, setPlan] = useState<ApprovalPlan | null>(null);
+  const [planning, setPlanning] = useState(false);
+
   // Seconde confirmation locale (T11a) : aucun envoi, le bouton final reste
   // désactivé. Cet état n'ouvre aucun chemin d'écriture.
   const [confirmStep, setConfirmStep] = useState(false);
@@ -90,6 +99,115 @@ export function TransactionReviewScreen({
     setConfirmStep(false);
   }, []);
 
+  const handleRequestApproval = useCallback(async () => {
+    if (guardContext === null || guardContext.multisig === null) return;
+    if (guardContext.walletAddress === null) return;
+    setPlanning(true);
+    try {
+      const result = await planProposalApproval({
+        connection,
+        multisigPda: new PublicKey(guardContext.multisig.address),
+        transactionIndex: model.proposalIndex,
+        walletAddress: guardContext.walletAddress,
+        preconditions: {
+          guardStatus: guard.status,
+          allowlistStatus: allowlist.status,
+          guardReasons: guard.reasons,
+        },
+      });
+      setPlan(result);
+    } finally {
+      setPlanning(false);
+    }
+  }, [allowlist.status, guard.reasons, guard.status, guardContext, model.proposalIndex]);
+
+  const handleCancelPlan = useCallback(() => {
+    setPlan(null);
+  }, []);
+
+
+
+  if (plan !== null) {
+    // Étape « ready to approve » : résumé public uniquement. Aucun appel
+    // wallet, aucune signature, aucun envoi — l'appel MWA est délibérément
+    // laissé hors de ce composant.
+    const threshold = guardContext?.multisig?.threshold ?? 0;
+    return (
+      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+        <Text style={styles.badge}>DEVNET</Text>
+        <Text style={styles.title}>Ready to approve</Text>
+        <Text style={styles.previewBanner}>Prepared only — no signature requested</Text>
+
+        {plan.status === 'refused' ? (
+          <View style={styles.card}>
+            <Text style={styles.fieldLabel}>Refused</Text>
+            {plan.reasons.map((reason) => (
+              <Text key={reason} style={styles.warnText}>
+                • {reason}
+              </Text>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.card}>
+            <Text style={styles.fieldLabel}>Network</Text>
+            <Text style={styles.fieldValue}>Devnet</Text>
+
+            <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+            <Text selectable style={styles.fieldValue}>
+              {model.multisigAddress}
+            </Text>
+
+            <Text style={styles.fieldLabel}>Proposal</Text>
+            <Text style={styles.fieldValue}>#{model.proposalIndex}</Text>
+
+            <Text style={styles.fieldLabel}>Proposal PDA</Text>
+            <Text selectable style={styles.fieldValue}>
+              {plan.proposalAddress}
+            </Text>
+
+            <Text style={styles.fieldLabel}>Member wallet</Text>
+            <Text selectable style={styles.fieldValue}>
+              {model.signerWallet}
+            </Text>
+
+            <Text style={styles.fieldLabel}>Proposal status</Text>
+            <Text style={styles.fieldValue}>{plan.proposalStatus}</Text>
+
+            <Text style={styles.fieldLabel}>Approvals</Text>
+            <Text style={styles.fieldValue}>
+              {plan.approvedAddresses.length} / {threshold}
+            </Text>
+
+            <Text style={styles.fieldLabel}>Program</Text>
+            <Text selectable style={styles.fieldValue}>
+              {plan.instruction.programId.toBase58()}
+            </Text>
+
+            <Text style={styles.fieldLabel}>Execution</Text>
+            <Text style={styles.fieldValue}>No automatic execution.</Text>
+          </View>
+        )}
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ disabled: true }}
+          disabled
+          style={[styles.button, styles.disabled]}
+        >
+          <Text style={styles.buttonText}>Approve now (requires authorization)</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cancel approval plan"
+          onPress={handleCancelPlan}
+          style={[styles.button, styles.secondary]}
+        >
+          <Text style={styles.secondaryText}>Cancel</Text>
+        </Pressable>
+      </ScrollView>
+    );
+  }
 
   if (confirmStep) {
     // Seconde confirmation, strictement locale : rappel du contenu réel, puis
@@ -145,11 +263,18 @@ export function TransactionReviewScreen({
 
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: true }}
-          disabled
-          style={[styles.button, styles.disabled]}
+          accessibilityState={{ disabled: !canConfirm || planning }}
+          disabled={!canConfirm || planning}
+          onPress={() => {
+            // Prépare l'approbation : aucune ouverture du wallet, aucune
+            // signature, aucun envoi. Uniquement un résumé public.
+            void handleRequestApproval();
+          }}
+          style={[styles.button, canConfirm ? null : styles.disabled]}
         >
-          <Text style={styles.buttonText}>Approve proposal</Text>
+          <Text style={styles.buttonText}>
+            {planning ? 'Preparing…' : 'Approve proposal'}
+          </Text>
         </Pressable>
 
         <Pressable
