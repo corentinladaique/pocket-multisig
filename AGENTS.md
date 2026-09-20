@@ -44,3 +44,56 @@ Programme Squads v4 : `SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`
   before the first push.
 - Never use `git push --force`.
 - Never expose authentication tokens or credential files.
+
+## Token and compute discipline
+
+- One atomic task at a time.
+- Read only the files required for the current task.
+- Do not repeat facts already recorded in TASKS.md, SECURITY.md or ARCHITECTURE.md.
+- Do not restate unchanged versions, addresses, Git remotes or safety rules.
+- Keep final reports under 12 lines unless a blockchain write occurred.
+- Do not print full files, full logs or full diffs unless explicitly requested.
+- Save verbose logs in /tmp and report only the path and relevant error lines.
+- Use targeted grep, sed ranges and git diff --stat instead of dumping content.
+- Stop at the first concrete blocker.
+- Make one focused implementation pass and one validation pass.
+- Run typecheck once after the implementation.
+- Run expo-doctor only before a commit, after dependency changes, or when diagnosing Expo.
+- Run full regression tests only when shared code changed.
+- Run only the directly affected tests for isolated UI or documentation changes.
+- Use Metro reload for TypeScript and UI changes.
+- Do not rebuild Gradle unless native dependencies or native configuration changed.
+- Do not repeat on-chain reads already validated unless relevant blockchain code changed.
+- Use one Seeker screenshot per materially different state.
+- Do not re-check GitHub remote and distant hash unless a push is planned or performed.
+- Documentation-only changes do not require Seeker testing.
+- Ask for explicit authorization immediately before any blockchain write.
+- Security checks for blockchain writes must never be skipped for token savings.
+
+## Default validation profiles
+
+### Documentation only
+- git diff --check
+- no typecheck
+- no expo-doctor
+- no Seeker test
+
+### Isolated TypeScript or UI
+- targeted test
+- npm run typecheck
+- Metro reload if visual validation is required
+- no expo-doctor unless Expo-related
+
+### Shared decoding or blockchain read code
+- targeted unit tests
+- npm run typecheck
+- one real read-only Seeker validation
+- expo-doctor only before commit
+
+### Blockchain write
+- full preconditions
+- simulation
+- explicit user authorization
+- one send maximum
+- on-chain confirmation
+- targeted read-back validation
