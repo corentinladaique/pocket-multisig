@@ -11,6 +11,8 @@ export const ALLOWED_PROGRAM_IDS: readonly string[] = [SYSTEM_PROGRAM_ID];
 
 export interface AllowlistVerdict {
   allowed: boolean;
+  /** Même forme que le verdict du guard, pour composer des conditions lisibles. */
+  status: 'allowed' | 'blocked';
   reason: string;
 }
 
@@ -26,6 +28,7 @@ export function checkReviewAllowlist(model: TransactionReviewModel): AllowlistVe
   if (model.decodeStatus !== 'decoded') {
     return {
       allowed: false,
+      status: 'blocked' as const,
       reason: `Decode status is ${model.decodeStatus}: confirmation must stay blocked.`,
     };
   }
@@ -33,6 +36,7 @@ export function checkReviewAllowlist(model: TransactionReviewModel): AllowlistVe
   if (!model.program.known) {
     return {
       allowed: false,
+      status: 'blocked' as const,
       reason: 'Called program is unknown: confirmation must stay blocked.',
     };
   }
@@ -40,12 +44,14 @@ export function checkReviewAllowlist(model: TransactionReviewModel): AllowlistVe
   if (!ALLOWED_PROGRAM_IDS.includes(model.program.value.id)) {
     return {
       allowed: false,
+      status: 'blocked' as const,
       reason: `Program ${model.program.value.id} is not in the allowlist.`,
     };
   }
 
   return {
     allowed: true,
+    status: 'allowed' as const,
     reason: `Program ${model.program.value.id} is allowlisted (${ALLOWED_PROGRAM_IDS.length} entry).`,
   };
 }
