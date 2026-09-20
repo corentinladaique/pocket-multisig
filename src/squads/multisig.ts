@@ -18,6 +18,8 @@ export interface MultisigView {
   threshold: number;
   timeLock: number;
   transactionIndex: number;
+  /** Index de péremption : les transactions strictement antérieures sont mortes. */
+  staleTransactionIndex: number;
   /** Adresse du vault d'index 0, dérivée par l'utilitaire officiel du SDK. */
   vaultAddress: string;
 }
@@ -93,6 +95,7 @@ export async function loadMultisig(
     threshold: account.threshold,
     timeLock: account.timeLock,
     transactionIndex: Number(account.transactionIndex),
+    staleTransactionIndex: Number(account.staleTransactionIndex),
     vaultAddress: vaultAddress.toBase58(),
   };
 }

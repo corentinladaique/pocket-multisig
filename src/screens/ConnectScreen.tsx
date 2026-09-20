@@ -11,6 +11,7 @@ import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
 import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
+import { useProposals } from '../squads/proposals';
 
 type Phase = 'idle' | 'connecting' | 'disconnecting';
 
@@ -38,6 +39,11 @@ export function ConnectScreen() {
   const { account, connect, disconnect } = useMobileWallet();
   const { detail: rpcDetail, retry: retryRpc, status: rpcStatus } = useRpcHealth();
   const msig = useMultisigLookup();
+  const proposals = useProposals(
+    msig.view?.address ?? null,
+    msig.view?.transactionIndex ?? 0,
+    msig.view?.staleTransactionIndex ?? 0,
+  );
   const [multisigInput, setMultisigInput] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +202,38 @@ export function ConnectScreen() {
 
               <Text style={styles.fieldLabel}>Network</Text>
               <Text style={styles.fieldValue}>Devnet</Text>
+
+              <Text style={styles.fieldLabel}>Proposals</Text>
+              {proposals.status === 'loading' ? (
+                <Text style={styles.fieldValue}>Loading…</Text>
+              ) : null}
+              {proposals.status === 'loaded' && proposals.list?.proposals.length === 0 ? (
+                <Text style={styles.fieldValue}>No proposals yet</Text>
+              ) : null}
+              {proposals.status === 'loaded' && proposals.list !== null
+                ? proposals.list.proposals.map((proposal) => (
+                    <Text key={proposal.index} style={styles.memberLine}>
+                      #{proposal.index} · {proposal.status} · {proposal.approvals} approval(s)
+                    </Text>
+                  ))
+                : null}
+              {proposals.status === 'loaded' && (proposals.list?.unreadable ?? 0) > 0 ? (
+                <Text style={styles.rpcDetail}>
+                  {proposals.list?.unreadable} compte(s) illisible(s) ignoré(s)
+                </Text>
+              ) : null}
+              {proposals.status === 'error' && proposals.error ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>{proposals.error}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={proposals.retry}
+                    style={styles.retry}
+                  >
+                    <Text style={styles.retryText}>Retry</Text>
+                  </Pressable>
+                </View>
+              ) : null}
 
               <Pressable
                 accessibilityRole="button"

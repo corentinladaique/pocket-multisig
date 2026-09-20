@@ -39,31 +39,31 @@ pocket-multisig/
 ├── package.json               # "main": "index.ts", script android
 ├── tsconfig.json              # strict: true
 ├── index.ts                   # entry : importe ./polyfill AVANT tout
-├── polyfill.js                # react-native-quick-crypto + Buffer + assert
+├── polyfill.js                # react-native-quick-crypto : crypto uniquement
 ├── App.tsx                    # navigation simple (état local, sans expo-router)
-└── screens/                   # écrans (navigation simple)
-    ├── ConnectScreen.tsx      # écran 1 : connexion wallet
-    ├── MultisigsScreen.tsx    # écran 2 : liste des multisigs du wallet
-    ├── MultisigScreen.tsx     # écran 3 : membres / seuil / vault
-    ├── ProposalScreen.tsx     # écran 4 : détail proposition
-    └── ConfirmScreen.tsx      # écran 5 : confirmation avant signature
 ├── src/
-│   ├── config.ts              # DEVNET, PROGRAM_ID, RPC — constantes gelées
+│   ├── config.ts              # DEVNET, endpoint RPC, identité — constantes gelées
+│   ├── screens/
+│   │   └── ConnectScreen.tsx  # écran unique : wallet, RPC, multisig, propositions
 │   ├── solana/
-│   │   ├── connection.ts      # singleton Connection devnet
-│   │   └── explorer.ts        # helpers d'URL explorer + formatage
-│   ├── squads/
-│   │   ├── discovery.ts       # rechercher les multisigs d'un membre
-│   │   ├── multisig.ts        # lecture config + vault PDA + solde
-│   │   ├── proposals.ts       # énumération + lecture des propositions
-│   │   ├── decode.ts          # décodage du message d'une vault transaction
-│   │   └── actions.ts         # builders approve / execute (build only)
-│   ├── wallet/
-│   │   └── useWalletGuard.ts  # refus si cluster != devnet
-│   ├── ui/                    # composants réutilisables (Card, Row, Badge…)
-│   └── types.ts               # types de vue (MultisigView, ProposalView…)
+│   │   ├── connection.ts      # singleton Connection devnet + pingDevnet (gelé)
+│   │   └── useRpcHealth.ts    # état Checking / Online / Offline (gelé)
+│   └── squads/
+│       ├── multisig.ts        # [gelé] lecture config + vault PDA (SDK officiel)
+│       ├── useMultisigLookup.ts # [gelé] état de la recherche manuelle
+│       └── proposals.ts       # [gelé] énumération des propositions (lecture seule)
 └── scripts/
-    └── create-devnet-fixture.ts  # crée un multisig + une proposition devnet
+    └── create-devnet-fixture.ts  # crée le multisig devnet (ne pas relancer)
+
+Fichiers PRÉVUS, non encore créés (à ne pas confondre avec l'existant) :
+    src/solana/explorer.ts        # helpers d'URL explorer + formatage
+    src/squads/discovery.ts       # recherche des multisigs d'un membre (reporté)
+    src/squads/decode.ts          # décodage du message d'une vault transaction
+    src/squads/actions.ts         # builders approve / execute (build only)
+    src/wallet/useWalletGuard.ts  # refus si cluster != devnet
+    src/types.ts                  # types de vue transverses
+    src/ui/                       # composants réutilisables
+    src/screens/MultisigScreen.tsx, ProposalScreen.tsx, ConfirmScreen.tsx
 ```
 
 ## 3. ADR (décisions + justification)
@@ -74,22 +74,25 @@ pocket-multisig/
 les deux familles duplique les types `PublicKey` et casse les builders
 d'instructions. On reste donc sur la famille web3.js v1 de bout en bout.
 
-**ADR-2 — Découverte on-chain par `getProgramAccounts` + filtres `memcmp`.**
+**ADR-2 — Découverte automatique : reportée, non implémentée.**
 Il n'existe pas d'index on-chain inverse « membre → multisig » : l'adresse d'un
-multisig est derivée d'un `createKey` arbitraire, et `Multisig.members` est un
-`Vec<Member>` sans table d'index. Vérifié : requête `getProgramAccounts` sur le
-programme v4 avec `memcmp` sur les offsets de slot membre, filtrée par le
-discriminator `e07479ba44a14fec` → résultat exact obtenu sur devnet **et**
-mainnet. C'est la seule voie sans backend.
+multisig est dérivée d'un `createKey` arbitraire, et `Multisig.members` est un
+`Vec<Member>` sans table d'index. La seule voie sans backend serait un balayage
+`getProgramAccounts` filtré. Ce balayage **n'est pas retenu dans le MVP** : il
+est coûteux, fragile face à une population de comptes hétérogène, et inutile
+pour la démonstration. À la place, l'utilisateur saisit l'adresse du multisig
+(T05A). La décision sera réexaminée après le MVP.
 
 **ADR-3 — Ne jamais parser l'account `Multisig` à la main.**
-Constat expérimental (devnet, 17153 comptes ; mainnet, 156 699) : la disposition
-réelle diffère de la doc Squads. Le champ `rent_collector: Option<Pubkey>`
-(cf. instruction « Set Rent Collector ») **décale le `Vec<Member>` de 0 ou 32
-octets**, soit un slot 0 à l'offset 100 ou 132, et non 100 partout. On utilise
-toujours `multisig.accounts.Multisig.fromAccountAddress()` et on ignore les
-comptes qui échouent à la désérialisation (population hétérogène constatée sur
-devnet).
+La disposition binaire réelle des comptes Squads v4 n'est pas celle qu'on
+croit : le type officiel expose notamment `rentCollector: COption<PublicKey>`,
+absent de certaines pages de documentation, ce qui décale les champs suivants.
+Une lecture par offsets codés en dur (explorée pendant le cadrage) a été
+**abandonnée et n'est pas implémentée** : elle serait fausse sur une partie des
+comptes, y compris sur ceux que nous avons créés. Règle définitive : toute
+désérialisation passe par `multisig.accounts.Multisig.fromAccountAddress()`
+(et les autres classes officielles du SDK) ; un compte qui échoue à se
+désérialiser est ignoré proprement, jamais interprété.
 
 **ADR-4 — Énumération des propositions par dérivation de PDA.**
 `Proposal` et `VaultTransaction` sont des PDA dérivés de
@@ -105,22 +108,20 @@ libs d'état global (`react-query`, `zustand`) — remplacés par des hooks loca
 
 ## 4. Flux de données
 
-**Découverte**
-1. Le wallet renvoie l'adresse publique (web3.js `PublicKey`).
-2. Pour chaque slot `s ∈ [0..7]` et chaque base `b ∈ {100, 132}` :
-   `getProgramAccounts(program, filters=[disc, memcmp(offset=b+33s, member)],
-   dataSlice=0)`.
-3. Union des adresses (dédupliquées) → jeu de candidats.
-4. `getMultipleAccounts` sur les candidats → `Multisig.fromAccountAddress`.
-5. Filtrage final : l'adresse est-elle réellement dans `members` ?
-   (le `memcmp` peut matcher un compte désérialisé par une autre version)
+**Découverte — reportée.** Non implémentée dans le MVP (voir ADR-2). Le
+multisig est chargé par saisie manuelle de son adresse, puis lu via le SDK
+officiel (`Multisig.fromAccountAddress`), ce qui constitue un seul appel RPC.
 
-**Propositions**
-1. `transactionIndex` courant depuis la config.
-2. Pour `i ∈ [1, transactionIndex]` : dériver `proposalPda` + `vaultTransactionPda`.
-3. `getMultipleAccounts` → `Proposal` (statut, approved/rejected) et
-   `VaultTransaction` (message à décoder).
-4. Écarter les `i < staleTransactionIndex`.
+**Propositions (implémenté, lecture seule)**
+1. `transactionIndex` et `staleTransactionIndex` lus sur le compte du multisig.
+2. Si `transactionIndex === 0` : liste vide immédiate, **aucun PDA dérivé,
+   aucun appel RPC** (règle instrumentée par `rpcCalls = 0`).
+3. Sinon, pour `i ∈ [staleTransactionIndex, transactionIndex]` : dérivation
+   locale des PDA `Proposal` et `VaultTransaction`.
+4. Un seul `getMultipleAccountsInfo` sur les PDA de proposition.
+5. Désérialisation par `Proposal.fromAccountInfo` ; les comptes absents ou
+   illisibles sont comptés et ignorés, jamais interprétés.
+6. Modèle d'affichage minimal : index, statut (`__kind`), nombre d'approbations.
 
 **Vote / exécution**
 1. `multisig.instructions.proposalApprove({ multisigPda, transactionIndex, member })`
@@ -135,12 +136,16 @@ libs d'état global (`react-query`, `zustand`) — remplacés par des hooks loca
 ## 5. Contraintes d'environnement constatées (2026-09-19)
 
 - Node 20.20.2, npm 10.8.2, JDK 17, `adb` présent, Gradle cache présent.
-- `ANDROID_HOME` **non défini** → `expo run:android` échouera tant que le SDK
-  Android n'est pas configuré (`ANDROID_HOME` + `platform-tools`).
+- SDK Android présent dans `~/Android/Sdk` ; `ANDROID_HOME` doit être exporté
+  dans le shell courant et `android/local.properties` renseigné pour Gradle.
+  Ce n'est **plus** un blocage : le build et l'installation sur Seeker ont été
+  réalisés avec succès.
 - `@solana-mobile/mobile-wallet-adapter-protocol` 2.3.0 utilise des modules
   Kotlin natifs → **Expo Go est inutilisable**, development build obligatoire.
-- `@sqds/multisig` a besoin de `Buffer` et `assert` globaux (via beet/bn.js) :
-  le polyfill ne se limite pas à `crypto`.
+- Polyfills réellement nécessaires à ce jour : **`crypto` seul**
+  (`react-native-quick-crypto`). `Buffer` et `assert` n'ont pas eu à être
+  exposés globalement : ils arrivent en dépendances transitives du SDK Squads
+  et sont résolus par le bundler.
 
 ## 6. Ce que nous ne construisons pas (et pourquoi)
 

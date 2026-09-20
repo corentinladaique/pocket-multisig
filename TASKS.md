@@ -26,13 +26,19 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
     `4sHZmbyiFDeP4LxjYPXh1M7Y9YMrz9UK9WeE4vzG3sBDthmjEWD3Bdgfa6BmhF3cszH7iJXGBNy6a2kAPriofMGc`
   - aucune proposition créée, aucune approbation testée, aucune exécution testée
 - Livrable : `scripts/create-devnet-fixture.ts`.
-- Contenu : génération de keypairs jetables, airdrop devnet, création d'un
-  multisig 2/3 (`multisigCreateV2`), création d'une vault transaction + proposal
-  vers le System Program, impression des adresses pour réutilisation.
-- Fichiers : `scripts/create-devnet-fixture.ts`, `scripts/README.md`, `.gitignore`.
-- Commande : `npx tsx scripts/create-devnet-fixture.ts`
-- Acceptance : le script imprime `multisigPda`, `vaultPda`, `proposalPda`,
-  `transactionIndex` ; les comptes existent (`getAccountInfo` non nul).
+- Contenu (réellement réalisé) : lecture du compte officiel `ProgramConfig`,
+  dérivation des PDA `getMultisigPda` / `getVaultPda`, création du multisig
+  **2/2** via `multisigCreateV2` (`configAuthority: null`, `timeLock: 0`,
+  `rentCollector: null`), puis relecture et contrôle des invariants via le SDK.
+  Le vault d'index 0 est dérivé mais **non financé**. Ce multisig ne contient
+  encore **aucune vault transaction et aucune proposition**
+  (`transactionIndex = 0`) — c'est cet état qui a servi à valider T08.
+- Fichiers : `scripts/create-devnet-fixture.ts`, `.gitignore`.
+- Commande : `npx tsx scripts/create-devnet-fixture.ts` (avec `--check` pour un
+  passage en lecture seule). **Ne pas relancer : la fixture existe.**
+- Acceptance : le script imprime `multisigPda`, `vaultPda`, `signature`,
+  `transactionIndex` et les contrôles d'invariants ; les comptes existent
+  (`getAccountInfo` non nul).
 - Risque : *airdrops devnet rate-limités* → prévoir 2 essais et un fallback
   `solana airdrop`.
 
@@ -80,10 +86,16 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 
 ### T04 · Couche d'accès RPC
 
-- Objectif : `Connection` singleton devnet + helpers de formatage/explorer.
-- Fichiers : `src/solana/connection.ts`, `src/solana/explorer.ts`, `src/types.ts`.
-- Acceptance : un écran de debug affiche le slot courant et le solde d'une
-  adresse devnet connue.
+- Objectif : `Connection` singleton devnet + contrôle de disponibilité.
+- Fichiers réellement créés : `src/solana/connection.ts` (instance unique,
+  `commitment: 'confirmed'`, `pingDevnet` sur `getSlot`, timeout applicatif
+  8 s) et `src/solana/useRpcHealth.ts` (états `checking` / `online` / `offline`,
+  détail brut de l'erreur, `retry`). `src/solana/explorer.ts` et `src/types.ts`
+  ne sont **pas** créés.
+- Statut : FAIT — validé sur le Seeker (Network: Devnet, RPC: Online, bascule
+  Offline vérifiée avec un endpoint invalide temporaire puis restauration).
+- Hors périmètre : aucune lecture de solde, aucun lien explorer ouvert
+  automatiquement.
 
 ### T05 · Découverte des multisigs
 
@@ -131,17 +143,34 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 
 - Objectif : membres (pubkey + permissions), seuil, vault PDA, solde du vault.
 - Fichiers : `screens/MultisigScreen.tsx`, `src/squads/multisig.ts`, `src/ui/`.
-- Acceptance : 3 membres, seuil 2, solde vault affiché ; permissions décodées
-  en libellés (Initiate/Vote/Execute).
+- Acceptance : les **2** membres de la fixture et le seuil 2/2 sont affichés,
+  permissions décodées en libellés (Initiate/Vote/Execute), vault d'index 0
+  dérivé. Aucune lecture de solde du vault.
 
 ### T08 · Énumération des propositions
 
-- Objectif : lire la liste des propositions de `1` à `transactionIndex`.
-- Fichiers : `src/squads/proposals.ts`, `src/types.ts`, tests.
-- Implémentation : dérivation des deux PDA par index + `getMultipleAccounts`,
-  exclusion des index `< staleTransactionIndex`, mapping de statut.
-- Acceptance : la proposition de la fixture apparaît en `Active` avec 1/N
-  approbations ; test unitaire sur la dérivation des PDA.
+- Objectif : lire en lecture seule la liste des propositions d'un multisig.
+- Fichiers créés : `src/squads/proposals.ts` (`computeProposalIndexes` —
+  fonction pure, `loadProposals`, hook `useProposals`) et branchement dans
+  `src/screens/ConnectScreen.tsx`. `src/squads/multisig.ts` a reçu une ligne
+  (exposition de `staleTransactionIndex`, requis par la lecture). Aucun paquet
+  ajouté, aucun fichier de test permanent (pas de runner installé).
+- Implémentation réelle : index calculés pour `i ∈ [staleTransactionIndex,
+  transactionIndex]` (les index strictement antérieurs à
+  `staleTransactionIndex` sont exclus) ; dérivation locale des PDA via
+  `getProposalPda` et `getTransactionPda` ; **un seul**
+  `getMultipleAccountsInfo` ; désérialisation par `Proposal.fromAccountInfo` ;
+  comptes absents ou illisibles comptés et ignorés ; modèle d'affichage
+  minimal (index, statut `__kind`, nombre d'approbations).
+- Règle dure : si `transactionIndex === 0`, retour immédiat d'une liste vide,
+  **aucun PDA dérivé, aucun appel RPC** — instrumenté par le champ `rpcCalls`
+  du résultat (vérifié : 0 appel).
+- Statut : FAIT — état vide validé sur le Seeker : la fixture affiche
+  « No proposals yet » (18 tests hors ligne passés, dont l'absence d'appel RPC
+  quand `transactionIndex = 0`).
+- Reste à faire : aucune proposition on-chain ne peut être affichée tant
+  qu'aucune vault transaction n'existe ; le cas « liste non vide » reste donc
+  non démontré sur la chaîne (seuls des comptes absents ont été testés).
 
 ### T09 · Écran détail d'une proposition
 
@@ -216,5 +245,9 @@ T00 ─┬─► T05 ─► T06 ─► T07 ─► T08 ─► T09 ─► T10 ─�
 T01 ─┴─► T02 ─► T03 ─► T04
 ```
 
-Bloquants connus avant T01 : `ANDROID_HOME` non défini sur la machine.
-Bloquant avant T03 : un wallet MWA installé (mock `mock-mwa-wallet` ou Seeker).
+Bloquants levés : `ANDROID_HOME` est configuré, le Seeker est détecté comme
+`device`, et le wallet MWA (Seed Vault Wallet du Seeker) répond.
+Blocage restant, hors app : aucune vault transaction n'existe dans la fixture,
+donc les tâches T09 (décodage), T11 (approbation) et T12 (exécution) ne sont pas
+testables en l'état — il faudra créer une proposition de test depuis un script
+machine, sous autorisation explicite.

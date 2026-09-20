@@ -12,8 +12,12 @@ Ces règles ne sont pas des recommandations. Elles sont vérifiées à chaque
   instruction explicite du donneur d'ordre + une revue de sécurité dédiée.
 - Le programme Squads v4 est identique sur devnet et mainnet
   (`SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`) : la seule barrière est donc
-  la constante RPC et le `chain` passé à `MobileWalletProvider`. Les deux sont
-  vérifiés par `useWalletGuard` (refus si `chain !== "solana:devnet"`).
+  la constante RPC et le `chain` passé à `MobileWalletProvider`. Le second est
+  aujourd'hui porté par la constante gelée `DEVNET_CHAIN` (`src/config.ts`).
+  *(PLANNED / non implémenté : le module `src/wallet/useWalletGuard.ts`, qui
+  refuserait explicitement toute session dont `chain !== "solana:devnet"`.
+  Aucune protection de ce type n'est active pour l'instant — il n'existe aucun
+  chemin de signature dans l'application.)*
 
 ## 2. Clés et secrets
 
@@ -40,9 +44,16 @@ Ces règles ne sont pas des recommandations. Elles sont vérifiées à chaque
 
 ## 4. Signature de transaction — écran de confirmation obligatoire
 
+**PLANNED / non implémenté.** Aucun chemin de signature n'existe aujourd'hui :
+l'application ne construit aucune transaction et n'appelle ni
+`signAndSendTransactions` ni `signMessages`. Cette section décrit la règle qui
+s'appliquera **dès** qu'un tel chemin sera ajouté (T10). Elle est bloquante :
+tant qu'elle n'est pas satisfaite, aucune fonctionnalité d'écriture ne doit
+être livrée.
+
 Aucun appel à `signAndSendTransactions` / `signMessages` sans passer par
-l'écran `ConfirmTransaction`. Cet écran affiche, en clair, AVANT toute
-signature :
+l'écran de confirmation (écran à créer, `ConfirmTransaction`). Cet écran
+affichera, en clair, AVANT toute signature :
 
 1. Réseau : `DEVNET` (libellé visible et non ambigu).
 2. Action : « Approuver la proposition #N » ou « Exécuter la transaction #N ».
@@ -63,6 +74,10 @@ Toute instruction non décodable est affichée comme telle (« instruction
 illisible — vérifier sur l'explorer »), jamais masquée.
 
 ## 5. Instructions autorisées (liste blanche MVP)
+
+**PLANNED / non implémenté.** La liste blanche n'est pas encore appliquée dans
+le code : elle n'a de sens qu'accompagnée de l'écran de confirmation (§4).
+Liste prévue :
 
 - `multisig.instructions.proposalApprove`
 - `multisig.instructions.vaultTransactionExecute`
