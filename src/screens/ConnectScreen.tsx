@@ -14,7 +14,12 @@ import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
 import { useProposals } from '../squads/proposals';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
-import { PREVIEW_CASES, type DecodeStatus } from '../types/transactionReview';
+import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
+import type { DecodeStatus } from '../types/transactionReview';
+
+// Jeux de preview construits localement par le décodeur pur (aucun RPC,
+// aucune signature). Voir src/solana/decodeTransactionMessage.ts.
+const PREVIEW_CASES = buildReviewPreviews();
 
 type Phase = 'idle' | 'connecting' | 'disconnecting';
 

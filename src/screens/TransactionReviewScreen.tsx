@@ -6,8 +6,10 @@ import { useCallback } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import {
+  formatLamportsExact,
   type DecodeStatus,
   type ReviewField,
+  type SolAmount,
   type TransactionReviewModel,
 } from '../types/transactionReview';
 
@@ -22,10 +24,10 @@ function fieldText(field: ReviewField<string>): string {
   return field.known ? field.value : 'Unknown';
 }
 
-function amountText(field: ReviewField<{ lamports: number; unit: 'SOL' }>): string {
+/** Montant : SOL et lamports bruts, sans aucun arrondi. */
+function amountText(field: ReviewField<SolAmount>): string {
   if (!field.known) return 'Unknown';
-  const { lamports, unit } = field.value;
-  return `${lamports / 1_000_000_000} ${unit}`;
+  return `${formatLamportsExact(field.value.lamports)} (${field.value.lamports} lamports)`;
 }
 
 export interface TransactionReviewScreenProps {
@@ -37,7 +39,7 @@ export function TransactionReviewScreen({ model, onBack }: TransactionReviewScre
   // Aucune confirmation n'est possible dans cette mission, y compris pour un
   // décodage complet : le branchement on-chain n'existe pas encore (T11/T12).
   const canConfirm = false;
-  const needsWarning = model.decodeStatus !== 'decoded';
+  const needsWarning = model.decodeStatus !== 'decoded' || model.notes.length > 0;
 
   const handleBack = useCallback(() => {
     onBack();
@@ -65,11 +67,18 @@ export function TransactionReviewScreen({ model, onBack }: TransactionReviewScre
 
       {needsWarning ? (
         <View style={styles.warnBox}>
-          <Text style={styles.warnText}>
-            {model.decodeStatus === 'partial'
-              ? 'Warning: instruction only partially decoded. A critical field is missing. Verify on a devnet explorer before acting.'
-              : 'Warning: program not recognized. No interpretation was attempted. Verify on a devnet explorer before acting.'}
-          </Text>
+          {model.decodeStatus !== 'decoded' ? (
+            <Text style={styles.warnText}>
+              {model.decodeStatus === 'partial'
+                ? 'Warning: instruction only partially decoded. A critical field is missing. Verify on a devnet explorer before acting.'
+                : 'Warning: program not recognized. No interpretation was attempted. Verify on a devnet explorer before acting.'}
+            </Text>
+          ) : null}
+          {model.notes.map((note) => (
+            <Text key={note} style={styles.warnText}>
+              {note}
+            </Text>
+          ))}
         </View>
       ) : null}
 
@@ -109,6 +118,11 @@ export function TransactionReviewScreen({ model, onBack }: TransactionReviewScre
         ) : (
           <Text style={styles.fieldValue}>Unknown</Text>
         )}
+
+        <Text style={styles.fieldLabel}>Source</Text>
+        <Text selectable style={styles.fieldValue}>
+          {fieldText(model.source)}
+        </Text>
 
         <Text style={styles.fieldLabel}>Destination</Text>
         <Text selectable style={styles.fieldValue}>

@@ -91,7 +91,31 @@ Rien d'autre. Pas de création, pas de config transaction, pas de transfert
 direct depuis le wallet connecté, pas de `system_program::transfer` initié par
 nous.
 
-## 6. Journalisation et erreurs
+## 6. Règles de revue imposées par le décodeur (T09)
+
+Ces règles sont celles **effectivement implémentées** dans
+`src/solana/decodeTransactionMessage.ts`. Elles s'appliquent à toute revue
+affichée par `TransactionReviewScreen` :
+
+- seul `SystemProgram.transfer` est actuellement reconnu ;
+- toute autre instruction reste `unknown` (adresse brute préservée, aucune
+  interprétation) ;
+- une transaction comportant plusieurs instructions est classée `partial` tant
+  que toutes ses instructions ne sont pas reconnues — elle n'est jamais résumée
+  comme un transfert unique ;
+- une source différente du vault attendu entraîne `partial`, avec un
+  avertissement nommant la source décodée et le vault attendu ;
+- une Address Lookup Table non résolue bloque la revue (`unknown`) sans aucune
+  résolution RPC automatique ;
+- les frais restent `Unknown` tant qu'aucune simulation n'a été faite ;
+- toute future confirmation devra rester bloquée pour `partial` et pour
+  `unknown` ;
+- la confirmation est également **inactive aujourd'hui pour `decoded`** : le
+  branchement on-chain n'existe pas encore.
+
+Aucune approbation, aucune exécution et aucune signature n'est implémentée.
+
+## 7. Journalisation et erreurs
 
 - Erreurs affichées avec : contexte utilisateur + message brut du RPC.
 - Un rejet du wallet (refus de l'utilisateur) n'est jamais présenté comme une
@@ -99,7 +123,7 @@ nous.
 - Les signatures sont affichées et copiables ; un lien explorer devnet les
   accompagne (`?cluster=devnet` obligatoire).
 
-## 7. Checklist de revue (à passer à chaque tâche)
+## 8. Checklist de revue (à passer à chaque tâche)
 
 - [ ] Aucune référence à mainnet dans le diff.
 - [ ] Aucun secret, aucune clé privée, aucune seed phrase dans le diff.

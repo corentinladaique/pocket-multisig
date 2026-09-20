@@ -172,16 +172,33 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
   qu'aucune vault transaction n'existe ; le cas « liste non vide » reste donc
   non démontré sur la chaîne (seuls des comptes absents ont été testés).
 
-### T09 · Écran détail d'une proposition
+### T09 · Décodage local d'un message de transaction
 
-- Objectif : statut, votes, et message décodé.
-- Fichiers : `screens/ProposalScreen.tsx`, `src/squads/decode.ts`,
-  `src/ui/`.
-- Implémentation : `TransactionMessage.decompile` sur le message de la vault
-  transaction ; extraction programme cible, comptes, montant SOL si
-  `system_program::transfer`, sinon « instruction illisible ».
-- Acceptance : la proposition de la fixture affiche « Transfer X SOL vers Y » ;
-  une instruction inconnue est affichée explicitement comme non décodée.
+- Statut : **PARTIEL**. Le décodeur pur local est implémenté ; il n'est branché
+  à **aucune `VaultTransaction` Squads réelle** et aucune donnée on-chain n'a
+  été validée à ce titre. Ce n'est pas un écran de détail on-chain terminé.
+- Fichier créé : `src/solana/decodeTransactionMessage.ts` —
+  `decodeTransactionMessage(message, context, args?)`, fonction pure sans
+  `Connection`, sans RPC, sans wallet, sans stockage, sans hook React.
+- Périmètre d'interprétation : **seul `SystemProgram.transfer` est reconnu**.
+  Tout autre programme est classé `unknown` avec son adresse brute préservée et
+  aucune interprétation.
+- Montants : conservés en **`bigint`** (jamais convertis en `number`) et
+  affichés exactement en SOL et en lamports bruts via `formatLamportsExact`.
+- La source décodée est **comparée explicitement au vault attendu** ; une source
+  différente entraîne `partial` avec un avertissement nommant les deux adresses.
+- Plusieurs instructions ⇒ `partial` : pas de résumé présenté comme un transfert
+  unique entièrement décodé.
+- Address Lookup Tables non résolues ⇒ revue refusée (`unknown`) avec le message
+  « Address lookup table data is required to review this transaction. », **sans
+  aucune résolution RPC ni heuristique**.
+- Données d'instruction System invalides ⇒ `partial`, exception interceptée.
+- Validation : **sept scénarios hors ligne** (0 lamport, montant positif, source
+  inattendue, programme inconnu, multi-instructions, ALT non résolue, données
+  invalides) + le formatage exact, tous passés sans réseau ni signature.
+- Reste à faire : alimenter le décodeur avec `vaultTransaction.message` d'une
+  proposition réelle, puis n'autoriser la confirmation que pour `decoded` —
+  T11 et T12 restent **non réalisés**.
 
 ## Phase 2 — Écriture (chemin sensible)
 

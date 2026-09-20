@@ -1,8 +1,7 @@
 // Modèle de revue de transaction — LECTURE SEULE, aucun effet de bord.
-// Ce module ne contient aucun appel réseau et aucune fonction d'écriture :
-// il décrit uniquement ce qu'un futur écran de confirmation devra afficher.
-// Les jeux de données PREVIEW ci-dessous sont locaux et fictifs : ils ne
-// représentent aucune donnée on-chain.
+// Ce module ne contient ni appel réseau, ni fonction de signature, ni hook :
+// il ne décrit que ce qu'un écran de confirmation doit afficher, et fournit
+// les helpers de formatage exacts utilisés pour l'affichage.
 
 /** État de décodage d'une instruction. */
 export type DecodeStatus = 'decoded' | 'partial' | 'unknown';
@@ -25,7 +24,12 @@ export interface ProgramDescriptor {
 }
 
 export interface SolAmount {
-  lamports: number;
+  /**
+   * Montant en lamports, conservé en `bigint` : un `number` perdrait de la
+   * précision au-delà de 2^53 lamports (~9 M SOL) et ne doit jamais être
+   * utilisé pour transporter une valeur monétaire.
+   */
+  lamports: bigint;
   /** Unité toujours explicite à l'affichage. */
   unit: 'SOL';
 }
@@ -40,6 +44,8 @@ export interface TransactionReviewModel {
   signerWallet: string;
   program: ReviewField<ProgramDescriptor>;
   action: ReviewField<string>;
+  /** Compte source réellement décodé (distinct du vault attendu). */
+  source: ReviewField<string>;
   destination: ReviewField<string>;
   amount: ReviewField<SolAmount>;
   /** Renseigné uniquement si les frais sont réellement connus. */
@@ -47,82 +53,25 @@ export interface TransactionReviewModel {
   decodeStatus: DecodeStatus;
   /** Vrai pour un jeu de données local de démonstration. */
   isPreview: boolean;
+  /** Messages techniques lisibles (avertissements de revue). */
+  notes: string[];
 }
 
-/** Programmes reconnus par le MVP. Liste volontairement minimale. */
+/** Program ID du System Program : seul programme « interprétable » du MVP. */
 export const SYSTEM_PROGRAM_ID = '11111111111111111111111111111111';
 
-// ---------------------------------------------------------------------------
-// Jeux de données PREVIEW uniquement — aucune donnée on-chain.
-// Les adresses ci-dessous sont dérivées localement (sha256 de chaînes
-// « preview-only ») : format base58 valide, aucun compte existant, aucun lien
-// avec les membres réels de la fixture devnet.
-// ---------------------------------------------------------------------------
-
-const PREVIEW_MULTISIG = 'DxaHm47inZWeBQmd63hSmEw43kvP9xebNo1H6wVznFXi';
-const PREVIEW_VAULT = 'B6seGKSUaxfo7pQK4pUNKfhNbabA4gqKvV9iE6EByPHy';
-const PREVIEW_SIGNER = 'GZUrVZnw4QoHf3SvXrYvWfFzVbXXHxoA9UKSajWBfUuM';
-const PREVIEW_DESTINATION = '9hvAFWYxp2mbZeF7JmvnWZqrhxNrT8tCA2PMvcshHeuR';
-const PREVIEW_UNKNOWN_PROGRAM = 'AhrJ9RJNLuNtS1DWPY5BhnKKakZdbNnr7VaGbyCbvnkX';
-
-const basePreview = {
-  network: 'devnet' as const,
-  multisigAddress: PREVIEW_MULTISIG,
-  vaultAddress: PREVIEW_VAULT,
-  proposalIndex: 1,
-  proposalStatus: 'Preview',
-  signerWallet: PREVIEW_SIGNER,
-  fee: unknownField<SolAmount>(), // les frais ne sont connus qu'après simulation
-  isPreview: true,
-};
-
-/** Cas 1 : instruction reconnue, tous les champs critiques disponibles. */
-export const PREVIEW_DECODED: TransactionReviewModel = {
-  ...basePreview,
-  program: knownField({
-    id: SYSTEM_PROGRAM_ID,
-    label: 'System Program',
-  }),
-  action: knownField('System Program: transfer'),
-  destination: knownField(PREVIEW_DESTINATION),
-  amount: knownField({ lamports: 0, unit: 'SOL' }),
-  decodeStatus: 'decoded',
-};
-
-/** Cas 2 : instruction reconnue, mais destination inconnue. */
-export const PREVIEW_PARTIAL: TransactionReviewModel = {
-  ...basePreview,
-  program: knownField({
-    id: SYSTEM_PROGRAM_ID,
-    label: 'System Program',
-  }),
-  action: knownField('System Program: transfer'),
-  destination: unknownField<string>(),
-  amount: knownField({ lamports: 0, unit: 'SOL' }),
-  decodeStatus: 'partial',
-};
-
-/** Cas 3 : programme non reconnu, aucune interprétation tentée. */
-export const PREVIEW_UNKNOWN: TransactionReviewModel = {
-  ...basePreview,
-  // L'adresse du programme est une donnée brute toujours lisible ; en revanche
-  // aucun libellé, aucune action et aucun montant ne peuvent en être déduits.
-  program: knownField({
-    id: PREVIEW_UNKNOWN_PROGRAM,
-    label: 'Unrecognized program',
-  }),
-  action: unknownField<string>(),
-  destination: unknownField<string>(),
-  amount: unknownField<SolAmount>(),
-  decodeStatus: 'unknown',
-};
-
-export const PREVIEW_CASES: ReadonlyArray<{
-  key: DecodeStatus;
-  label: string;
-  model: TransactionReviewModel;
-}> = [
-  { key: 'decoded', label: 'decoded', model: PREVIEW_DECODED },
-  { key: 'partial', label: 'partial', model: PREVIEW_PARTIAL },
-  { key: 'unknown', label: 'unknown', model: PREVIEW_UNKNOWN },
-];
+/**
+ * Convertit des lamports en SOL **sans arrondi** : la partie entière et la
+ * partie fractionnaire sont calculées en arithmétique entière (`bigint`),
+ * jamais via une division flottante.
+ */
+export function formatLamportsExact(lamports: bigint): string {
+  const negative = lamports < 0n;
+  const absolute = negative ? -lamports : lamports;
+  const whole = absolute / 1_000_000_000n;
+  const fraction = absolute % 1_000_000_000n;
+  const sign = negative ? '-' : '';
+  if (fraction === 0n) return `${sign}${whole} SOL`;
+  const digits = fraction.toString().padStart(9, '0').replace(/0+$/, '');
+  return `${sign}${whole}.${digits} SOL`;
+}
