@@ -4,9 +4,13 @@
 // Il affiche un modèle déjà construit (voir src/types/transactionReview.ts).
 import { useCallback, useState } from 'react';
 import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
-import { useWalletGuard } from '../wallet/useWalletGuard';
+import {
+  isAlreadyApprovedVerdict,
+  useWalletGuard,
+} from '../wallet/useWalletGuard';
 import { checkReviewAllowlist } from '../squads/instructionAllowlist';
 import { planProposalApproval, type ApprovalPlan } from '../squads/proposalApproval';
 import { connection } from '../solana/connection';
@@ -74,6 +78,7 @@ export function TransactionReviewScreen({
   const needsWarning = model.decodeStatus !== 'decoded' || model.notes.length > 0;
 
   const guard = useWalletGuard(guardContext);
+  const { signAndSendTransactions } = useMobileWallet();
   const allowlist = checkReviewAllowlist(model);
 
   // T11a : condition locale stricte. Aucune donnée réseau n'est relue ici, et
@@ -81,10 +86,22 @@ export function TransactionReviewScreen({
   // confirmation reste désactivé dans cette mission.
   const canConfirm = computeCanConfirm(model, guard.status, allowlist.status);
 
+  // Cas utilisateur positif : le wallet connecté a DÉJÀ approuvé. Le verdict
+  // interne reste `blocked` — aucune confirmation n'est possible — mais
+  // l'affichage explique la situation au lieu d'une liste de raisons brutes.
+  const alreadyApproved = isAlreadyApprovedVerdict(guard);
+  const approvalsConfirmed = guardContext?.proposal?.approvedAddresses.length ?? 0;
+  const guardThreshold = guardContext?.multisig?.threshold ?? 0;
+
   // T11c : étape « ready to approve ». Le bouton final est branché sur la
   // PRÉPARATION uniquement — aucune ouverture du wallet, aucune signature,
   // aucun envoi. L'appel MWA reste hors de portée de cette mission.
   const [plan, setPlan] = useState<ApprovalPlan | null>(null);
+  const [signature, setSignature] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  // Une seule tentative d'envoi autorisée pour toute la session d'écran.
+  const [sendAttempted, setSendAttempted] = useState(false);
   const [planning, setPlanning] = useState(false);
 
   // Seconde confirmation locale (T11a) : aucun envoi, le bouton final reste
@@ -125,6 +142,37 @@ export function TransactionReviewScreen({
     setPlan(null);
   }, []);
 
+  /**
+   * T11d : UNE SEULE tentative d'envoi. Aucun retry, aucune reconstruction
+   * après un retour de signature. `vaultTransactionExecute` n'est jamais
+   * atteignable depuis ce composant.
+   */
+  const handleSendApproval = useCallback(async () => {
+    if (plan === null || plan.status !== 'ready') return;
+    if (sendAttempted || sending) return;
+    if (guardContext === null || guardContext.walletAddress === null) return;
+    setSendAttempted(true);
+    setSending(true);
+    setSendError(null);
+    try {
+      const latest = await connection.getLatestBlockhash('confirmed');
+      const message = new TransactionMessage({
+        payerKey: new PublicKey(guardContext.walletAddress),
+        recentBlockhash: latest.blockhash,
+        instructions: [plan.instruction],
+      }).compileToV0Message([]);
+      const transaction = new VersionedTransaction(message);
+      const minContextSlot = await connection.getSlot('confirmed');
+      // Unique demande MWA : le wallet signe ET envoie.
+      const returned = await signAndSendTransactions(transaction, minContextSlot);
+      setSignature(returned);
+    } catch (caught: unknown) {
+      setSendError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setSending(false);
+    }
+  }, [connection, guardContext, plan, sendAttempted, sending, signAndSendTransactions]);
+
 
 
   if (plan !== null) {
@@ -132,6 +180,8 @@ export function TransactionReviewScreen({
     // wallet, aucune signature, aucun envoi — l'appel MWA est délibérément
     // laissé hors de ce composant.
     const threshold = guardContext?.multisig?.threshold ?? 0;
+    // Le bouton final n'est actif qu'après TOUS les contrôles, et une seule fois.
+    const canSend = plan.status === 'ready' && !sendAttempted && !sending;
     return (
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
         <Text style={styles.badge}>DEVNET</Text>
@@ -185,16 +235,34 @@ export function TransactionReviewScreen({
 
             <Text style={styles.fieldLabel}>Execution</Text>
             <Text style={styles.fieldValue}>No automatic execution.</Text>
+
+            {signature !== null ? (
+              <>
+                <Text style={styles.fieldLabel}>Signature</Text>
+                <Text selectable style={styles.fieldValue}>
+                  {signature}
+                </Text>
+              </>
+            ) : null}
           </View>
         )}
 
+        {sendError !== null ? (
+          <Text style={styles.warnText}>Send failed: {sendError}</Text>
+        ) : null}
+
         <Pressable
           accessibilityRole="button"
-          accessibilityState={{ disabled: true }}
-          disabled
-          style={[styles.button, styles.disabled]}
+          accessibilityState={{ disabled: !canSend }}
+          disabled={!canSend}
+          onPress={() => {
+            void handleSendApproval();
+          }}
+          style={[styles.button, canSend ? null : styles.disabled]}
         >
-          <Text style={styles.buttonText}>Approve now (requires authorization)</Text>
+          <Text style={styles.buttonText}>
+            {sending ? 'Waiting for wallet…' : 'Approve now'}
+          </Text>
         </Pressable>
 
         <Pressable
@@ -388,14 +456,26 @@ export function TransactionReviewScreen({
         <Text style={styles.fieldLabel}>Fees</Text>
         <Text style={styles.fieldValue}>{amountText(model.fee)}</Text>
       <Text style={styles.fieldLabel}>Wallet guard</Text>
-        <Text style={guard.status === 'allowed' ? styles.fieldValue : styles.warnText}>
-          {guard.status === 'allowed' ? 'allowed' : `blocked — ${guard.reasons.length} reason(s)`}
-        </Text>
-        {guard.reasons.map((reason) => (
-          <Text key={reason} style={styles.warnText}>
-            • {reason}
-          </Text>
-        ))}
+        {alreadyApproved ? (
+          <>
+            <Text style={styles.onchainLine}>Approved by this wallet</Text>
+            <Text style={styles.fieldValue}>
+              {approvalsConfirmed} of {guardThreshold} approvals confirmed on Devnet
+            </Text>
+            <Text style={styles.fieldValue}>Waiting for 1 more approval</Text>
+          </>
+        ) : (
+          <>
+            <Text style={guard.status === 'allowed' ? styles.fieldValue : styles.warnText}>
+              {guard.status === 'allowed' ? 'allowed' : `blocked — ${guard.reasons.length} reason(s)`}
+            </Text>
+            {guard.reasons.map((reason) => (
+              <Text key={reason} style={styles.warnText}>
+                • {reason}
+              </Text>
+            ))}
+          </>
+        )}
 
         <Text style={styles.fieldLabel}>Instruction allowlist</Text>
         <Text style={allowlist.allowed ? styles.fieldValue : styles.warnText}>

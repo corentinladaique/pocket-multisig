@@ -278,18 +278,30 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 
 ### T11 · Approuver une proposition
 
-- Objectif : `proposalApprove` signé via MWA, après confirmation.
-- Fichiers : `src/squads/actions.ts`, `screens/ProposalScreen.tsx`,
-  `src/ui/`.
-- Acceptance : sur la fixture, l'approbation passe le statut à `Approved` ;
-  la signature est affichée avec le lien explorer devnet ; le bouton est
-  désactivé si le membre n'a pas la permission Vote.
+- Statut : **RÉALISÉ** pour l'approbation mobile unique.
+- Approbation **confirmée on-chain** depuis le Seeker : signature
+  `3eEHoPURfothbgacpnWiVqiXpFYjByGZjWV6EBVTG5T6Rpd8UZx5bHFEvWB5aNhV8kQQ7FwgfNLZfBzBVXTJFD6v`,
+  slot `501360279`, `meta.err = null`, fee payer = wallet Seeker.
+- `approved.length = 1` (`7QYS4eNEF4givC2HPDhu6GYV1tR3bAji6Y5Fz3xdNKXg`), seuil 2/2,
+  statut toujours **`Active`** — le SDK ne passe à `Approved` qu'au seuil atteint.
+- **Anti-double approbation validé** : le guard repasse en `blocked` (raison
+  « wallet a déjà approuvé ») et l'écran affiche un état positif — « Approved by
+  this wallet », « 1 of 2 approvals confirmed on Devnet », « Waiting for 1 more
+  approval » — le bouton d'approbation restant désactivé.
+- Périmètre réellement implémenté : préparation gardée (`planProposalApproval`),
+  seconde confirmation locale, une seule tentative d'envoi (`sendAndSendTransactions`
+  via MWA), aucune reconstruction après signature, aucun retry.
+- Fichiers : `src/squads/proposalApproval.ts`, `src/wallet/useWalletGuard.ts`,
+  `src/squads/instructionAllowlist.ts`, `src/screens/TransactionReviewScreen.tsx`,
+  `src/screens/ConnectScreen.tsx`.
+- Aucune exécution : `vaultTransactionExecute` n'est jamais atteignable, le vault
+  reste non financé (0 lamport). T12 reste **non réalisé**.
 
 ### T12 · Exécuter une transaction
 
+- Statut : **NON RÉALISÉ**. Aucun code d'exécution, aucun appel
+  `vaultTransactionExecute`, aucune dépense du vault.
 - Objectif : `vaultTransactionExecute` signé via MWA, après confirmation.
-- Fichiers : `src/squads/actions.ts`, `screens/ProposalScreen.tsx`,
-  `src/ui/`.
 - Acceptance : bouton actif seulement si statut `Approved` et permission
   Execute ; après exécution le statut passe à `Executed` et le programme cible
   a reçu l'instruction.

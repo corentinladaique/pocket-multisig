@@ -45,6 +45,22 @@ export type GuardVerdict =
   | { status: 'allowed'; reasons: string[] }
   | { status: 'blocked'; reasons: string[] };
 
+/** Marque exacte du refus « ce wallet a déjà approuvé ». */
+export const ALREADY_APPROVED_MARKER = 'has already approved this proposal';
+
+/**
+ * Vrai si le verdict est bloqué UNIQUEMENT parce que le wallet connecté a déjà
+ * approuvé. Le verdict reste `blocked` : seul l'affichage change.
+ */
+export function isAlreadyApprovedVerdict(verdict: GuardVerdict): boolean {
+  return (
+    verdict.status === 'blocked' &&
+    verdict.reasons.length === 1 &&
+    verdict.reasons[0] !== undefined &&
+    verdict.reasons[0].includes(ALREADY_APPROVED_MARKER)
+  );
+}
+
 /** Marque d'une ALT non résolue posée par le décodeur. */
 const ALT_MARKER = 'Address lookup table data is required';
 
@@ -111,7 +127,7 @@ export function evaluateReviewGuard(
       reasons.push(`Proposal status is ${proposal.status}, expected Active.`);
     }
     if (walletAddress !== null && proposal.approvedAddresses.includes(walletAddress)) {
-      reasons.push(`${walletAddress} has already approved this proposal.`);
+      reasons.push(`${walletAddress} ${ALREADY_APPROVED_MARKER}.`);
     }
   }
 
