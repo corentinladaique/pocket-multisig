@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +13,8 @@ import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
 import { useProposals } from '../squads/proposals';
+import { TransactionReviewScreen } from './TransactionReviewScreen';
+import { PREVIEW_CASES, type DecodeStatus } from '../types/transactionReview';
 
 type Phase = 'idle' | 'connecting' | 'disconnecting';
 
@@ -45,6 +48,7 @@ export function ConnectScreen() {
     msig.view?.staleTransactionIndex ?? 0,
   );
   const [multisigInput, setMultisigInput] = useState('');
+  const [previewCase, setPreviewCase] = useState<DecodeStatus | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -74,8 +78,23 @@ export function ConnectScreen() {
 
   const busy = phase !== 'idle';
 
+  // Preview locale (développement uniquement) : affiche un modèle fictif.
+  // Aucun appel réseau, aucune action au montage, fermeture par Back seulement.
+  const activePreview = PREVIEW_CASES.find((entry) => entry.key === previewCase);
+  if (activePreview) {
+    return (
+      <TransactionReviewScreen
+        model={activePreview.model}
+        onBack={() => setPreviewCase(null)}
+      />
+    );
+  }
+
   return (
-    <View style={styles.container}>
+    <ScrollView
+      contentContainerStyle={styles.container}
+      keyboardShouldPersistTaps="handled"
+    >
       <Text style={styles.badge}>DEVNET</Text>
       <Text style={styles.title}>Pocket Multisig</Text>
 
@@ -260,7 +279,28 @@ export function ConnectScreen() {
           ) : null}
         </View>
       ) : null}
-    </View>
+
+      {__DEV__ ? (
+        <View style={styles.previewBlock}>
+          <Text style={styles.previewHeading}>Development only</Text>
+          <Text style={styles.previewHint}>
+            Local fixture — not on-chain data
+          </Text>
+          {PREVIEW_CASES.map((entry) => (
+            <Pressable
+              key={entry.key}
+              accessibilityRole="button"
+              onPress={() => setPreviewCase(entry.key)}
+              style={styles.previewButton}
+            >
+              <Text style={styles.previewButtonText}>
+                Preview confirmation screen ({entry.label})
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </ScrollView>
   );
 }
 
@@ -268,9 +308,46 @@ const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
-    flex: 1,
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 24,
+    paddingBottom: 48,
+  },
+  previewBlock: {
+    alignSelf: 'stretch',
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    marginTop: 32,
+    padding: 14,
+  },
+  previewHeading: {
+    color: '#6b7280',
+    fontSize: 11,
+    textAlign: 'center',
+    textTransform: 'uppercase',
+  },
+  previewHint: {
+    color: '#9ca3af',
+    fontSize: 11,
+    marginBottom: 10,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+  previewButton: {
+    alignItems: 'center',
+    backgroundColor: '#f3f4f6',
+    borderRadius: 8,
+    marginTop: 6,
+    minHeight: 40,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  previewButtonText: {
+    color: '#374151',
+    fontSize: 13,
+    fontWeight: '600',
   },
   badge: {
     backgroundColor: '#e8f0fe',

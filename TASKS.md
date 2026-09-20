@@ -185,14 +185,24 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 
 ## Phase 2 — Écriture (chemin sensible)
 
-### T10 · Écran de confirmation
+### T10 · Écran de confirmation (revue locale)
 
-- Objectif : implémenter SECURITY §4 avant toute signature (aucun envoi).
-- Fichiers : `screens/ConfirmScreen.tsx`, `src/ui/ConfirmCard.tsx`, `src/solana/guards.ts`.
-- Implémentation : les 8 informations obligatoires + les 2 validations
-  programmatiques (feePayer, liste blanche de programmes).
-- Acceptance : test unitaire — une transaction dont `feePayer` n'est pas
-  l'adresse connectée est refusée ; un programme hors liste blanche est refusé.
+- Statut : **PARTIEL**. La revue locale existe et affiche les champs exigés,
+  mais elle n'est **branchée à aucune donnée on-chain** et **ne permet aucune
+  confirmation active** : le bouton de confirmation est désactivé en permanence.
+- Fichiers créés : `src/types/transactionReview.ts` (modèle strict +
+  `DecodeStatus` + jeux de données preview locaux),
+  `src/screens/TransactionReviewScreen.tsx` (composant de revue, lecture seule).
+  `src/screens/ConnectScreen.tsx` : ScrollView + bouton de preview sous `__DEV__`.
+- Modèle : chaque champ non disponible est modélisé `{ known: false }` et
+  affiché « Unknown » — jamais déduit ni inventé. Trois états : `decoded`,
+  `partial`, `unknown`, testés sur le Seeker avec les trois jeux preview.
+- Sécurité : aucune fonction d'écriture importée, aucun appel RPC, aucune
+  action au montage, aucune fermeture automatique, retour par bouton explicite,
+  confirmation impossible pour tous les états y compris `decoded`.
+- Reste à faire (T11/T12) : décoder une vraie `VaultTransaction` du SDK, brancher
+  le modèle sur ces données réelles, puis activer la confirmation après
+  l'implémentation de la liste blanche et de `useWalletGuard`.
 
 ### T11 · Approuver une proposition
 

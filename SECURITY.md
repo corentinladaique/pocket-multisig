@@ -44,16 +44,21 @@ Ces règles ne sont pas des recommandations. Elles sont vérifiées à chaque
 
 ## 4. Signature de transaction — écran de confirmation obligatoire
 
-**PLANNED / non implémenté.** Aucun chemin de signature n'existe aujourd'hui :
-l'application ne construit aucune transaction et n'appelle ni
-`signAndSendTransactions` ni `signMessages`. Cette section décrit la règle qui
-s'appliquera **dès** qu'un tel chemin sera ajouté (T10). Elle est bloquante :
-tant qu'elle n'est pas satisfaite, aucune fonctionnalité d'écriture ne doit
-être livrée.
+**PREVIEW LOCALE IMPLÉMENTÉE — AUCUNE ACTION ON-CHAIN.** L'écran de revue
+existe (`src/screens/TransactionReviewScreen.tsx`) et affiche tous les champs
+exigés ci-dessous, mais il n'est branché à **aucune** donnée on-chain : il ne
+reçoit que des modèles locaux de démonstration
+(`src/types/transactionReview.ts`), ouverts par un bouton visible uniquement
+sous `__DEV__` et étiquetés « Development preview — not on-chain data ».
 
-Aucun appel à `signAndSendTransactions` / `signMessages` sans passer par
-l'écran de confirmation (écran à créer, `ConfirmTransaction`). Cet écran
-affichera, en clair, AVANT toute signature :
+Aucun chemin de signature n'existe : l'application ne construit aucune
+transaction et n'appelle ni `signAndSendTransactions` ni `signMessages`. Le
+bouton de confirmation est présent mais **désactivé** (« Confirmation not
+available yet ») et le restera tant que T11/T12 ne sont pas implémentés. La
+règle ci-dessous reste bloquante pour ce moment-là : aucune fonctionnalité
+d'écriture ne doit être livrée avant qu'elle soit satisfaite.
+
+Cet écran affiche, en clair, AVANT toute signature :
 
 1. Réseau : `DEVNET` (libellé visible et non ambigu).
 2. Action : « Approuver la proposition #N » ou « Exécuter la transaction #N ».
