@@ -33,13 +33,37 @@ Validées sur un Seeker physique (Android 16, devnet) :
 - Validation locale des adresses saisies et messages d'erreur lisibles
   (adresse invalide, compte absent).
 
+## Controlled devnet fixture
+
+Une fixture Squads Protocol v4 **contrôlée** est disponible sur devnet : un
+multisig 2/2 dont les deux membres nous appartiennent (le wallet public du
+Seeker et une clé d'approbation locale au projet).
+
+- cluster : **devnet**
+- multisig (adresse de configuration) :
+  `BbNr77iyMyn8ipzX2PLGN8mDTCA1cMconfZSzzDcW7xi`
+- vault d'index 0 :
+  `GLcZLbQZpMed3m8dAFF7XtNEn4TjedeLGKZeJSAG6yGG`
+- seuil : **2 / 2**, permissions Initiate + Vote + Execute pour les deux membres
+- transaction de création :
+  `4sHZmbyiFDeP4LxjYPXh1M7Y9YMrz9UK9WeE4vzG3sBDthmjEWD3Bdgfa6BmhF3cszH7iJXGBNy6a2kAPriofMGc`
+
+La lecture du seuil, des membres, de leurs permissions et du vault a été
+validée en conditions réelles sur un **Solana Seeker**, en lisant le compte via
+le SDK officiel.
+
+Le **vault n'est pas financé** : aucune valeur ne peut en sortir, aucune
+proposition n'a été créée et aucune approbation ni exécution n'a été testée.
+
+Toutes ces adresses sont des **données publiques de devnet, sans valeur
+réelle**. Le projet reste un prototype de hackathon, non audité, à ne pas
+utiliser pour gérer des fonds.
+
 ## Non implémenté à ce stade
 
 - Découverte automatique des multisigs d'un wallet (reportée après le MVP).
 - Création de multisig, propositions, approbation et exécution depuis
   l'application : à venir.
-- Aucun multisig de test contrôlé n'a encore été déployé sur devnet
-  (le faucet public a refusé les financements demandés).
 
 ## Stack technique
 
@@ -159,7 +183,7 @@ pris.
 | Connexion / déconnexion Mobile Wallet Adapter | Validé sur Seeker |
 | État réseau et RPC devnet | Validé sur Seeker |
 | Lecture d'un multisig Squads v4 par adresse | Validé sur Seeker |
-| Fixture devnet contrôlée (multisig 2/2) | Bloqué : faucet devnet indisponible |
+| Fixture devnet contrôlée (multisig 2/2) | Créée, confirmée on-chain et validée sur Seeker |
 | Découverte automatique des multisigs | Reportée après le MVP |
 | Propositions et approbations depuis l'application | À venir |
 

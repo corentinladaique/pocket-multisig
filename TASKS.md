@@ -10,12 +10,21 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 
 - Objectif : prouver qu'on sait produire un multisig v4 + une proposition sur
   devnet sans backend, avant d'écrire l'app.
-- Statut : BLOQUÉ sur le financement devnet. Le script existe et tourne
-  (`--check` OK : creationFee = 0, besoin estimé 3 261 200 lamports), les clés
-  de test sont générées hors dépôt, mais l'unique airdrop demandé a été
-  refusé par le rate limit du faucet public devnet. Aucune transaction envoyée.
-  Débloquer en finançant `GNhzPfjYdmcb4bJyMyN7szgNMXJQmscURVyWdpEYJN6E`
-  (devnet), puis relancer `npx tsx scripts/create-devnet-fixture.ts`.
+- Statut : FAIT. Fixture Squads v4 devnet contrôlée créée le 2026-09-19 et
+  confirmée on-chain ; relecture SDK conforme (seuil, membres, permissions,
+  vault) ; validation de l'affichage depuis le Seeker conforme. Le vault
+  d'index 0 est dérivé mais **non financé** : aucun SOL n'y a été déposé.
+  **Ne pas relancer ce script pour cette fixture** — elle existe déjà ; le
+  relancer créerait un multisig différent (nouvelle `createKey`).
+- Fixture publique (hors dépôt, `~/.config/pocket-multisig/devnet/fixture-public.json`) :
+  - cluster : devnet
+  - multisig : `BbNr77iyMyn8ipzX2PLGN8mDTCA1cMconfZSzzDcW7xi`
+  - vault index 0 : `GLcZLbQZpMed3m8dAFF7XtNEn4TjedeLGKZeJSAG6yGG`
+  - threshold : 2 / 2, deux membres (wallet public du Seeker + approver local
+    devnet), permissions Initiate + Vote + Execute pour les deux
+  - transaction de création :
+    `4sHZmbyiFDeP4LxjYPXh1M7Y9YMrz9UK9WeE4vzG3sBDthmjEWD3Bdgfa6BmhF3cszH7iJXGBNy6a2kAPriofMGc`
+  - aucune proposition créée, aucune approbation testée, aucune exécution testée
 - Livrable : `scripts/create-devnet-fixture.ts`.
 - Contenu : génération de keypairs jetables, airdrop devnet, création d'un
   multisig 2/3 (`multisigCreateV2`), création d'une vault transaction + proposal
@@ -107,12 +116,9 @@ Une commande qui échoue s'analyse avant toute nouvelle modification.
 - RPC : 1 seul appel par chargement (`getAccountInfo`).
 - Statut : FAIT — validé sur le Seeker. Les trois tests exigés sont réalisés :
   compte devnet chargé, threshold affiché, membres et vault affichés.
-  Adresse de test devnet utilisée ponctuellement (non contrôlée par nous, non
-  codée en dur, origine : sonde RPC de la phase de cadrage) :
-  `11FoUQtwkN4SDk5VKDef4P1ndJHSWgAfNfLLXihW1Fd` — 2 membres, seuil 1/2.
-- Reste à faire : créer une fixture devnet **contrôlée** (keypair nous
-  appartenant) pour tester un multisig dont nous maîtrisons les membres ; la
-  découverte automatique reste reportée (voir T05).
+- Reste à faire : aucune fixture tierce n'est plus nécessaire. La fixture
+  contrôlée (voir T00) sert désormais de référence pour les tests de lecture.
+  La découverte automatique reste reportée après le MVP (voir T05).
 
 ### T06 · Écran liste des multisigs
 
