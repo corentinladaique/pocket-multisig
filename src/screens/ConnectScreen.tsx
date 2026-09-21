@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { PublicKey } from '@solana/web3.js';
@@ -21,6 +25,11 @@ import { computeProposalDecision, summarizeDecisions, summarizeOperation, loadPr
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
+
+// Marge conservee entre le haut du bloc multisig (label + champ + bouton Load
+// multisig) et le haut de la zone visible : uniquement une valeur de confort,
+// aucune dimension d'ecran codee en dur.
+const MULTISIG_KEYBOARD_MARGIN = 24;
 
 // Jeux de preview construits localement par le décodeur pur (aucun RPC,
 // aucune signature). Voir src/solana/decodeTransactionMessage.ts.
@@ -70,6 +79,52 @@ export function ConnectScreen() {
   // Ref et non state : marquer la tentative ne doit PAS provoquer un rendu,
   // sinon l'effet se relance et annule la lecture en cours (cleanup).
   const inboxAttemptedRef = useRef<number | null>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const multisigInputRef = useRef<TextInput>(null);
+  // Position verticale reelle du bloc multisig (label + champ + bouton Load
+  // multisig), mesuree dans le repere du contenu scrollable.
+  const multisigBlockYRef = useRef<number | null>(null);
+  // Le champ est-il actuellement focus ? Le clavier peut s'ouvrir pour une
+  // autre raison : on ne remonte l'ecran que si la saisie multisig est active.
+  const multisigFocusedRef = useRef(false);
+
+  const onMultisigBlockLayout = useCallback((event: LayoutChangeEvent) => {
+    multisigBlockYRef.current = event.nativeEvent.layout.y;
+  }, []);
+
+  const onMultisigInputFocus = useCallback(() => {
+    multisigFocusedRef.current = true;
+  }, []);
+
+  const onMultisigInputBlur = useCallback(() => {
+    multisigFocusedRef.current = false;
+  }, []);
+
+  /**
+   * Android : la fenetre n'est plus redimensionnee par l'IME en edge-to-edge,
+   * donc on remonte explicitement le bloc multisig a l'ouverture reelle du
+   * clavier (keyboardDidShow), en utilisant la position mesuree. Aucun delai
+   * arbitraire, aucune fermeture du clavier, aucune remise a zero du texte.
+   */
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      if (!multisigFocusedRef.current) return;
+      const blockY = multisigBlockYRef.current;
+      if (blockY === null) return;
+      const targetY = Math.max(blockY - MULTISIG_KEYBOARD_MARGIN, 0);
+      if (__DEV__) {
+        console.log(
+          '[keyboard] keyboardDidShow ; blockY =',
+          blockY,
+          '; scrollTo.y =',
+          targetY,
+        );
+      }
+      scrollViewRef.current?.scrollTo({ animated: true, y: targetY });
+    });
+    return () => subscription.remove();
+  }, []);
 
   // Boite de reception de decisions : classement par etat ON-CHAIN reel.
   const walletAddress = account === undefined ? null : account.address.toString();
@@ -286,11 +341,18 @@ export function ConnectScreen() {
     );
   }
 
+  // Android : la fenetre n'etant plus redimensionnee par l'IME en edge-to-edge,
+  // le KeyboardAvoidingView en mode "padding" est necessaire sur les deux
+  // plateformes (aucune hauteur codee en dur).
   return (
-    <ScrollView
-      contentContainerStyle={styles.container}
-      keyboardShouldPersistTaps="handled"
-    >
+    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+      <ScrollView
+        contentContainerStyle={styles.container}
+        keyboardDismissMode="on-drag"
+        keyboardShouldPersistTaps="handled"
+        ref={scrollViewRef}
+        style={styles.scrollView}
+      >
       <Text style={styles.badge}>DEVNET</Text>
       <Text style={styles.title}>Pocket Multisig</Text>
 
@@ -357,15 +419,18 @@ export function ConnectScreen() {
       </View>
 
       {account ? (
-        <View style={styles.msigBlock}>
+        <View onLayout={onMultisigBlockLayout} style={styles.msigBlock}>
           <Text style={styles.msigHeading}>Multisig (lecture seule)</Text>
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
             editable={msig.status !== 'loading'}
+            onBlur={onMultisigInputBlur}
             onChangeText={setMultisigInput}
+            onFocus={onMultisigInputFocus}
             placeholder="Multisig address"
             placeholderTextColor="#9ca3af"
+            ref={multisigInputRef}
             style={styles.input}
             value={multisigInput}
           />
@@ -548,17 +613,30 @@ export function ConnectScreen() {
         </View>
       ) : null}
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  // Conteneur du KeyboardAvoidingView : occupe tout l'espace disponible.
+  keyboardAvoider: {
+    flex: 1,
+    width: '100%',
+  },
+  // Le ScrollView remplit ce conteneur ; le centrage reste assure par container.
+  scrollView: {
+    flex: 1,
+    width: '100%',
+  },
   container: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
     flexGrow: 1,
     justifyContent: 'center',
     padding: 24,
-    paddingBottom: 48,
+    // Assez d'espace sous le contenu pour que le bouton "Load multisig" et le
+    // bouton "Clear" restent atteignables quand le clavier est ouvert.
+    paddingBottom: 96,
   },
   inboxHeading: {
     color: '#111827',
