@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "pocket-multisig",
+    "name": "Pocket Multisig",
     "slug": "pocket-multisig",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -17,7 +17,8 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.pocketmultisig"
+      "package": "com.corentinladaique.pocketmultisig",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"
