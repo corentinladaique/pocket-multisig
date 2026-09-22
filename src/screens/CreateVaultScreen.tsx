@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
+  BackHandler,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -12,7 +14,10 @@ import {
 } from 'react-native';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
+import { VaultPreviewScreen } from './VaultPreviewScreen';
+import { VaultTransactionPreviewScreen } from './VaultTransactionPreviewScreen';
 import {
+  buildVaultCreationRequest,
   createEmptyDraft,
   createMember,
   evaluateDraft,
@@ -59,6 +64,12 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
 
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  // Preview de transaction (lecture seule) : etage supplementaire du flux
+  // Review -> Preview -> Transaction Preview -> Back.
+  const [transactionPreviewOpen, setTransactionPreviewOpen] = useState(false);
+
+  // Preview de creation (lecture seule) : Review -> Preview -> Back.
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const memberCounter = useRef(0);
 
@@ -77,6 +88,9 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   );
   const draft = useMemo(() => evaluateDraft(draftInput), [draftInput]);
   const ready = isDraftReady(draft);
+  // Demande locale de creation : purement derivee du draft, utilisee pour le
+  // recapitulatif de l'etape Review. Aucun appel reseau.
+  const request = useMemo(() => buildVaultCreationRequest(draft), [draft]);
 
   const walletAddress = account === undefined ? null : account.address.toString();
   const walletAlreadyMember =
@@ -208,6 +222,36 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
     setStep((previous) => Math.min(previous + 1, STEP_COUNT));
   }, []);
 
+  // Retour systeme Android (bouton physique ET geste, tous deux routes vers
+  // onBackPressed) : etape precedente tant qu'il en reste, sinon confirmation
+  // d'abandon. Remonter d'une etape ne perd aucune donnee saisie.
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
+
+  const requestDiscard = useCallback(() => {
+    Alert.alert('Discard vault setup?', 'Your current setup will be lost.', [
+      { style: 'cancel', text: 'Continue editing' },
+      { onPress: () => onCancelRef.current(), style: 'destructive', text: 'Discard' },
+    ]);
+  }, []);
+
+  useEffect(() => {
+    // La preview gere elle-meme le retour vers Review : on ne double pas le
+    // listener tant qu'elle est affichee.
+    if (previewOpen) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (step > 1) {
+        setStep((previous) => Math.max(previous - 1, 1));
+        return true;
+      }
+      requestDiscard();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [previewOpen, requestDiscard, step]);
+
   const requiredMembers = minMembersFor(setupType ?? 'custom');
 
   const canContinue =
@@ -220,6 +264,28 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
           : step === 4
             ? draft.validationErrors.length === 0
             : true;
+
+  // Preview de transaction : ecran lecture seule, sans construction Squads.
+  if (transactionPreviewOpen) {
+    return (
+      <VaultTransactionPreviewScreen
+        onBack={() => setTransactionPreviewOpen(false)}
+        request={request}
+      />
+    );
+  }
+
+  // Preview de creation : ecran lecture seule derive de la demande locale.
+  // Aucun appel reseau, aucune signature, aucune creation.
+  if (previewOpen) {
+    return (
+      <VaultPreviewScreen
+        onBack={() => setPreviewOpen(false)}
+        onOpenTransactionPreview={() => setTransactionPreviewOpen(true)}
+        request={request}
+      />
+    );
+  }
 
   return (
     <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
@@ -237,7 +303,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             accessibilityRole="button"
             accessibilityLabel="Cancel vault creation"
             hitSlop={{ bottom: 8, left: 8, right: 8, top: 8 }}
-            onPress={onCancel}
+            onPress={requestDiscard}
             style={styles.headerCancel}
           >
             <Text style={styles.retryText}>Cancel and back to inbox</Text>
@@ -506,6 +572,20 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             <Text style={styles.fieldLabel}>Network</Text>
             <Text style={styles.fieldValue}>Devnet</Text>
 
+            {/* Objet local derive (aucun RPC, aucune signature) : meme source de
+                verite que la future demande de creation Devnet. */}
+            <Text style={styles.fieldLabel}>Creation summary</Text>
+            <View style={styles.summaryBox}>
+              <Text style={styles.fieldValue}>Members: {request.memberCount}</Text>
+              <Text style={styles.fieldValue}>
+                Threshold: {request.threshold} of {request.memberCount}
+              </Text>
+              <Text style={styles.fieldValue}>Network: Devnet</Text>
+              <Text style={request.readyForCreation ? styles.statusReady : styles.warningText}>
+                State: {request.readyForCreation ? 'Ready' : 'Not Ready'}
+              </Text>
+            </View>
+
             <Text style={styles.fieldLabel}>Status</Text>
             <Text style={ready ? styles.statusReady : styles.warningText}>
               {ready ? 'Ready to create' : 'Not ready yet — see below'}
@@ -528,6 +608,15 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
                 ))}
               </View>
             ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Preview creation"
+              onPress={() => setPreviewOpen(true)}
+              style={[styles.button, styles.secondary]}
+            >
+              <Text style={styles.secondaryText}>Preview</Text>
+            </Pressable>
 
             <Pressable
               accessibilityRole="button"
@@ -661,6 +750,14 @@ const styles = StyleSheet.create({
     color: '#101317',
     fontSize: 13,
     marginTop: 2,
+  },
+  summaryBox: {
+    backgroundColor: '#f9fafb',
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 6,
+    padding: 12,
   },
   input: {
     borderColor: '#d1d5db',

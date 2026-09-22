@@ -180,3 +180,107 @@ export function evaluateDraft(input: VaultDraftInput): VaultDraft {
 export function isDraftReady(draft: VaultDraft): boolean {
   return draft.validationErrors.length === 0 && draft.vaultName.trim().length > 0;
 }
+
+/**
+ * Demande locale de creation de vault.
+ *
+ * Objet PUR derive de la configuration validee : il ne declenche aucun appel
+ * reseau, aucune signature et aucune creation on-chain. Il servira de seule
+ * entree a la future etape Devnet.
+ */
+export type VaultCreationRequest = {
+  vaultName: string;
+  threshold: number;
+  members: VaultMemberDraft[];
+  memberCount: number;
+  readyForCreation: boolean;
+  validationErrors: string[];
+  validationWarnings: string[];
+};
+
+/** Transforme le brouillon valide en demande de creation (aucun effet de bord). */
+export function buildVaultCreationRequest(draft: VaultDraft): VaultCreationRequest {
+  return {
+    vaultName: draft.vaultName.trim(),
+    threshold: draft.threshold,
+    // Copie des membres : le draft reste immuable apres construction.
+    members: draft.members.map((member) => ({ ...member })),
+    memberCount: draft.members.length,
+    readyForCreation: isDraftReady(draft),
+    validationErrors: [...draft.validationErrors],
+    validationWarnings: [...draft.validationWarnings],
+  };
+}
+
+export type PreviewSigner = {
+  label: string;
+  publicKey: string;
+};
+
+/**
+ * Donnees de la preview de creation : exactement ce qui serait cree, en lecture
+ * seule. Aucun appel reseau, aucune signature, aucune creation.
+ */
+export type PreviewData = {
+  vaultName: string;
+  threshold: number;
+  memberCount: number;
+  network: 'devnet';
+  signers: PreviewSigner[];
+  readyForCreation: boolean;
+  validationErrors: string[];
+  validationWarnings: string[];
+};
+
+/** Derive la preview depuis la demande de creation (fonction pure). */
+export function buildPreviewData(request: VaultCreationRequest): PreviewData {
+  return {
+    vaultName: request.vaultName,
+    threshold: request.threshold,
+    memberCount: request.memberCount,
+    // Devnet uniquement : aucune autre valeur n'est possible dans le modele.
+    network: 'devnet',
+    signers: request.members.map((member) => ({
+      label: member.label,
+      publicKey: member.publicKey,
+    })),
+    readyForCreation: request.readyForCreation,
+    validationErrors: [...request.validationErrors],
+    validationWarnings: [...request.validationWarnings],
+  };
+}
+
+/**
+ * Seule operation representee pour l'instant : la creation du multisig.
+ * Aucune instruction Squads n'est construite ici.
+ */
+export type TransactionOperationType = 'create-multisig';
+
+/**
+ * Representation locale de la future transaction de creation : aucun message,
+ * aucun compte, aucune instruction reelle, aucune signature. Destinee a etre
+ * affichee puis remplacee plus tard par une construction on-chain verifiee.
+ */
+export type TransactionPreviewData = {
+  network: 'devnet';
+  operationType: TransactionOperationType;
+  signersCount: number;
+  threshold: number;
+  vaultName: string;
+  readyForSigning: boolean;
+  warnings: string[];
+};
+
+/** Derive la preview de transaction depuis la preview de creation (pure). */
+export function buildTransactionPreviewData(preview: PreviewData): TransactionPreviewData {
+  return {
+    network: preview.network,
+    operationType: 'create-multisig',
+    signersCount: preview.memberCount,
+    threshold: preview.threshold,
+    vaultName: preview.vaultName,
+    // Rien n'est signable tant que la configuration n'est pas valide.
+    readyForSigning: preview.readyForCreation,
+    warnings: [...preview.validationWarnings],
+  };
+}
