@@ -23,6 +23,7 @@ import { computeProposalDecision, summarizeDecisions, summarizeOperation, loadPr
   useProposals,
   type ProposalReviewResult, } from '../squads/proposals';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
+import { CreateVaultScreen } from './CreateVaultScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
 
@@ -71,6 +72,8 @@ export function ConnectScreen() {
   const [review, setReview] = useState<ProposalReviewResult | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Assistant local de configuration de vault (aucun RPC, aucune signature).
+  const [vaultCreationOpen, setVaultCreationOpen] = useState(false);
   // Prechargement de l'operation de la proposition PRIORITAIRE : un seul appel
   // cible (getAccountInfo sur sa VaultTransaction), jamais pour les autres.
   const [inboxDecoded, setInboxDecoded] = useState<ProposalReviewResult | null>(null);
@@ -341,6 +344,11 @@ export function ConnectScreen() {
     );
   }
 
+  // Assistant local de creation de vault : ecran dedie, sortie par Cancel.
+  if (vaultCreationOpen) {
+    return <CreateVaultScreen onCancel={() => setVaultCreationOpen(false)} />;
+  }
+
   // Android : la fenetre n'etant plus redimensionnee par l'IME en edge-to-edge,
   // le KeyboardAvoidingView en mode "padding" est necessaire sur les deux
   // plateformes (aucune hauteur codee en dur).
@@ -581,6 +589,17 @@ export function ConnectScreen() {
         </View>
       ) : null}
 
+      {account ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Create a vault"
+          onPress={() => setVaultCreationOpen(true)}
+          style={[styles.button, styles.secondary, styles.createVaultButton]}
+        >
+          <Text style={styles.secondaryText}>Create a vault</Text>
+        </Pressable>
+      ) : null}
+
       {error ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
@@ -815,6 +834,11 @@ const styles = StyleSheet.create({
   },
   secondary: {
     backgroundColor: '#f3f4f6',
+  },
+  // Entree vers l'assistant local de creation de vault (aucun appel reseau).
+  createVaultButton: {
+    alignSelf: 'stretch',
+    marginTop: 28,
   },
   secondaryText: {
     color: '#101317',
