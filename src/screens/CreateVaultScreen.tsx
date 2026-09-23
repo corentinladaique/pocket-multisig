@@ -14,6 +14,18 @@ import {
 } from 'react-native';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
+import { connection } from '../solana/connection';
+import { buildMultisigCreationTransaction, type MultisigTransactionBuildResult } from '../vault/buildMultisigCreation';
+import { buildMultisigCreationPlan } from '../vault/multisigCreationPlan';
+import { runMultisigCreationPreflight } from '../vault/multisigCreationPreflight';
+import {
+  simulateMultisigCreation,
+  type MultisigCreationSimulationResult,
+} from '../vault/simulateMultisigCreation';
+import {
+  signAndSendMultisigCreation,
+  type MultisigCreationSignSendResult,
+} from '../vault/signAndSendMultisigCreation';
 import { VaultPreviewScreen } from './VaultPreviewScreen';
 import { VaultTransactionPreviewScreen } from './VaultTransactionPreviewScreen';
 import {
@@ -50,7 +62,7 @@ type MeasurableInput = TextInput & {
 };
 
 export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
-  const { account } = useMobileWallet();
+  const { account, signAndSendTransactions } = useMobileWallet();
 
   const [step, setStep] = useState(1);
   const [vaultName, setVaultName] = useState('');
@@ -70,6 +82,16 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
 
   // Preview de creation (lecture seule) : Review -> Preview -> Back.
   const [previewOpen, setPreviewOpen] = useState(false);
+
+  // --- Creation reelle (devnet) : etat du flux d'envoi. Aucune execution
+  // automatique : tout part d'un tap, puis d'une confirmation explicite.
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [createResult, setCreateResult] = useState<MultisigCreationSignSendResult | null>(null);
+  const [simulatedCost, setSimulatedCost] = useState<number | null>(null);
+  // Verrou de tentative : jamais deux envois en parallele, jamais deux envois
+  // apres une signature obtenue.
+  const sendAttemptedRef = useRef(false);
 
   const memberCounter = useRef(0);
 
@@ -91,6 +113,8 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   // Demande locale de creation : purement derivee du draft, utilisee pour le
   // recapitulatif de l'etape Review. Aucun appel reseau.
   const request = useMemo(() => buildVaultCreationRequest(draft), [draft]);
+  // Plan technique : purement local (aucun RPC, aucune API Squads executee).
+  const plan = useMemo(() => buildMultisigCreationPlan(request), [request]);
 
   const walletAddress = account === undefined ? null : account.address.toString();
   const walletAlreadyMember =
@@ -214,6 +238,158 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
     scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
   }, []);
 
+  /**
+   * Sequence technique AVANT confirmation : un seul build conserve (meme clé
+   * ephemere du debut a la fin), treasury lu on-chain, puis simulation. Renvoie
+   * exactement l'instance de transaction qui sera signee et envoyee.
+   */
+  const prepareCreation = useCallback(
+    async (creator: string): Promise<{
+      build: MultisigTransactionBuildResult;
+      simulation: MultisigCreationSimulationResult;
+    }> => {
+      const firstBuild = buildMultisigCreationTransaction({ plan, creator, treasury: null });
+      const preflight = await runMultisigCreationPreflight({
+        connection,
+        creator,
+        createKey: firstBuild.createKeyPublicKey,
+        plan,
+      });
+      if (preflight.treasury === null) {
+        throw new Error(
+          `Préflight impossible : ${preflight.validationErrors.join(' ') || 'treasury indisponible.'}`,
+        );
+      }
+      const build = buildMultisigCreationTransaction({
+        plan,
+        creator,
+        treasury: preflight.treasury,
+      });
+      if (build.transaction === null) {
+        throw new Error(`Construction impossible : ${build.validationErrors.join(' ')}`);
+      }
+      const simulation = await simulateMultisigCreation({
+        connection,
+        transaction: build.transaction,
+        multisigPda: build.multisigPda,
+        creator,
+      });
+      if (simulation.err !== null || !simulation.readyToSign) {
+        throw new Error(
+          `Simulation refusée : ${
+            simulation.validationErrors.join(' ') || JSON.stringify(simulation.err)
+          }`,
+        );
+      }
+      return { build, simulation };
+    },
+    [plan],
+  );
+
+  /**
+   * Envoi effectif, apres confirmation explicite. Simule une derniere fois la
+   * MEME instance (fraicheur), puis signe avec la clé éphémère et envoie via
+   * le wallet, puis relit le multisig.
+   */
+  const confirmAndSend = useCallback(
+    async (
+      prepared: { build: MultisigTransactionBuildResult; simulation: MultisigCreationSimulationResult },
+      creator: string,
+    ) => {
+      const transaction = prepared.build.transaction;
+      if (transaction === null || sendAttemptedRef.current) return;
+      sendAttemptedRef.current = true;
+      setCreating(true);
+      setCreateError(null);
+      let signature: string | null = null;
+      try {
+        const fresh = await simulateMultisigCreation({
+          connection,
+          transaction,
+          multisigPda: prepared.build.multisigPda,
+          creator,
+        });
+        if (fresh.err !== null || !fresh.readyToSign) {
+          throw new Error(
+            `Simulation refusée avant envoi : ${
+              fresh.validationErrors.join(' ') || JSON.stringify(fresh.err)
+            }`,
+          );
+        }
+        const result = await signAndSendMultisigCreation({
+          connection,
+          transaction,
+          ephemeralCreateKey: prepared.build.ephemeralCreateKey,
+          signAndSendTransactions,
+          multisigPda: prepared.build.multisigPda,
+          expectation: {
+            threshold: plan.threshold,
+            memberCount: plan.members.length,
+            configAuthority: plan.configAuthority,
+          },
+        });
+        signature = result.signature;
+        setCreateResult(result);
+        if (!result.verified) {
+          setCreateError(result.validationErrors.join(' ') || result.errorMessage);
+        }
+      } catch (caught: unknown) {
+        setCreateError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        // Aucune signature obtenue -> la tentative n'a rien produit : on
+        // reautorise un essai. Sinon, plus aucun envoi automatique.
+        if (signature === null) sendAttemptedRef.current = false;
+        setCreating(false);
+      }
+    },
+    [plan, signAndSendTransactions],
+  );
+
+  /** Tap sur "Create on Devnet" : preparation, puis confirmation explicite. */
+  const onCreateOnDevnet = useCallback(() => {
+    const creator = walletAddress;
+    if (creator === null || creating || sendAttemptedRef.current) return;
+    setCreating(true);
+    setCreateError(null);
+    setCreateResult(null);
+    void (async () => {
+      try {
+        const prepared = await prepareCreation(creator);
+        const charged =
+          prepared.simulation.creatorBalanceDelta === null
+            ? null
+            : Math.abs(prepared.simulation.creatorBalanceDelta);
+        setSimulatedCost(charged);
+        setCreating(false);
+        Alert.alert(
+          'Create this multisig on Devnet?',
+          [
+            `Threshold: ${plan.threshold} of ${plan.members.length} members`,
+            `Estimated cost: ${charged === null ? 'unknown' : `${charged} lamports`} (rent + network fee)`,
+            `Payer wallet: ${creator}`,
+            '',
+            'You sign ONCE as creator. The other members are not asked to approve.',
+            'The configuration will be frozen: no admin authority.',
+            'Nothing is sent until you tap Create.',
+          ].join('\n'),
+          [
+            { onPress: () => setCreating(false), style: 'cancel', text: 'Cancel' },
+            {
+              onPress: () => {
+                void confirmAndSend(prepared, creator);
+              },
+              text: 'Create',
+            },
+          ],
+          { cancelable: true, onDismiss: () => setCreating(false) },
+        );
+      } catch (caught: unknown) {
+        setCreateError(caught instanceof Error ? caught.message : String(caught));
+        setCreating(false);
+      }
+    })();
+  }, [confirmAndSend, creating, plan, prepareCreation, walletAddress]);
+
   const goBack = useCallback(() => {
     setStep((previous) => Math.max(previous - 1, 1));
   }, []);
@@ -269,8 +445,20 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   if (transactionPreviewOpen) {
     return (
       <VaultTransactionPreviewScreen
+        canCreate={
+          walletAddress !== null &&
+          plan.readyForInstructionBuild &&
+          createResult === null &&
+          !creating
+        }
+        createError={createError}
+        createResult={createResult}
+        creating={creating}
         onBack={() => setTransactionPreviewOpen(false)}
+        onCreateOnDevnet={onCreateOnDevnet}
+        payer={walletAddress}
         request={request}
+        simulatedCostLamports={simulatedCost}
       />
     );
   }

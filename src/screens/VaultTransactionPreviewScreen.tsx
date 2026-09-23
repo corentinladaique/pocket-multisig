@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo } from 'react';
 import {
+  ActivityIndicator,
   BackHandler,
   KeyboardAvoidingView,
   Pressable,
@@ -14,20 +15,40 @@ import {
   buildTransactionPreviewData,
   type VaultCreationRequest,
 } from '../vault/vaultDraft';
+import type { MultisigCreationSignSendResult } from '../vault/signAndSendMultisigCreation';
 
 /**
- * Preview de transaction : lecture seule.
+ * Preview de transaction.
  *
- * Represente ce que serait la future transaction de creation du multisig.
- * Aucune instruction Squads n'est construite, aucun compte n'est lu, aucune
- * signature n'est demandee : seuls des champs locaux sont affiches.
+ * Affiche ce que serait la transaction de creation, et porte le declencheur
+ * explicite de la creation reelle : le bouton "Create on Devnet" ouvre une
+ * confirmation (threshold, nombre de membres, cout simule, wallet payeur) avant
+ * toute signature. Cet ecran ne construit rien et n'envoie rien lui-meme :
+ * toute la sequence technique vit dans CreateVaultScreen, et rien ne part
+ * depuis un effet ni depuis un rendu.
  */
 export function VaultTransactionPreviewScreen({
+  canCreate,
+  createError,
+  createResult,
+  creating,
   onBack,
+  onCreateOnDevnet,
+  payer,
   request,
+  simulatedCostLamports,
 }: {
+  /** Vrai seulement si le wallet et le plan permettent un envoi. */
+  canCreate: boolean;
+  createError: string | null;
+  createResult: MultisigCreationSignSendResult | null;
+  creating: boolean;
   onBack: () => void;
+  /** Declenche preparation + confirmation. Jamais appele automatiquement. */
+  onCreateOnDevnet: () => void;
+  payer: string | null;
   request: VaultCreationRequest;
+  simulatedCostLamports: number | null;
 }) {
   const transaction = useMemo(
     () => buildTransactionPreviewData(buildPreviewData(request)),
@@ -95,19 +116,73 @@ export function VaultTransactionPreviewScreen({
 
           <View style={styles.infoBox}>
             <Text style={styles.infoText}>
-              No Squads instruction is constructed and no signature is requested on this
-              screen. This preview is local only.
+              Tapping Create opens a confirmation, then builds, simulates and asks the
+              wallet to sign and send this single transaction on Devnet.
             </Text>
           </View>
 
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ disabled: true }}
-            disabled
-            style={[styles.button, styles.disabled]}
+            accessibilityState={{ busy: creating, disabled: !canCreate || creating }}
+            disabled={!canCreate || creating}
+            onPress={onCreateOnDevnet}
+            style={[styles.button, (!canCreate || creating) && styles.disabled]}
           >
-            <Text style={styles.buttonText}>Create on Devnet — not available yet</Text>
+            {creating ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <Text style={styles.buttonText}>Create on Devnet</Text>
+            )}
           </Pressable>
+
+          {creating ? (
+            <Text style={styles.hint}>Preparing, simulating and waiting for the wallet…</Text>
+          ) : null}
+
+          <Text style={styles.hint}>
+            Payer: {payer ?? 'no wallet connected'} · Estimated cost:{' '}
+            {simulatedCostLamports === null ? 'not simulated yet' : `${simulatedCostLamports} lamports`}
+          </Text>
+
+          {createError !== null ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{createError}</Text>
+            </View>
+          ) : null}
+
+          {createResult !== null ? (
+            <View
+              style={createResult.verified ? styles.successBox : styles.errorBox}
+            >
+              <Text style={createResult.verified ? styles.successText : styles.errorText}>
+                {createResult.verified ? 'Multisig created and verified' : 'Created, but verification failed'}
+              </Text>
+              {createResult.signature !== null ? (
+                <Text selectable style={styles.resultValue}>
+                  Signature: {createResult.signature}
+                </Text>
+              ) : null}
+              {createResult.readBack !== null ? (
+                <>
+                  <Text selectable style={styles.resultValue}>
+                    Multisig: {createResult.readBack.address}
+                  </Text>
+                  <Text selectable style={styles.resultValue}>
+                    Owner: {createResult.readBack.owner}
+                  </Text>
+                  <Text style={styles.resultValue}>
+                    Threshold: {createResult.readBack.threshold} of {createResult.readBack.memberCount}
+                  </Text>
+                  <Text selectable style={styles.resultValue}>
+                    Config authority: {createResult.readBack.configAuthority}
+                  </Text>
+                  <Text style={styles.resultValue}>
+                    Rent collector: {createResult.readBack.rentCollector ?? 'none'}
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          ) : null}
         </View>
 
         <Pressable
@@ -236,5 +311,41 @@ const styles = StyleSheet.create({
   infoText: {
     color: '#4b5563',
     fontSize: 13,
+  },
+  hint: {
+    color: '#6b7280',
+    fontSize: 13,
+    marginTop: 8,
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
+  },
+  errorText: {
+    color: '#991b1b',
+    fontSize: 13,
+  },
+  successBox: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
+  },
+  successText: {
+    color: '#065f46',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  resultValue: {
+    color: '#101317',
+    fontFamily: 'monospace',
+    fontSize: 11,
+    marginTop: 6,
   },
 });
