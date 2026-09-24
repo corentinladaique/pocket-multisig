@@ -11,9 +11,15 @@ import {
 } from 'react-native';
 import { PublicKey } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
+import type { ReviewGuardContext } from '../wallet/useWalletGuard';
 import { connection } from '../solana/connection';
 import { loadMultisig, MultisigLookupError, type MultisigView } from '../squads/multisig';
+import type { ProposalView } from '../squads/proposals';
+import type { TransactionReviewModel } from '../types/transactionReview';
+import { ProposalDetailsScreen } from './ProposalDetailsScreen';
+import { ProposalListScreen } from './ProposalListScreen';
 
 /**
  * Detail d'un multisig : LECTURE SEULE.
@@ -33,15 +39,24 @@ const FROZEN_AUTHORITY = '11111111111111111111111111111111';
 
 export function MultisigDetailsScreen({
   address,
+  decodedModelFor,
   onBack,
   vaultName,
 }: {
   address: string;
+  /** Modèles déjà décodés uniquement : ce détail ne déclenche aucune lecture. */
+  decodedModelFor?: (index: number) => TransactionReviewModel | null;
   onBack: () => void;
   /** Nom local du vault (registre local uniquement), s'il est connu. */
   vaultName?: string | null;
 }) {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
+  // Liste des propositions : etage lecture seule, ouvert depuis ce detail.
+  const [proposalsOpen, setProposalsOpen] = useState(false);
+  // Proposition ouverte depuis la liste (lecture seule).
+  const [openProposal, setOpenProposal] = useState<ProposalView | null>(null);
+  const { account } = useMobileWallet();
+  const walletAddress = account === undefined ? null : account.address.toString();
 
   const load = useCallback(() => {
     setState({ status: 'loading' });
@@ -75,6 +90,74 @@ export function MultisigDetailsScreen({
   }, [onBack]);
 
   const view = state.status === 'loaded' ? state.view : null;
+
+  // Membres porteurs du droit de vote : sert a qualifier l'etat des propositions.
+  const votingMembers =
+    view === null
+      ? []
+      : view.members
+          .filter((member) => member.roles.includes('Vote'))
+          .map((member) => member.address);
+
+  // Detail d'une proposition : lecture seule, aucun appel reseau.
+  if (openProposal !== null && view !== null) {
+    const model = decodedModelFor?.(openProposal.index) ?? null;
+    const guardContext: ReviewGuardContext | null =
+      model === null
+        ? null
+        : {
+            multisig: {
+              address: view.address,
+              members: view.members.map((member) => ({
+                address: member.address,
+                roles: member.roles,
+              })),
+              threshold: view.threshold,
+              vaultAddress: view.vaultAddress,
+            },
+            proposal: {
+              approvedAddresses: openProposal.approvedAddresses,
+              index: openProposal.index,
+              status: openProposal.status,
+            },
+            review: model,
+            walletAddress,
+          };
+    return (
+      <ProposalDetailsScreen
+        address={view.address}
+        decodedModel={model}
+        guardContext={guardContext}
+        index={openProposal.index}
+        onBack={() => setOpenProposal(null)}
+        proposal={{
+          approvedAddresses: openProposal.approvedAddresses,
+          status: openProposal.status,
+        }}
+        threshold={view.threshold}
+        vaultTransactionAddress={openProposal.vaultTransactionAddress}
+        walletAddress={walletAddress}
+        walletCanApprove={walletAddress !== null && votingMembers.includes(walletAddress)}
+      />
+    );
+  }
+
+  // Liste des propositions : lecture seule, aucun appel RPC propre.
+  if (proposalsOpen && view !== null) {
+    return (
+      <ProposalListScreen
+        address={view.address}
+        decodedModelFor={decodedModelFor}
+        onBack={() => setProposalsOpen(false)}
+        onOpenProposal={(proposal) => setOpenProposal(proposal)}
+        staleTransactionIndex={view.staleTransactionIndex}
+        threshold={view.threshold}
+        transactionIndex={view.transactionIndex}
+        vaultName={vaultName}
+        votingMembers={votingMembers}
+      />
+    );
+  }
 
   return (
     <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
@@ -157,6 +240,15 @@ export function MultisigDetailsScreen({
             <Text selectable style={styles.fieldValue}>
               {multisig.PROGRAM_ID.toString()}
             </Text>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open proposals list"
+              onPress={() => setProposalsOpen(true)}
+              style={[styles.button, styles.secondary, styles.proposalsButton]}
+            >
+              <Text style={styles.secondaryText}>Proposals</Text>
+            </Pressable>
           </View>
         ) : null}
 
@@ -270,6 +362,11 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderWidth: 1,
     marginTop: 24,
+  },
+  // Acces a la liste des propositions (lecture seule).
+  proposalsButton: {
+    borderColor: '#1a56db',
+    marginTop: 20,
   },
   secondaryText: {
     color: '#101317',

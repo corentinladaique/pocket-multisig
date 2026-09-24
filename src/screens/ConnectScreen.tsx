@@ -357,6 +357,13 @@ export function ConnectScreen() {
     return (
       <MultisigDetailsScreen
         address={openEntry.address}
+        decodedModelFor={(index) =>
+          // Uniquement les modeles DEJA decodes : celui de la proposition
+          // prioritaire prechargee plus haut. Aucune lecture declenchee ici.
+          inboxDecoded !== null && inboxDecoded.model.proposalIndex === index
+            ? inboxDecoded.model
+            : null
+        }
         onBack={() => setOpenEntry(null)}
         vaultName={openEntry.vaultName}
       />
