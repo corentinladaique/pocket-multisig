@@ -19,6 +19,10 @@ import {
   signAndSendProposalApproval,
   type ProposalApprovalSignSendResult,
 } from '../squads/signAndSendProposalApproval';
+import {
+  signAndSendProposalExecution,
+  type ProposalExecutionSignSendResult,
+} from '../squads/signAndSendProposalExecution';
 import { connection } from '../solana/connection';
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
 import {
@@ -56,6 +60,7 @@ export function ProposalDetailsScreen({
   decodedModel,
   guardContext,
   index,
+  members,
   onBack,
   proposal,
   threshold,
@@ -69,6 +74,8 @@ export function ProposalDetailsScreen({
   /** Contexte de revue déjà construit par l'appelant, transmis tel quel. */
   guardContext?: ReviewGuardContext | null;
   index: number;
+  /** Membres et rôles lus dans le multisig (déjà chargés par le détail). */
+  members: readonly { address: string; roles: readonly string[] }[];
   onBack: () => void;
   proposal: {
     approvedAddresses: string[];
@@ -95,6 +102,104 @@ export function ProposalDetailsScreen({
   // Une seule tentative : jamais deux envois en parallele, jamais de second
   // envoi apres une signature obtenue.
   const approvalAttemptedRef = useRef(false);
+
+  // --- Execution : trois conditions lisibles, aucune invention.
+  // Note : le guard de revue vérifie la permission `Vote` (il bloque donc à
+  // juste titre un membre qui n'aurait que `Execute`). Exécuter n'est pas
+  // approuver : la condition ICI est la permission `Execute`, plus le statut
+  // `Approved` et le seuil réellement atteint.
+  const walletHasExecute =
+    walletAddress !== null &&
+    members.some(
+      (member) => member.address === walletAddress && member.roles.includes('Execute'),
+    );
+  const thresholdReached = proposal.approvedAddresses.length >= threshold;
+  const canExecute =
+    proposal.status === 'Approved' && thresholdReached && walletHasExecute;
+  const [executing, setExecuting] = useState(false);
+  const [executionError, setExecutionError] = useState<string | null>(null);
+  const [executionResult, setExecutionResult] = useState<ProposalExecutionSignSendResult | null>(
+    null,
+  );
+  const executionAttemptedRef = useRef(false);
+
+  const runExecution = async () => {
+    if (approvalAttemptedRef.current || executionAttemptedRef.current) return;
+    if (walletAddress === null) {
+      setExecutionError('No wallet connected: an execution must be signed by a member.');
+      return;
+    }
+    executionAttemptedRef.current = true;
+    setExecuting(true);
+    setExecutionError(null);
+    setExecutionResult(null);
+    let signature: string | null = null;
+    try {
+      const result = await signAndSendProposalExecution({
+        connection,
+        memberAddress: walletAddress,
+        multisigPda: address,
+        signAndSendTransactions,
+        threshold,
+        transactionIndex: index,
+      });
+      signature = result.signature;
+      setExecutionResult(result);
+      if (!result.verified) {
+        setExecutionError(result.validationErrors.join(' ') || result.errorMessage);
+      }
+    } catch (caught: unknown) {
+      setExecutionError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (signature === null) executionAttemptedRef.current = false;
+      setExecuting(false);
+    }
+  };
+
+  /**
+   * Tap sur Execute : DOUBLE confirmation explicite avant toute demande au
+   * wallet. Rien ne part du premier dialogue, ni d'un effet, ni d'un rendu.
+   */
+  const onExecute = () => {
+    if (!canExecute || executing || executionAttemptedRef.current) return;
+    Alert.alert(
+      'Execute this proposal?',
+      [
+        `Proposal #${index}`,
+        `Status: ${proposal.status} · ${proposal.approvedAddresses.length} of ${threshold} approvals`,
+        `You will sign ONE vaultTransactionExecute instruction as ${walletAddress ?? 'unknown wallet'}.`,
+        'The stored transaction will be submitted to the vault and its effects are permanent.',
+      ].join('\n'),
+      [
+        { style: 'cancel', text: 'Cancel' },
+        {
+          onPress: () => {
+            Alert.alert(
+              'Confirm execution',
+              [
+                'This cannot be undone and cannot be cancelled once sent.',
+                'The vault will execute the approved transaction now.',
+                'Tap Execute to sign with your wallet, or Cancel to stop.',
+              ].join('\n'),
+              [
+                { style: 'cancel', text: 'Cancel' },
+                {
+                  onPress: () => {
+                    void runExecution();
+                  },
+                  style: 'destructive',
+                  text: 'Execute',
+                },
+              ],
+              { cancelable: true },
+            );
+          },
+          text: 'Continue',
+        },
+      ],
+      { cancelable: true },
+    );
+  };
 
   const runApproval = async () => {
     if (decodedModel === null || allowlist === null || approvalAttemptedRef.current) return;
@@ -337,6 +442,89 @@ export function ProposalDetailsScreen({
 
             <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Execute this proposal"
+              accessibilityState={{ busy: executing, disabled: !canExecute || executing || executionResult !== null }}
+              disabled={!canExecute || executing || executionResult !== null}
+              onPress={onExecute}
+              style={[styles.button, styles.executeButton, (!canExecute || executing || executionResult !== null) && styles.disabled]}
+            >
+              {executing ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.buttonText}>Execute</Text>
+              )}
+            </Pressable>
+
+            {!canExecute ? (
+              <Text style={styles.fieldNote}>
+                {proposal.status !== 'Approved'
+                  ? `Execution requires an Approved proposal (current status: ${proposal.status}).`
+                  : !thresholdReached
+                    ? `Execution requires ${threshold} approval(s); ${proposal.approvedAddresses.length} recorded.`
+                    : 'Your wallet is not a member with the Execute permission.'}
+              </Text>
+            ) : (
+              <Text style={styles.fieldNote}>
+                Executing submits the stored transaction to the vault. It is irreversible and
+                requires a double confirmation.
+              </Text>
+            )}
+
+            {executing ? (
+              <Text style={styles.fieldNote}>Waiting for the wallet…</Text>
+            ) : null}
+
+            {executionError !== null ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{executionError}</Text>
+              </View>
+            ) : null}
+
+            {executionResult !== null ? (
+              <View style={executionResult.verified ? styles.successBox : styles.errorBox}>
+                <Text style={executionResult.verified ? styles.successText : styles.errorText}>
+                  {executionResult.verified
+                    ? 'Execution verified on-chain'
+                    : 'Sent, but verification failed'}
+                </Text>
+                {executionResult.signature !== null ? (
+                  <Text selectable style={styles.monoValue}>
+                    Signature: {executionResult.signature}
+                  </Text>
+                ) : null}
+                <Text style={styles.fieldValue}>
+                  Status before: {executionResult.statusBefore ?? 'unknown'} ·{' '}
+                  {executionResult.approvalsBefore} approval(s)
+                </Text>
+                {executionResult.readBack !== null ? (
+                  <>
+                    <Text style={styles.fieldValue}>
+                      Proposal after:{' '}
+                      {executionResult.readBack.proposalAccountPresent
+                        ? executionResult.readBack.proposalStatusAfter ?? 'unknown status'
+                        : 'account consumed (no longer present)'}
+                    </Text>
+                    <Text style={styles.fieldValue}>
+                      Vault:{' '}
+                      {executionResult.readBack.vaultLamportsDelta === null
+                        ? 'balance change not measurable'
+                        : `${executionResult.readBack.vaultLamportsDelta} lamports`}
+                    </Text>
+                    <Text selectable style={styles.monoValue}>
+                      {executionResult.readBack.vaultAddress}
+                    </Text>
+                  </>
+                ) : null}
+                {executionResult.validationWarnings.map((warning) => (
+                  <Text key={warning} style={styles.fieldNote}>
+                    · {warning}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
               accessibilityState={{ disabled: decodedModel === null }}
               disabled={decodedModel === null}
               onPress={() => setReviewOpen(true)}
@@ -483,6 +671,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
     borderColor: '#d1d5db',
     borderWidth: 1,
+    marginTop: 24,
+  },
+  // Execute : action irreversible, visuellement distincte d'Approve.
+  executeButton: {
+    backgroundColor: '#b45309',
     marginTop: 24,
   },
   secondaryText: {

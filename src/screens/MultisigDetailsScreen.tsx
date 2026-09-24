@@ -20,6 +20,7 @@ import type { ProposalView } from '../squads/proposals';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { ProposalListScreen } from './ProposalListScreen';
+import { NewProposalScreen } from './NewProposalScreen';
 
 /**
  * Detail d'un multisig : LECTURE SEULE.
@@ -55,6 +56,8 @@ export function MultisigDetailsScreen({
   const [proposalsOpen, setProposalsOpen] = useState(false);
   // Proposition ouverte depuis la liste (lecture seule).
   const [openProposal, setOpenProposal] = useState<ProposalView | null>(null);
+  // Creation d'une nouvelle proposition (transfert SOL simple).
+  const [newProposalOpen, setNewProposalOpen] = useState(false);
   const { account } = useMobileWallet();
   const walletAddress = account === undefined ? null : account.address.toString();
 
@@ -99,6 +102,23 @@ export function MultisigDetailsScreen({
           .filter((member) => member.roles.includes('Vote'))
           .map((member) => member.address);
 
+  // Creation d'une proposition : ecran dedie, retour vers la liste apres succes.
+  if (newProposalOpen && view !== null) {
+    return (
+      <NewProposalScreen
+        address={view.address}
+        members={view.members}
+        onBack={() => setNewProposalOpen(false)}
+        onDone={() => {
+          setNewProposalOpen(false);
+          setProposalsOpen(true);
+        }}
+        transactionIndex={view.transactionIndex}
+        vaultAddress={view.vaultAddress}
+      />
+    );
+  }
+
   // Detail d'une proposition : lecture seule, aucun appel reseau.
   if (openProposal !== null && view !== null) {
     const model = decodedModelFor?.(openProposal.index) ?? null;
@@ -129,6 +149,7 @@ export function MultisigDetailsScreen({
         decodedModel={model}
         guardContext={guardContext}
         index={openProposal.index}
+        members={view.members}
         onBack={() => setOpenProposal(null)}
         proposal={{
           approvedAddresses: openProposal.approvedAddresses,
@@ -248,6 +269,15 @@ export function MultisigDetailsScreen({
               style={[styles.button, styles.secondary, styles.proposalsButton]}
             >
               <Text style={styles.secondaryText}>Proposals</Text>
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Create a new proposal"
+              onPress={() => setNewProposalOpen(true)}
+              style={[styles.button, styles.secondary, styles.proposalsButton]}
+            >
+              <Text style={styles.secondaryText}>New Proposal</Text>
             </Pressable>
           </View>
         ) : null}
