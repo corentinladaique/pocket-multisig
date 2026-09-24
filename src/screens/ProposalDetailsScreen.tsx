@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   BackHandler,
   KeyboardAvoidingView,
   Pressable,
@@ -10,15 +12,22 @@ import {
 } from 'react-native';
 import { PublicKey } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
+import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
-import type { ReviewGuardContext } from '../wallet/useWalletGuard';
+import { checkReviewAllowlist } from '../squads/instructionAllowlist';
+import {
+  signAndSendProposalApproval,
+  type ProposalApprovalSignSendResult,
+} from '../squads/signAndSendProposalApproval';
+import { connection } from '../solana/connection';
+import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
 import {
   computeProposalDecision,
   summarizeOperation,
   type ProposalStatusKind,
 } from '../squads/proposals';
 import type { TransactionReviewModel } from '../types/transactionReview';
-import { TransactionReviewScreen } from './TransactionReviewScreen';
+import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 
 /**
  * Detail d'une proposition : LECTURE SEULE.
@@ -71,6 +80,87 @@ export function ProposalDetailsScreen({
   walletCanApprove: boolean;
 }) {
   const [reviewOpen, setReviewOpen] = useState(false);
+
+  // --- Approbation : uniquement des verdicts DÉJÀ calculés par l'existant.
+  const { signAndSendTransactions } = useMobileWallet();
+  const guard = useWalletGuard(guardContext ?? null);
+  const allowlist = decodedModel === null ? null : checkReviewAllowlist(decodedModel);
+  const canConfirm =
+    decodedModel !== null &&
+    allowlist !== null &&
+    computeCanConfirm(decodedModel, guard.status, allowlist.status);
+  const [approving, setApproving] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
+  const [approvalResult, setApprovalResult] = useState<ProposalApprovalSignSendResult | null>(null);
+  // Une seule tentative : jamais deux envois en parallele, jamais de second
+  // envoi apres une signature obtenue.
+  const approvalAttemptedRef = useRef(false);
+
+  const runApproval = async () => {
+    if (decodedModel === null || allowlist === null || approvalAttemptedRef.current) return;
+    if (walletAddress === null) {
+      setApprovalError('No wallet connected: an approval must be signed by a member.');
+      return;
+    }
+    approvalAttemptedRef.current = true;
+    setApproving(true);
+    setApprovalError(null);
+    setApprovalResult(null);
+    let signature: string | null = null;
+    try {
+      const result = await signAndSendProposalApproval({
+        connection,
+        memberAddress: walletAddress,
+        multisigPda: address,
+        preconditions: {
+          allowlistStatus: allowlist.status,
+          guardReasons: guard.reasons,
+          guardStatus: guard.status,
+        },
+        signAndSendTransactions,
+        threshold,
+        transactionIndex: index,
+      });
+      signature = result.signature;
+      setApprovalResult(result);
+      if (!result.verified) {
+        setApprovalError(result.validationErrors.join(' ') || result.errorMessage);
+      }
+    } catch (caught: unknown) {
+      setApprovalError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      // Aucune signature obtenue : rien n'a ete produit, un nouvel essai reste
+      // possible. Sinon, plus aucune tentative automatique.
+      if (signature === null) approvalAttemptedRef.current = false;
+      setApproving(false);
+    }
+  };
+
+  /** Tap sur Approve : préparation des verdicts déjà là, puis confirmation. */
+  const onApprove = () => {
+    if (!canConfirm || approving || approvalAttemptedRef.current) return;
+    Alert.alert(
+      'Approve this proposal?',
+      [
+        `Proposal #${index}`,
+        `Approvals: ${proposal.approvedAddresses.length} of ${threshold} required`,
+        `You will sign ONE proposalApprove instruction as ${walletAddress ?? 'unknown wallet'}.`,
+        'No account is created and no rent is paid.',
+        'Nothing is executed and nothing is rejected by this action.',
+        'Nothing is sent until you tap Approve.',
+      ].join('\n'),
+      [
+        { style: 'cancel', text: 'Cancel' },
+        {
+          onPress: () => {
+            void runApproval();
+          },
+          text: 'Approve',
+        },
+      ],
+      { cancelable: true },
+    );
+  };
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -178,12 +268,80 @@ export function ProposalDetailsScreen({
           ) : null}
 
           <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ disabled: decodedModel === null }}
-            disabled={decodedModel === null}
-            onPress={() => setReviewOpen(true)}
-            style={[styles.button, decodedModel === null && styles.disabled]}
-          >
+              accessibilityRole="button"
+              accessibilityLabel="Approve this proposal"
+              accessibilityState={{ busy: approving, disabled: !canConfirm || approving || approvalResult !== null }}
+              disabled={!canConfirm || approving || approvalResult !== null}
+              onPress={onApprove}
+              style={[styles.button, (!canConfirm || approving || approvalResult !== null) && styles.disabled]}
+            >
+              {approving ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.buttonText}>Approve</Text>
+              )}
+            </Pressable>
+
+            {!canConfirm ? (
+              <Text style={styles.fieldNote}>
+                {decodedModel === null
+                  ? 'Approval needs the decoded transaction review: the guard and the allowlist cannot be evaluated without it.'
+                  : guard.status !== 'allowed'
+                    ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
+                    : allowlist !== null && allowlist.status !== 'allowed'
+                      ? `Instruction allowlist: ${allowlist.status}.`
+                      : 'Approval is not available for this proposal in its current state.'}
+              </Text>
+            ) : null}
+
+            {approving ? (
+              <Text style={styles.fieldNote}>
+                Preparing the instruction and waiting for the wallet…
+              </Text>
+            ) : null}
+
+            {approvalError !== null ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{approvalError}</Text>
+              </View>
+            ) : null}
+
+            {approvalResult !== null ? (
+              <View style={approvalResult.verified ? styles.successBox : styles.errorBox}>
+                <Text style={approvalResult.verified ? styles.successText : styles.errorText}>
+                  {approvalResult.verified
+                    ? 'Approval recorded on-chain'
+                    : 'Sent, but verification failed'}
+                </Text>
+                {approvalResult.signature !== null ? (
+                  <Text selectable style={styles.monoValue}>
+                    Signature: {approvalResult.signature}
+                  </Text>
+                ) : null}
+                {approvalResult.readBack !== null ? (
+                  <>
+                    <Text style={styles.fieldValue}>
+                      Status: {approvalResult.readBack.status} (was{' '}
+                      {approvalResult.approvalsBefore} approval(s))
+                    </Text>
+                    <Text style={styles.fieldValue}>
+                      Approvals: {approvalResult.readBack.approvedAddresses.length} of {threshold}
+                    </Text>
+                    <Text selectable style={styles.monoValue}>
+                      {approvalResult.readBack.address}
+                    </Text>
+                  </>
+                ) : null}
+              </View>
+            ) : null}
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: decodedModel === null }}
+              disabled={decodedModel === null}
+              onPress={() => setReviewOpen(true)}
+              style={[styles.button, decodedModel === null && styles.disabled]}
+            >
             <Text style={styles.buttonText}>Open transaction review</Text>
           </Pressable>
           {decodedModel === null ? (
@@ -276,6 +434,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     marginTop: 2,
+  },
+  errorBox: {
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
+  },
+  errorText: {
+    color: '#991b1b',
+    fontSize: 13,
+  },
+  successBox: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
+  },
+  successText: {
+    color: '#065f46',
+    fontSize: 13,
+    fontWeight: '800',
   },
   button: {
     alignItems: 'center',
