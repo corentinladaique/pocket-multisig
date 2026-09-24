@@ -81,6 +81,8 @@ export function ConnectScreen() {
   const [inboxOpen, setInboxOpen] = useState(false);
   // Multisig ouvert depuis l'inbox (registre local) : lecture seule.
   const [openEntry, setOpenEntry] = useState<MultisigRegistryEntry | null>(null);
+  // Multisig charge manuellement : meme ecran de detail que ceux de l'inbox.
+  const [manualDetailsOpen, setManualDetailsOpen] = useState(false);
   // Prechargement de l'operation de la proposition PRIORITAIRE : un seul appel
   // cible (getAccountInfo sur sa VaultTransaction), jamais pour les autres.
   const [inboxDecoded, setInboxDecoded] = useState<ProposalReviewResult | null>(null);
@@ -370,6 +372,17 @@ export function ConnectScreen() {
     );
   }
 
+  // Multisig charge manuellement : le meme ecran de detail que ceux de l'inbox.
+  // L'adresse vient de la vue deja lue : aucun appel reseau supplementaire ici.
+  if (manualDetailsOpen && msig.view !== null) {
+    return (
+      <MultisigDetailsScreen
+        address={msig.view.address}
+        onBack={() => setManualDetailsOpen(false)}
+      />
+    );
+  }
+
   // Inbox des multisigs connus : lecture du registre local uniquement.
   if (inboxOpen) {
     return (
@@ -505,6 +518,15 @@ export function ConnectScreen() {
             <View style={styles.msigResult}>
               <Text style={styles.inboxHeading}>{inboxHeading}</Text>
               <Text style={styles.inboxCount}>{inboxDecisions.length}</Text>
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Open this multisig in the shared detail screen"
+                onPress={() => setManualDetailsOpen(true)}
+                style={[styles.button, styles.secondary, styles.sideButton]}
+              >
+                <Text style={styles.secondaryText}>Open multisig</Text>
+              </Pressable>
 
               {proposals.status === 'loading' ? (
                 <Text style={styles.hint}>Lecture…</Text>
