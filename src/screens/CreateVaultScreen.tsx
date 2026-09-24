@@ -23,9 +23,11 @@ import {
   type MultisigCreationSimulationResult,
 } from '../vault/simulateMultisigCreation';
 import {
+  applyFreshBlockhash,
   signAndSendMultisigCreation,
   type MultisigCreationSignSendResult,
 } from '../vault/signAndSendMultisigCreation';
+import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { VaultPreviewScreen } from './VaultPreviewScreen';
 import { VaultTransactionPreviewScreen } from './VaultTransactionPreviewScreen';
 import {
@@ -63,6 +65,8 @@ type MeasurableInput = TextInput & {
 
 export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   const { account, signAndSendTransactions } = useMobileWallet();
+  // Registre local des multisigs connus (stockage seul, aucun RPC).
+  const registry = useMultisigRegistry();
 
   const [step, setStep] = useState(1);
   const [vaultName, setVaultName] = useState('');
@@ -268,6 +272,10 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
       if (build.transaction === null) {
         throw new Error(`Construction impossible : ${build.validationErrors.join(' ')}`);
       }
+      // Blockhash explicite AVANT toute simulation : sans lui, web3.js injecte
+      // un blockhash issu du cache de Connection, qui peut etre inconnu de la
+      // grappe (BlockhashNotFound).
+      await applyFreshBlockhash(connection, build.transaction);
       const simulation = await simulateMultisigCreation({
         connection,
         transaction: build.transaction,
@@ -303,6 +311,9 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
       setCreateError(null);
       let signature: string | null = null;
       try {
+        // Blockhash frais unique, pose AVANT la simulation finale et reutilise
+        // tel quel pour partialSign puis pour l'envoi MWA.
+        const blockhash = await applyFreshBlockhash(connection, transaction);
         const fresh = await simulateMultisigCreation({
           connection,
           transaction,
@@ -327,11 +338,32 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             memberCount: plan.members.length,
             configAuthority: plan.configAuthority,
           },
+          blockhash,
         });
         signature = result.signature;
         setCreateResult(result);
         if (!result.verified) {
           setCreateError(result.validationErrors.join(' ') || result.errorMessage);
+        } else if (result.readBack !== null) {
+          // Creation verifiee on-chain : on conserve localement de quoi la
+          // retrouver (adresse, nom local, labels). Aucun secret n'est ecrit.
+          const memberLabels: Record<string, string> = {};
+          for (const member of plan.members) {
+            if (member.label.length > 0) memberLabels[member.key] = member.label;
+          }
+          const saved = await registry.add({
+            address: result.readBack.address,
+            vaultName,
+            memberLabels,
+            source: 'created',
+          });
+          if (saved.entry === null) {
+            setCreateError(
+              `Multisig created and verified, but the local record could not be saved: ${
+                saved.errors.join(' ') || 'unknown storage error'
+              }`,
+            );
+          }
         }
       } catch (caught: unknown) {
         setCreateError(caught instanceof Error ? caught.message : String(caught));
@@ -342,7 +374,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
         setCreating(false);
       }
     },
-    [plan, signAndSendTransactions],
+    [plan, registry, signAndSendTransactions],
   );
 
   /** Tap sur "Create on Devnet" : preparation, puis confirmation explicite. */

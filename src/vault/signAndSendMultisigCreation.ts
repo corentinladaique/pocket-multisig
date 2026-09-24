@@ -28,6 +28,31 @@ export type MultisigCreationExpectation = {
   configAuthority: string | null;
 };
 
+/** Blockhash explicitement applique a la transaction avant simulation/envoi. */
+export type MultisigCreationBlockhash = {
+  blockhash: string;
+  lastValidBlockHeight: number;
+};
+
+/**
+ * Pose un blockhash FRAIS sur la transaction et le retourne.
+ *
+ * Indispensable avant toute simulation : le chemin legacy de
+ * `simulateTransaction` injecte sinon un blockhash issu du cache interne de
+ * `Connection`, qui peut etre devenu inconnu de la grappe (BlockhashNotFound).
+ * Le blockhash retourne doit etre celui utilise pour la simulation, la
+ * signature partielle et l'envoi.
+ */
+export async function applyFreshBlockhash(
+  connection: Connection,
+  transaction: Transaction,
+): Promise<MultisigCreationBlockhash> {
+  const latest = await connection.getLatestBlockhash('confirmed');
+  transaction.recentBlockhash = latest.blockhash;
+  transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
+  return { blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
+}
+
 export type MultisigCreationReadBack = {
   address: string;
   owner: string;
@@ -85,6 +110,12 @@ export async function signAndSendMultisigCreation(input: {
   signAndSendTransactions: SignAndSendTransactionsFn;
   multisigPda: string;
   expectation: MultisigCreationExpectation;
+  /**
+   * Blockhash deja pose (celui de la simulation finale). S'il est fourni, il
+   * est reapplique tel quel : simulation, signature partielle et envoi
+   * partagent alors le meme blockhash. Sinon un blockhash frais est demande.
+   */
+  blockhash?: MultisigCreationBlockhash;
 }): Promise<MultisigCreationSignSendResult> {
   const errors: string[] = [];
   const warnings: string[] = [SINGLE_SEND_WARNING];
@@ -125,9 +156,13 @@ export async function signAndSendMultisigCreation(input: {
   //    reconstruire, donc la signature partielle reste valide).
   let minContextSlot: number;
   try {
-    const latest = await input.connection.getLatestBlockhash('confirmed');
-    input.transaction.recentBlockhash = latest.blockhash;
-    input.transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
+    if (input.blockhash !== undefined) {
+      // Meme blockhash que la simulation finale : rien n'est re-demande au RPC.
+      input.transaction.recentBlockhash = input.blockhash.blockhash;
+      input.transaction.lastValidBlockHeight = input.blockhash.lastValidBlockHeight;
+    } else {
+      await applyFreshBlockhash(input.connection, input.transaction);
+    }
     minContextSlot = await input.connection.getSlot('confirmed');
   } catch (caught: unknown) {
     errors.push(

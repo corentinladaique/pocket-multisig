@@ -19,11 +19,14 @@ import { connection } from '../solana/connection';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
+import type { MultisigRegistryEntry } from '../vault/multisigRegistry';
 import { computeProposalDecision, summarizeDecisions, summarizeOperation, loadProposalReview,
   useProposals,
   type ProposalReviewResult, } from '../squads/proposals';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { CreateVaultScreen } from './CreateVaultScreen';
+import { MultisigDetailsScreen } from './MultisigDetailsScreen';
+import { MultisigInboxScreen } from './MultisigInboxScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
 
@@ -74,6 +77,10 @@ export function ConnectScreen() {
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Assistant local de configuration de vault (aucun RPC, aucune signature).
   const [vaultCreationOpen, setVaultCreationOpen] = useState(false);
+  // Inbox des multisigs connus (registre local uniquement, aucun RPC).
+  const [inboxOpen, setInboxOpen] = useState(false);
+  // Multisig ouvert depuis l'inbox (registre local) : lecture seule.
+  const [openEntry, setOpenEntry] = useState<MultisigRegistryEntry | null>(null);
   // Prechargement de l'operation de la proposition PRIORITAIRE : un seul appel
   // cible (getAccountInfo sur sa VaultTransaction), jamais pour les autres.
   const [inboxDecoded, setInboxDecoded] = useState<ProposalReviewResult | null>(null);
@@ -344,6 +351,28 @@ export function ConnectScreen() {
     );
   }
 
+  // Multisig ouvert depuis l'inbox : un seul getAccountInfo (loadMultisig),
+  // aucune creation, aucune signature, aucune proposition.
+  if (openEntry !== null) {
+    return (
+      <MultisigDetailsScreen
+        address={openEntry.address}
+        onBack={() => setOpenEntry(null)}
+        vaultName={openEntry.vaultName}
+      />
+    );
+  }
+
+  // Inbox des multisigs connus : lecture du registre local uniquement.
+  if (inboxOpen) {
+    return (
+      <MultisigInboxScreen
+        onBack={() => setInboxOpen(false)}
+        onOpenMultisig={(entry) => setOpenEntry(entry)}
+      />
+    );
+  }
+
   // Assistant local de creation de vault : ecran dedie, sortie par Cancel.
   if (vaultCreationOpen) {
     return <CreateVaultScreen onCancel={() => setVaultCreationOpen(false)} />;
@@ -594,11 +623,20 @@ export function ConnectScreen() {
           accessibilityRole="button"
           accessibilityLabel="Create a vault"
           onPress={() => setVaultCreationOpen(true)}
-          style={[styles.button, styles.secondary, styles.createVaultButton]}
+          style={[styles.button, styles.secondary, styles.sideButton]}
         >
           <Text style={styles.secondaryText}>Create a vault</Text>
         </Pressable>
       ) : null}
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open multisig inbox"
+        onPress={() => setInboxOpen(true)}
+        style={[styles.button, styles.secondary, styles.sideButton]}
+      >
+        <Text style={styles.secondaryText}>Inbox</Text>
+      </Pressable>
 
       {error ? (
         <View style={styles.errorBox}>
@@ -835,8 +873,8 @@ const styles = StyleSheet.create({
   secondary: {
     backgroundColor: '#f3f4f6',
   },
-  // Entree vers l'assistant local de creation de vault (aucun appel reseau).
-  createVaultButton: {
+  // Entrees laterales : assistant de creation de vault et inbox locale.
+  sideButton: {
     alignSelf: 'stretch',
     marginTop: 28,
   },

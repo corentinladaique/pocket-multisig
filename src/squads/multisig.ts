@@ -15,6 +15,8 @@ export interface MultisigView {
   address: string;
   configAuthority: string;
   members: MemberView[];
+  /** `null` si le programme n'a pas de collecteur de rent configure. */
+  rentCollector: string | null;
   threshold: number;
   timeLock: number;
   transactionIndex: number;
@@ -92,6 +94,8 @@ export async function loadMultisig(
       address: member.key.toBase58(),
       roles: decodeRoles(member.permissions),
     })),
+    // Meme deserialisation, aucun appel supplementaire : le champ etait deja lu.
+    rentCollector: account.rentCollector === null ? null : account.rentCollector.toBase58(),
     threshold: account.threshold,
     timeLock: account.timeLock,
     transactionIndex: Number(account.transactionIndex),
