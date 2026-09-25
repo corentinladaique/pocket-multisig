@@ -30,6 +30,7 @@ import {
   type ProposalCreationSimulationResult,
 } from '../squads/simulateProposalCreation';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
+import { formatMwaError } from '../wallet/mwaDiagnostics';
 
 /**
  * Creation d'une proposition de transfert SOL, de bout en bout.
@@ -199,7 +200,16 @@ export function NewProposalScreen({
       signature = result.signature;
       setCreateResult(result);
       if (!result.verified) {
-        setCreateError(result.validationErrors.join(' ') || result.errorMessage);
+        setCreateError(
+          result.errorMessage !== null
+            ? // Échec côté wallet : étape, code et message conservés tels quels.
+              formatMwaError({
+                code: result.errorCode ?? null,
+                message: result.errorMessage,
+                step: 'signAndSendTransactions',
+              })
+            : result.validationErrors.join(' '),
+        );
       }
     } catch (caught: unknown) {
       setCreateError(caught instanceof Error ? caught.message : String(caught));

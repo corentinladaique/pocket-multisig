@@ -28,6 +28,7 @@ import {
   type MultisigCreationSignSendResult,
 } from '../vault/signAndSendMultisigCreation';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
+import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { VaultPreviewScreen } from './VaultPreviewScreen';
 import { VaultTransactionPreviewScreen } from './VaultTransactionPreviewScreen';
 import {
@@ -343,7 +344,16 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
         signature = result.signature;
         setCreateResult(result);
         if (!result.verified) {
-          setCreateError(result.validationErrors.join(' ') || result.errorMessage);
+          setCreateError(
+            result.errorMessage !== null
+              ? // Échec côté wallet : étape, code et message conservés tels quels.
+                formatMwaError({
+                  code: result.errorCode ?? null,
+                  message: result.errorMessage,
+                  step: 'signAndSendTransactions',
+                })
+              : result.validationErrors.join(' '),
+          );
         } else if (result.readBack !== null) {
           // Creation verifiee on-chain : on conserve localement de quoi la
           // retrouver (adresse, nom local, labels). Aucun secret n'est ecrit.

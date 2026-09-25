@@ -6,6 +6,8 @@ import {
 } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 
+import { describeMwaError } from '../wallet/mwaDiagnostics';
+
 import {
   applyFreshBlockhash,
   type MultisigCreationBlockhash,
@@ -42,6 +44,8 @@ export type ProposalExecutionReadBack = {
 export type ProposalExecutionSignSendResult = {
   signature: string | null;
   errorMessage: string | null;
+  /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
+  errorCode?: string | null;
   readBack: ProposalExecutionReadBack | null;
   verified: boolean;
   /** Etat relu AVANT l'envoi (porte de securite du plan). */
@@ -240,6 +244,7 @@ export async function signAndSendProposalExecution(input: {
   // 4. Envoi : le membre Execute est l'unique signataire.
   let signature: string | null = null;
   let errorMessage: string | null = null;
+  let errorCode: string | null = null;
   try {
     const returned = await input.signAndSendTransactions(transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -248,6 +253,8 @@ export async function signAndSendProposalExecution(input: {
     }
   } catch (caught: unknown) {
     errorMessage = caught instanceof Error ? caught.message : String(caught);
+    // Code MWA conservé séparément : le message seul ne permet pas de diagnostiquer.
+    errorCode = describeMwaError(caught, 'signAndSendTransactions').code;
     errors.push(`SendFailed: ${errorMessage}`);
   }
 
@@ -255,6 +262,7 @@ export async function signAndSendProposalExecution(input: {
     return {
       approvalsBefore,
       errorMessage,
+      errorCode,
       readBack: null,
       signature: null,
       statusBefore,
@@ -311,6 +319,7 @@ export async function signAndSendProposalExecution(input: {
     return {
       approvalsBefore,
       errorMessage,
+      errorCode,
       readBack: null,
       signature,
       statusBefore,
@@ -339,6 +348,7 @@ export async function signAndSendProposalExecution(input: {
   return {
     approvalsBefore,
     errorMessage,
+    errorCode,
     readBack,
     signature,
     statusBefore,

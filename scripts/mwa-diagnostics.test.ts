@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   describeMwaError,
   describeWalletIdentity,
+  formatMwaError,
   MWA_STEPS,
 } from '../src/wallet/mwaDiagnostics';
 
@@ -89,13 +90,40 @@ check('etape non identifiable : signalee comme telle', () => {
   assert.ok(/could not be identified/.test(report.hint));
 });
 
-check('les quatre etapes MWA sont declarees', () => {
+check('cinq etapes MWA sont declarees, read-back inclus', () => {
   assert.deepEqual([...MWA_STEPS], [
     'authorize',
     'reauthorize',
     'signAndSendTransactions',
     'deauthorize',
+    'readBack',
   ]);
+});
+
+check('formatMwaError conserve le message verbatim et affiche le code', () => {
+  const formatted = formatMwaError({
+    code: '4001',
+    message: 'authorization request failed',
+    step: 'authorize',
+  });
+  assert.equal(formatted, 'authorize failed · code: 4001 · authorization request failed');
+});
+
+check('formatMwaError rend l absence de code explicite', () => {
+  const formatted = formatMwaError({
+    code: null,
+    message: 'CancellationException',
+    step: 'signAndSendTransactions',
+  });
+  assert.ok(formatted.includes('code: none'));
+  assert.ok(formatted.includes('CancellationException'));
+  assert.ok(formatted.startsWith('signAndSendTransactions failed'));
+});
+
+check('read-back est une etape distincte des etapes de signature', () => {
+  const report = describeMwaError(new Error('rpc down'), 'readBack');
+  assert.equal(report.step, 'readBack');
+  assert.ok(/never a signature step/.test(report.hint));
 });
 
 check('identite wallet : label, adresse et icone URI', () => {

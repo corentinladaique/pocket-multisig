@@ -1,6 +1,8 @@
 import { Keypair, PublicKey, type Connection, type Transaction } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 
+import { describeMwaError } from '../wallet/mwaDiagnostics';
+
 /**
  * Envoi de la transaction de creation d'un multisig Squads v4.
  *
@@ -66,6 +68,8 @@ export type MultisigCreationSignSendResult = {
   /** Signature de la transaction envoyee, `null` si aucun envoi n'a abouti. */
   signature: string | null;
   errorMessage: string | null;
+  /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
+  errorCode?: string | null;
   readBack: MultisigCreationReadBack | null;
   /** Vrai seulement si l'envoi a reussi ET que la relecture confirme le contenu. */
   verified: boolean;
@@ -198,6 +202,7 @@ export async function signAndSendMultisigCreation(input: {
   // 3. MWA : le wallet ajoute la signature du payeur et envoie.
   let signature: string | null = null;
   let errorMessage: string | null = null;
+  let errorCode: string | null = null;
   try {
     const returned = await input.signAndSendTransactions(input.transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -206,6 +211,9 @@ export async function signAndSendMultisigCreation(input: {
     }
   } catch (caught: unknown) {
     errorMessage = caught instanceof Error ? caught.message : String(caught);
+    // Le code MWA est conservé séparément : sans lui, l'erreur devient
+    // indiagnosticable une fois reformulée en message lisible.
+    errorCode = describeMwaError(caught, 'signAndSendTransactions').code;
     errors.push(`SendFailed: ${errorMessage}`);
   }
 
@@ -213,6 +221,7 @@ export async function signAndSendMultisigCreation(input: {
     return {
       signature: null,
       errorMessage,
+      errorCode,
       readBack: null,
       verified: false,
       validationErrors: errors,
@@ -285,6 +294,7 @@ export async function signAndSendMultisigCreation(input: {
   return {
     signature,
     errorMessage,
+    errorCode,
     readBack,
     verified: readBack !== null && errors.length === 0,
     validationErrors: errors,

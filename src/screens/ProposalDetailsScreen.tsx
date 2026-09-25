@@ -32,6 +32,7 @@ import {
 } from '../squads/proposals';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
+import { formatMwaError } from '../wallet/mwaDiagnostics';
 
 /**
  * Detail d'une proposition : LECTURE SEULE.
@@ -146,7 +147,16 @@ export function ProposalDetailsScreen({
       signature = result.signature;
       setExecutionResult(result);
       if (!result.verified) {
-        setExecutionError(result.validationErrors.join(' ') || result.errorMessage);
+        setExecutionError(
+          result.errorMessage !== null
+            ? // Échec côté wallet : étape, code et message conservés tels quels.
+              formatMwaError({
+                code: result.errorCode ?? null,
+                message: result.errorMessage,
+                step: 'signAndSendTransactions',
+              })
+            : result.validationErrors.join(' '),
+        );
       }
     } catch (caught: unknown) {
       setExecutionError(caught instanceof Error ? caught.message : String(caught));
@@ -229,7 +239,16 @@ export function ProposalDetailsScreen({
       signature = result.signature;
       setApprovalResult(result);
       if (!result.verified) {
-        setApprovalError(result.validationErrors.join(' ') || result.errorMessage);
+        setApprovalError(
+          result.errorMessage !== null
+            ? // Échec côté wallet : étape, code et message conservés tels quels.
+              formatMwaError({
+                code: result.errorCode ?? null,
+                message: result.errorMessage,
+                step: 'signAndSendTransactions',
+              })
+            : result.validationErrors.join(' '),
+        );
       }
     } catch (caught: unknown) {
       setApprovalError(caught instanceof Error ? caught.message : String(caught));

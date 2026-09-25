@@ -1,6 +1,8 @@
 import { PublicKey, Transaction, type Connection } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 
+import { describeMwaError } from '../wallet/mwaDiagnostics';
+
 import {
   applyFreshBlockhash,
   type MultisigCreationBlockhash,
@@ -43,6 +45,8 @@ export type ProposalCreationSignSendResult = {
   validationErrors: string[];
   validationWarnings: string[];
   errorMessage: string | null;
+  /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
+  errorCode?: string | null;
 };
 
 const READ_BACK_ATTEMPTS = 4;
@@ -172,6 +176,7 @@ export async function signAndSendProposalCreation(input: {
   // 2. Envoi : la signature du createur est produite par le wallet.
   let signature: string | null = null;
   let errorMessage: string | null = null;
+  let errorCode: string | null = null;
   try {
     const returned = await input.signAndSendTransactions(transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -180,11 +185,14 @@ export async function signAndSendProposalCreation(input: {
     }
   } catch (caught: unknown) {
     errorMessage = caught instanceof Error ? caught.message : String(caught);
+    // Code MWA conservé séparément : le message seul ne permet pas de diagnostiquer.
+    errorCode = describeMwaError(caught, 'signAndSendTransactions').code;
     errors.push(`SendFailed: ${errorMessage}`);
   }
 
   if (signature === null) {
     return {
+      errorCode,
       errorMessage,
       readBack: null,
       signature: null,
@@ -234,6 +242,7 @@ export async function signAndSendProposalCreation(input: {
   if (readBack === null) {
     errors.push('ReadBackMissing: the created accounts are not readable yet.');
     return {
+      errorCode,
       errorMessage,
       readBack: null,
       signature,
@@ -294,6 +303,7 @@ export async function signAndSendProposalCreation(input: {
 
   return {
     errorMessage,
+    errorCode,
     readBack,
     signature,
     validationErrors: errors,

@@ -15,6 +15,7 @@ export const MWA_STEPS = [
   'reauthorize',
   'signAndSendTransactions',
   'deauthorize',
+  'readBack',
 ] as const;
 
 export type MwaStep = (typeof MWA_STEPS)[number] | 'unknown';
@@ -47,6 +48,8 @@ const STEP_HINTS: Record<MwaStep, string> = {
   deauthorize: 'Only the session was being revoked: nothing was signed and nothing was sent.',
   reauthorize:
     'The stored authorization was being renewed: nothing was signed and nothing was sent.',
+  readBack:
+    'Reading back the on-chain result failed: this is an RPC side effect, never a signature step.',
   signAndSendTransactions:
     'A valid authorization is required before signing: a handshake failure here means nothing was signed and nothing was sent.',
   unknown: 'The failing step could not be identified.',
@@ -131,4 +134,20 @@ export function describeMwaError(caught: unknown, step: MwaStep): MwaErrorReport
     name,
     step,
   };
+}
+
+/**
+ * Mise en forme d'un échec sans jamais perdre l'information d'origine.
+ *
+ * Le message est repris VERBATIM ; le code est affiché même quand il est
+ * absent (« none ») pour rendre l'absence explicite au lieu de la masquer.
+ * Utilisé par les écrans pour un affichage homogène, jamais pour reformuler.
+ */
+export function formatMwaError(report: {
+  step: MwaStep;
+  code: string | null;
+  message: string;
+}): string {
+  const message = report.message.trim().length > 0 ? report.message : '(empty message)';
+  return `${report.step} failed · code: ${report.code ?? 'none'} · ${message}`;
 }

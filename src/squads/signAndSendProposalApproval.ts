@@ -1,6 +1,8 @@
 import { PublicKey, Transaction, type Connection } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 
+import { describeMwaError } from '../wallet/mwaDiagnostics';
+
 import {
   planProposalApproval,
   type ApprovalPreconditions,
@@ -34,6 +36,8 @@ export type ProposalApprovalReadBack = {
 export type ProposalApprovalSignSendResult = {
   signature: string | null;
   errorMessage: string | null;
+  /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
+  errorCode?: string | null;
   readBack: ProposalApprovalReadBack | null;
   /** Vrai seulement si l'envoi a reussi ET que la relecture confirme l'approbation. */
   verified: boolean;
@@ -186,6 +190,7 @@ export async function signAndSendProposalApproval(input: {
   // 3. Envoi : la signature du membre est produite par le wallet.
   let signature: string | null = null;
   let errorMessage: string | null = null;
+  let errorCode: string | null = null;
   try {
     const returned = await input.signAndSendTransactions(transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -194,6 +199,8 @@ export async function signAndSendProposalApproval(input: {
     }
   } catch (caught: unknown) {
     errorMessage = caught instanceof Error ? caught.message : String(caught);
+    // Code MWA conservé séparément : le message seul ne permet pas de diagnostiquer.
+    errorCode = describeMwaError(caught, 'signAndSendTransactions').code;
     errors.push(`SendFailed: ${errorMessage}`);
   }
 
@@ -201,6 +208,7 @@ export async function signAndSendProposalApproval(input: {
     return {
       approvalsBefore,
       errorMessage,
+      errorCode,
       readBack: null,
       signature: null,
       validationErrors: errors,
@@ -242,6 +250,7 @@ export async function signAndSendProposalApproval(input: {
     return {
       approvalsBefore,
       errorMessage,
+      errorCode,
       readBack: null,
       signature,
       validationErrors: errors,
@@ -278,6 +287,7 @@ export async function signAndSendProposalApproval(input: {
   return {
     approvalsBefore,
     errorMessage,
+    errorCode,
     readBack,
     signature,
     validationErrors: errors,
