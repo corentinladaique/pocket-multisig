@@ -2,6 +2,15 @@ import { Keypair, PublicKey, type Connection, type Transaction } from '@solana/w
 import * as multisig from '@sqds/multisig';
 
 import { describeMwaError } from '../wallet/mwaDiagnostics';
+import type { SignatureConfirmationStatus } from '../wallet/operationState';
+import { confirmSignature, type SignatureConfirmation } from '../solana/confirmSignature';
+import {
+  blockhashBundleFromTransaction,
+  DEFAULT_BLOCK_MARGIN,
+  evaluateSigningWindow,
+  signingStateFromEvidence,
+  type SigningState,
+} from '../wallet/signingWindow';
 
 /**
  * Envoi de la transaction de creation d'un multisig Squads v4.
@@ -70,6 +79,14 @@ export type MultisigCreationSignSendResult = {
   errorMessage: string | null;
   /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
   errorCode?: string | null;
+  /** Preuve n°2 : statut de confirmation de la signature, relu sur la grappe. */
+  confirmationStatus?: SignatureConfirmationStatus | null;
+  confirmed?: boolean;
+  /** Blockhash effectivement utilisé pour l'envoi, avec sa limite en blocs. */
+  blockhash?: string | null;
+  lastValidBlockHeight?: number | null;
+  /** État affichable du parcours de signature. */
+  signingState?: SigningState;
   readBack: MultisigCreationReadBack | null;
   /** Vrai seulement si l'envoi a reussi ET que la relecture confirme le contenu. */
   verified: boolean;
@@ -182,6 +199,39 @@ export async function signAndSendMultisigCreation(input: {
     };
   }
 
+  // 1bis. Fenetre de signature : verdict rendu AVANT d'ouvrir le wallet.
+  // La validite est jugee en BLOCS (jamais au chronometre) : sans marge
+  // suffisante, le wallet n'est pas ouvert du tout.
+  const bundle = blockhashBundleFromTransaction(input.transaction);
+  let blockHeight: number | null = null;
+  try {
+    blockHeight = await input.connection.getBlockHeight('confirmed');
+  } catch (caught: unknown) {
+    errors.push(
+      `BlockHeightUnavailable: ${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+  const signingWindow =
+    bundle === null
+      ? null
+      : evaluateSigningWindow({ blockHeight, bundle, marginBlocks: DEFAULT_BLOCK_MARGIN });
+  if (bundle === null || signingWindow === null || !signingWindow.usable) {
+    if (signingWindow !== null && !signingWindow.usable) {
+      errors.push(`SignatureWindowNotUsable: ${signingWindow.reason}`);
+    }
+    return {
+      blockhash: bundle?.blockhash ?? null,
+      errorMessage: null,
+      lastValidBlockHeight: bundle?.lastValidBlockHeight ?? null,
+      readBack: null,
+      signature: null,
+      signingState: 'signature-request-expired',
+      validationErrors: errors,
+      validationWarnings: warnings,
+      verified: false,
+    };
+  }
+
   // 2. Signature locale du signataire ephemere, sur CETTE instance.
   try {
     input.transaction.partialSign(input.ephemeralCreateKey);
@@ -203,6 +253,7 @@ export async function signAndSendMultisigCreation(input: {
   let signature: string | null = null;
   let errorMessage: string | null = null;
   let errorCode: string | null = null;
+  let confirmation: SignatureConfirmation | null = null;
   try {
     const returned = await input.signAndSendTransactions(input.transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -259,6 +310,15 @@ export async function signAndSendMultisigCreation(input: {
     }
   }
 
+  // Preuve n°2 : la transaction est-elle confirmée ? Sans elle, aucun succès.
+  try {
+    confirmation = await confirmSignature({ connection: input.connection, signature });
+  } catch (caught: unknown) {
+    errors.push(
+      `ConfirmationCheckFailed: ${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+
   if (readBack === null) {
     errors.push('ReadBackMissing: the multisig account is not readable yet.');
   } else {
@@ -292,11 +352,23 @@ export async function signAndSendMultisigCreation(input: {
   }
 
   return {
+    blockhash: bundle.blockhash,
+    lastValidBlockHeight: bundle.lastValidBlockHeight,
     signature,
     errorMessage,
     errorCode,
+    confirmationStatus: confirmation?.status ?? null,
+    confirmed: confirmation?.status === 'confirmed',
     readBack,
-    verified: readBack !== null && errors.length === 0,
+    signingState: signingStateFromEvidence({
+      confirmed: confirmation?.status === 'confirmed',
+      readBackVerified: errors.length === 0 && readBack !== null,
+      signatureObtained: true,
+    }),
+    // Trois preuves exigees : signature obtenue, transaction confirmee,
+    // compte metier relu et coherent. Aucune n'est optionnelle.
+    verified:
+      readBack !== null && errors.length === 0 && confirmation?.status === 'confirmed',
     validationErrors: errors,
     validationWarnings: warnings,
   };

@@ -29,6 +29,16 @@ import {
 } from '../vault/signAndSendMultisigCreation';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
+import {
+  buildOperationReport,
+  classifyOperationFailure,
+  classifyOperationResult,
+  type OperationReport,
+} from '../wallet/operationState';
+import { confirmSignature } from '../solana/confirmSignature';
+import { describeWalletIdentity } from '../wallet/mwaDiagnostics';
+import * as multisig from '@sqds/multisig';
+import { PublicKey } from '@solana/web3.js';
 import { VaultPreviewScreen } from './VaultPreviewScreen';
 import { VaultTransactionPreviewScreen } from './VaultTransactionPreviewScreen';
 import {
@@ -65,7 +75,7 @@ type MeasurableInput = TextInput & {
 };
 
 export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
-  const { account, signAndSendTransactions } = useMobileWallet();
+  const { account, connect, signAndSendTransactions } = useMobileWallet();
   // Registre local des multisigs connus (stockage seul, aucun RPC).
   const registry = useMultisigRegistry();
 
@@ -97,6 +107,10 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   // Verrou de tentative : jamais deux envois en parallele, jamais deux envois
   // apres une signature obtenue.
   const sendAttemptedRef = useRef(false);
+  // Machine d'état : ce qui s'est réellement passé, et ce qui reste permis.
+  const [operationReport, setOperationReport] = useState<OperationReport | null>(null);
+  const [checkReport, setCheckReport] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
 
   const memberCounter = useRef(0);
 
@@ -122,6 +136,16 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   const plan = useMemo(() => buildMultisigCreationPlan(request), [request]);
 
   const walletAddress = account === undefined ? null : account.address.toString();
+  // Label réellement fourni par le wallet lors de l'autorisation : affiché tel
+  // quel dans les diagnostics, jamais complété par une valeur inventée.
+  const walletLabel =
+    account === undefined
+      ? null
+      : describeWalletIdentity({
+          address: account.address.toString(),
+          icon: account.icon,
+          label: account.label,
+        }).label;
   const walletAlreadyMember =
     walletAddress !== null && members.some((member) => member.publicKey === walletAddress);
 
@@ -354,7 +378,28 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
                 })
               : result.validationErrors.join(' '),
           );
+          // Machine d'état : signature obtenue ou non déterminent seuls la suite.
+          setOperationReport(
+            buildOperationReport({
+              evidence: {
+                confirmed: result.confirmed === true,
+                readBackVerified: result.verified,
+                signatureObtained: result.signature !== null,
+              },
+              state: classifyOperationResult({
+                confirmed: result.confirmed === true,
+                readBackVerified: result.verified,
+                signatureObtained: result.signature !== null,
+              }),
+            }),
+          );
         } else if (result.readBack !== null) {
+          setOperationReport(
+            buildOperationReport({
+              evidence: { confirmed: true, readBackVerified: true, signatureObtained: true },
+              state: 'operation-created-and-verified',
+            }),
+          );
           // Creation verifiee on-chain : on conserve localement de quoi la
           // retrouver (adresse, nom local, labels). Aucun secret n'est ecrit.
           const memberLabels: Record<string, string> = {};
@@ -377,6 +422,13 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
         }
       } catch (caught: unknown) {
         setCreateError(caught instanceof Error ? caught.message : String(caught));
+        // Échec hors des modules d'envoi : classé ici, sans jamais conclure
+        // à un succès (CancellationException = interruption de session).
+        const state = classifyOperationFailure({
+          caught,
+          step: 'signAndSendTransactions',
+        });
+        setOperationReport(buildOperationReport({ caught, state, step: 'signAndSendTransactions' }));
       } finally {
         // Aucune signature obtenue -> la tentative n'a rien produit : on
         // reautorise un essai. Sinon, plus aucun envoi automatique.
@@ -387,7 +439,75 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
     [plan, registry, signAndSendTransactions],
   );
 
-  /** Tap sur "Create on Devnet" : preparation, puis confirmation explicite. */
+  /**
+   * Reconnexion wallet uniquement : aucune préparation, aucune signature.
+   * Utile après une interruption de session ou un refus d'autorisation.
+   */
+  const onReconnectWallet = useCallback(async () => {
+    setCheckReport(null);
+    setCreateError(null);
+    try {
+      await connect();
+    } catch (caught: unknown) {
+      const state = classifyOperationFailure({ caught, step: 'authorize' });
+      setOperationReport(buildOperationReport({ caught, state, step: 'authorize' }));
+    }
+  }, [connect]);
+
+  /**
+   * Relecture seule après qu'une signature a existé : confirmation de la
+   * transaction puis comparaison du compte métier. Ne prépare rien, ne signe
+   * rien, n'envoie rien — c'est le seul geste autorisé tant que la
+   * transaction peut encore aboutir.
+   */
+  const onCheckTransactionAgain = useCallback(async () => {
+    const signature = createResult?.signature ?? null;
+    const address = createResult?.readBack?.address ?? null;
+    if (signature === null) {
+      setCheckReport('No signature exists: nothing was sent, nothing to check.');
+      return;
+    }
+    setChecking(true);
+    setCheckReport(null);
+    try {
+      const confirmation = await confirmSignature({ connection, signature });
+      const lines = [`Confirmation: ${confirmation.status}`];
+      let readBackVerified = false;
+      if (address !== null) {
+        const info = await connection.getAccountInfo(new PublicKey(address), 'confirmed');
+        if (info === null) {
+          lines.push('Multisig account: not found yet');
+        } else {
+          const [decoded] = multisig.accounts.Multisig.fromAccountInfo(info);
+          const sameThreshold = decoded.threshold === plan.threshold;
+          const sameMemberCount = decoded.members.length === plan.members.length;
+          readBackVerified = sameThreshold && sameMemberCount;
+          lines.push(
+            `Multisig account: present, owner ${info.owner.toString()}, threshold ${
+              decoded.threshold
+            }, ${decoded.members.length} member(s)`,
+          );
+          if (!readBackVerified) {
+            lines.push('Read-back does not match the expected configuration.');
+          }
+        }
+      }
+      setCheckReport(lines.join(' · '));
+      const evidence = {
+        confirmed: confirmation.status === 'confirmed',
+        readBackVerified,
+        signatureObtained: true,
+      };
+      setOperationReport(
+        buildOperationReport({ evidence, state: classifyOperationResult(evidence) }),
+      );
+    } catch (caught: unknown) {
+      setCheckReport(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setChecking(false);
+    }
+  }, [connection, createResult, plan]);
+
   const onCreateOnDevnet = useCallback(() => {
     const creator = walletAddress;
     if (creator === null || creating || sendAttemptedRef.current) return;
@@ -493,14 +613,24 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
           createResult === null &&
           !creating
         }
+        checkReport={checkReport}
+        checking={checking}
         createError={createError}
         createResult={createResult}
         creating={creating}
         onBack={() => setTransactionPreviewOpen(false)}
+        onCheckTransactionAgain={() => {
+          void onCheckTransactionAgain();
+        }}
         onCreateOnDevnet={onCreateOnDevnet}
+        onReconnectWallet={() => {
+          void onReconnectWallet();
+        }}
+        operationReport={operationReport}
         payer={walletAddress}
         request={request}
         simulatedCostLamports={simulatedCost}
+        walletLabel={walletLabel}
       />
     );
   }

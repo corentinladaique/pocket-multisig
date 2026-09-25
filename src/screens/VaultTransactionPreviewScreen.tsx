@@ -16,6 +16,8 @@ import {
   type VaultCreationRequest,
 } from '../vault/vaultDraft';
 import type { MultisigCreationSignSendResult } from '../vault/signAndSendMultisigCreation';
+import type { OperationReport } from '../wallet/operationState';
+import { signingStateTitle } from '../wallet/signingWindow';
 
 /**
  * Preview de transaction.
@@ -29,26 +31,43 @@ import type { MultisigCreationSignSendResult } from '../vault/signAndSendMultisi
  */
 export function VaultTransactionPreviewScreen({
   canCreate,
+  checkReport,
+  checking,
   createError,
   createResult,
   creating,
   onBack,
+  onCheckTransactionAgain,
   onCreateOnDevnet,
+  onReconnectWallet,
+  operationReport,
   payer,
   request,
   simulatedCostLamports,
+  walletLabel,
 }: {
   /** Vrai seulement si le wallet et le plan permettent un envoi. */
   canCreate: boolean;
+  /** Résultat du contrôle manuel de transaction (relecture seule). */
+  checkReport: string | null;
+  checking: boolean;
   createError: string | null;
   createResult: MultisigCreationSignSendResult | null;
   creating: boolean;
   onBack: () => void;
+  /** Relecture seule : confirmation + compte métier. Ne signe ni n'envoie. */
+  onCheckTransactionAgain: () => void;
   /** Declenche preparation + confirmation. Jamais appele automatiquement. */
   onCreateOnDevnet: () => void;
+  /** Réautorisation wallet uniquement. */
+  onReconnectWallet: () => void;
+  /** Machine d'état : ce qui s'est passé et ce qui reste permis. */
+  operationReport: OperationReport | null;
   payer: string | null;
   request: VaultCreationRequest;
   simulatedCostLamports: number | null;
+  /** Label du wallet tel que fourni par l'autorisation, s'il existe. */
+  walletLabel: string | null;
 }) {
   const transaction = useMemo(
     () => buildTransactionPreviewData(buildPreviewData(request)),
@@ -185,10 +204,102 @@ export function VaultTransactionPreviewScreen({
           ) : null}
         </View>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to preview"
-          onPress={onBackPress}
+        {operationReport !== null ? (
+                <View
+                  style={
+                    operationReport.state === 'operation-created-and-verified'
+                      ? styles.successBox
+                      : styles.errorBox
+                  }
+                >
+                  <Text
+                    style={
+                      operationReport.state === 'operation-created-and-verified'
+                        ? styles.successText
+                        : styles.errorText
+                    }
+                  >
+                    {operationReport.title}
+                  </Text>
+                  {createResult?.signingState !== undefined ? (
+                              <Text style={styles.hint}>
+                                Signing state: {signingStateTitle(createResult.signingState)}
+                              </Text>
+                            ) : null}
+                            <Text style={styles.hint}>
+                              Signature obtained: {operationReport.evidence.signatureObtained ? 'yes' : 'no'} ·
+                    confirmed: {operationReport.evidence.confirmed ? 'yes' : 'no'} · read-back verified:{' '}
+                    {operationReport.evidence.readBackVerified ? 'yes' : 'no'}
+                  </Text>
+                  {operationReport.mwa !== null ? (
+                    <>
+                      <Text style={styles.hint}>
+                        Wallet: {walletLabel ?? 'label not provided by the wallet'}
+                      </Text>
+                      <Text style={styles.hint}>Step: {operationReport.mwa.step}</Text>
+                      <Text style={styles.hint}>
+                        Protocol code: {operationReport.mwa.code ?? 'none returned'}
+                      </Text>
+                      <Text style={styles.hint}>
+                        Error type: {operationReport.mwa.name ?? 'not an Error instance'}
+                      </Text>
+                      <Text style={styles.hint}>Message: {operationReport.mwa.message}</Text>
+                    </>
+                  ) : null}
+                  {operationReport.actions.allowCheckAgain ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityState={{ busy: checking, disabled: checking }}
+                      disabled={checking}
+                      onPress={onCheckTransactionAgain}
+                      style={[styles.button, styles.secondary]}
+                    >
+                      {checking ? (
+                        <ActivityIndicator color="#101317" />
+                      ) : (
+                        <Text style={styles.secondaryText}>Check transaction again</Text>
+                      )}
+                    </Pressable>
+                  ) : null}
+                  {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
+                  {operationReport.actions.allowReconnect ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Reconnect wallet"
+                      onPress={onReconnectWallet}
+                      style={[styles.button, styles.secondary]}
+                    >
+                      <Text style={styles.secondaryText}>Reconnect wallet</Text>
+                    </Pressable>
+                  ) : null}
+                  {operationReport.actions.allowPrepareAndRetry ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Prepare and retry with a fresh transaction"
+                      onPress={onCreateOnDevnet}
+                      style={[styles.button, styles.disabled]}
+                    >
+                      <Text style={styles.buttonText}>
+                {createResult?.signingState === 'signature-request-expired'
+                  ? 'Prepare again'
+                  : 'Prepare and retry'}
+              </Text>
+                    </Pressable>
+                  ) : null}
+                  {operationReport.evidence.signatureObtained &&
+                  !operationReport.actions.allowSecondSend ? (
+                    <Text style={styles.hint}>
+                      A signature already exists: no second send is allowed until the transaction is proven
+                      absent, expired or failed.
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Go back"
+                onPress={onBackPress}
           style={[styles.button, styles.secondary]}
         >
           <Text style={styles.secondaryText}>Back</Text>

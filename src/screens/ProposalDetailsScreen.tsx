@@ -33,6 +33,47 @@ import {
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
+import { buildOperationReport, classifyOperationResult } from '../wallet/operationState';
+import { signingStateTitle, type SigningState } from '../wallet/signingWindow';
+
+/**
+ * Message d'échec homogène : la machine d'état parle d'abord (pour ne jamais
+ * présenter « signature obtenue » comme un échec), puis le diagnostic MWA
+ * d'origine est repris verbatim avec son code.
+ */
+function describeOperationFailure(result: {
+  confirmed?: boolean;
+  errorCode?: string | null;
+  errorMessage: string | null;
+  signature: string | null;
+  signingState?: SigningState;
+  validationErrors: string[];
+  verified: boolean;
+}): string {
+  const evidence = {
+    confirmed: result.confirmed === true,
+    readBackVerified: result.verified,
+    signatureObtained: result.signature !== null,
+  };
+  // L'état de signature du module prime : il distingue « requête expirée
+  // avant signature » de « signée, confirmation en attente ».
+  const title =
+    result.signingState !== undefined
+      ? signingStateTitle(result.signingState)
+      : buildOperationReport({
+          evidence,
+          state: classifyOperationResult(evidence),
+        }).title;
+  const detail =
+    result.errorMessage !== null
+      ? formatMwaError({
+          code: result.errorCode ?? null,
+          message: result.errorMessage,
+          step: 'signAndSendTransactions',
+        })
+      : result.validationErrors.join(' ');
+  return `${title} ${detail}`;
+}
 
 /**
  * Detail d'une proposition : LECTURE SEULE.
@@ -147,16 +188,7 @@ export function ProposalDetailsScreen({
       signature = result.signature;
       setExecutionResult(result);
       if (!result.verified) {
-        setExecutionError(
-          result.errorMessage !== null
-            ? // Échec côté wallet : étape, code et message conservés tels quels.
-              formatMwaError({
-                code: result.errorCode ?? null,
-                message: result.errorMessage,
-                step: 'signAndSendTransactions',
-              })
-            : result.validationErrors.join(' '),
-        );
+        setExecutionError(describeOperationFailure(result));
       }
     } catch (caught: unknown) {
       setExecutionError(caught instanceof Error ? caught.message : String(caught));
@@ -239,16 +271,7 @@ export function ProposalDetailsScreen({
       signature = result.signature;
       setApprovalResult(result);
       if (!result.verified) {
-        setApprovalError(
-          result.errorMessage !== null
-            ? // Échec côté wallet : étape, code et message conservés tels quels.
-              formatMwaError({
-                code: result.errorCode ?? null,
-                message: result.errorMessage,
-                step: 'signAndSendTransactions',
-              })
-            : result.validationErrors.join(' '),
-        );
+        setApprovalError(describeOperationFailure(result));
       }
     } catch (caught: unknown) {
       setApprovalError(caught instanceof Error ? caught.message : String(caught));

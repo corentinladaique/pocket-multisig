@@ -7,6 +7,15 @@ import {
 import * as multisig from '@sqds/multisig';
 
 import { describeMwaError } from '../wallet/mwaDiagnostics';
+import type { SignatureConfirmationStatus } from '../wallet/operationState';
+import { confirmSignature, type SignatureConfirmation } from '../solana/confirmSignature';
+import {
+  blockhashBundleFromTransaction,
+  DEFAULT_BLOCK_MARGIN,
+  evaluateSigningWindow,
+  signingStateFromEvidence,
+  type SigningState,
+} from '../wallet/signingWindow';
 
 import {
   applyFreshBlockhash,
@@ -46,6 +55,14 @@ export type ProposalExecutionSignSendResult = {
   errorMessage: string | null;
   /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
   errorCode?: string | null;
+  /** Preuve n°2 : statut de confirmation de la signature, relu sur la grappe. */
+  confirmationStatus?: SignatureConfirmationStatus | null;
+  confirmed?: boolean;
+  /** Blockhash effectivement utilisé pour l'envoi, avec sa limite en blocs. */
+  blockhash?: string | null;
+  lastValidBlockHeight?: number | null;
+  /** État affichable du parcours de signature. */
+  signingState?: SigningState;
   readBack: ProposalExecutionReadBack | null;
   verified: boolean;
   /** Etat relu AVANT l'envoi (porte de securite du plan). */
@@ -241,10 +258,45 @@ export async function signAndSendProposalExecution(input: {
     };
   }
 
+  // 3bis. Fenetre de signature : verdict rendu AVANT d'ouvrir le wallet.
+  const bundle = blockhashBundleFromTransaction(transaction);
+  let blockHeight: number | null = null;
+  try {
+    blockHeight = await input.connection.getBlockHeight('confirmed');
+  } catch (caught: unknown) {
+    errors.push(
+      `BlockHeightUnavailable: ${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+  const signingWindow =
+    bundle === null
+      ? null
+      : evaluateSigningWindow({ blockHeight, bundle, marginBlocks: DEFAULT_BLOCK_MARGIN });
+  if (bundle === null || signingWindow === null || !signingWindow.usable) {
+    if (signingWindow !== null && !signingWindow.usable) {
+      errors.push(`SignatureWindowNotUsable: ${signingWindow.reason}`);
+    }
+    return {
+      approvalsBefore,
+      blockhash: bundle?.blockhash ?? null,
+      errorCode: null,
+      errorMessage: null,
+      lastValidBlockHeight: bundle?.lastValidBlockHeight ?? null,
+      readBack: null,
+      signature: null,
+      signingState: 'signature-request-expired',
+      statusBefore,
+      validationErrors: errors,
+      validationWarnings: warnings,
+      verified: false,
+    };
+  }
+
   // 4. Envoi : le membre Execute est l'unique signataire.
   let signature: string | null = null;
   let errorMessage: string | null = null;
   let errorCode: string | null = null;
+  let confirmation: SignatureConfirmation | null = null;
   try {
     const returned = await input.signAndSendTransactions(transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -314,6 +366,15 @@ export async function signAndSendProposalExecution(input: {
     }
   }
 
+  // Preuve n°2 : la transaction est-elle confirmée ? Sans elle, aucun succès.
+  try {
+    confirmation = await confirmSignature({ connection: input.connection, signature });
+  } catch (caught: unknown) {
+    errors.push(
+      `ConfirmationCheckFailed: ${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+
   if (readBack === null) {
     errors.push('ReadBackMissing: the execution effect could not be observed.');
     return {
@@ -347,13 +408,23 @@ export async function signAndSendProposalExecution(input: {
 
   return {
     approvalsBefore,
+    blockhash: bundle.blockhash,
+    lastValidBlockHeight: bundle.lastValidBlockHeight,
     errorMessage,
     errorCode,
+    confirmationStatus: confirmation?.status ?? null,
+    confirmed: confirmation?.status === 'confirmed',
     readBack,
     signature,
+    signingState: signingStateFromEvidence({
+      confirmed: confirmation?.status === 'confirmed',
+      readBackVerified: errors.length === 0 && readBack !== null,
+      signatureObtained: true,
+    }),
     statusBefore,
     validationErrors: errors,
     validationWarnings: warnings,
-    verified: errors.length === 0,
+    // Trois preuves exigees : signature, confirmation, effet relu sur le vault.
+    verified: errors.length === 0 && confirmation?.status === 'confirmed',
   };
 }

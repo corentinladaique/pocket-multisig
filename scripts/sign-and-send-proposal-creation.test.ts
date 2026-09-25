@@ -180,6 +180,9 @@ async function main(): Promise<void> {
     const calls: { blockhash: string | undefined; minContextSlot: number }[] = [];
     const stubConnection = {
       getAccountInfo: async () => null,
+      // La fenetre de signature lit desormais la hauteur de bloc AVANT
+      // d'ouvrir le wallet : le stub doit donc la fournir.
+      getBlockHeight: async () => 42,
       getSlot: async () => 42,
     } as unknown as Connection;
     const recordingSend = async (transaction: unknown, minContextSlot: number) => {
@@ -191,7 +194,7 @@ async function main(): Promise<void> {
     };
 
     const result = await signAndSendProposalCreation({
-      blockhash: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 },
+      blockhash: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1000 },
       build: validBuild(),
       connection: stubConnection,
       preflight: validPreflight(),
@@ -206,6 +209,35 @@ async function main(): Promise<void> {
     assert.ok(result.validationErrors.some((error) => error.includes(WALLET_MARKER)));
     assert.ok(result.errorMessage !== null);
     assert.equal(result.readBack, null);
+  });
+
+  await check('fenetre de signature insuffisante : le wallet n est jamais ouvert', async () => {
+    let walletCalls = 0;
+    const stubConnection = {
+      getAccountInfo: async () => null,
+      // Hauteur 42 : le blockhash fourni (limite 1) est deja expire.
+      getBlockHeight: async () => 42,
+      getSlot: async () => 42,
+    } as unknown as Connection;
+    const countingSend = async () => {
+      walletCalls += 1;
+      throw new Error(WALLET_MARKER);
+    };
+
+    const result = await signAndSendProposalCreation({
+      blockhash: { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1 },
+      build: validBuild(),
+      connection: stubConnection,
+      preflight: validPreflight(),
+      signAndSendTransactions: countingSend,
+      simulation: readySimulation(),
+    });
+
+    assert.equal(walletCalls, 0, 'aucune ouverture de wallet sans marge suffisante');
+    assert.equal(result.signature, null);
+    assert.equal(result.signingState, 'signature-request-expired');
+    assert.ok(result.validationErrors.some((error) => /SignatureWindowNotUsable/.test(error)));
+    assert.equal(result.lastValidBlockHeight, 1);
   });
 
   console.log(`\n${passed} test(s) OK`);

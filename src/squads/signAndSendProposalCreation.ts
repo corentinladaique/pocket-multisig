@@ -2,6 +2,15 @@ import { PublicKey, Transaction, type Connection } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 
 import { describeMwaError } from '../wallet/mwaDiagnostics';
+import type { SignatureConfirmationStatus } from '../wallet/operationState';
+import { confirmSignature, type SignatureConfirmation } from '../solana/confirmSignature';
+import {
+  blockhashBundleFromTransaction,
+  DEFAULT_BLOCK_MARGIN,
+  evaluateSigningWindow,
+  signingStateFromEvidence,
+  type SigningState,
+} from '../wallet/signingWindow';
 
 import {
   applyFreshBlockhash,
@@ -47,6 +56,14 @@ export type ProposalCreationSignSendResult = {
   errorMessage: string | null;
   /** Code MWA exact de l'échec d'envoi, `null` s'il n'y en a pas — jamais inventé. */
   errorCode?: string | null;
+  /** Preuve n°2 : statut de confirmation de la signature, relu sur la grappe. */
+  confirmationStatus?: SignatureConfirmationStatus | null;
+  confirmed?: boolean;
+  /** Blockhash effectivement utilisé pour l'envoi, avec sa limite en blocs. */
+  blockhash?: string | null;
+  lastValidBlockHeight?: number | null;
+  /** État affichable du parcours de signature. */
+  signingState?: SigningState;
 };
 
 const READ_BACK_ATTEMPTS = 4;
@@ -173,10 +190,43 @@ export async function signAndSendProposalCreation(input: {
     };
   }
 
+  // 1bis. Fenetre de signature : verdict rendu AVANT d'ouvrir le wallet.
+  const bundle = blockhashBundleFromTransaction(transaction);
+  let blockHeight: number | null = null;
+  try {
+    blockHeight = await input.connection.getBlockHeight('confirmed');
+  } catch (caught: unknown) {
+    errors.push(
+      `BlockHeightUnavailable: ${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+  const signingWindow =
+    bundle === null
+      ? null
+      : evaluateSigningWindow({ blockHeight, bundle, marginBlocks: DEFAULT_BLOCK_MARGIN });
+  if (bundle === null || signingWindow === null || !signingWindow.usable) {
+    if (signingWindow !== null && !signingWindow.usable) {
+      errors.push(`SignatureWindowNotUsable: ${signingWindow.reason}`);
+    }
+    return {
+      blockhash: bundle?.blockhash ?? null,
+      errorCode: null,
+      errorMessage: null,
+      lastValidBlockHeight: bundle?.lastValidBlockHeight ?? null,
+      readBack: null,
+      signature: null,
+      signingState: 'signature-request-expired',
+      validationErrors: errors,
+      validationWarnings: warnings,
+      verified: false,
+    };
+  }
+
   // 2. Envoi : la signature du createur est produite par le wallet.
   let signature: string | null = null;
   let errorMessage: string | null = null;
   let errorCode: string | null = null;
+  let confirmation: SignatureConfirmation | null = null;
   try {
     const returned = await input.signAndSendTransactions(transaction, minContextSlot);
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
@@ -237,6 +287,15 @@ export async function signAndSendProposalCreation(input: {
         setTimeout(resolve, READ_BACK_DELAY_MS);
       });
     }
+  }
+
+  // Preuve n°2 : la transaction est-elle confirmée ? Sans elle, aucun succès.
+  try {
+    confirmation = await confirmSignature({ connection: input.connection, signature });
+  } catch (caught: unknown) {
+    errors.push(
+      `ConfirmationCheckFailed: ${caught instanceof Error ? caught.message : String(caught)}`,
+    );
   }
 
   if (readBack === null) {
@@ -302,12 +361,23 @@ export async function signAndSendProposalCreation(input: {
   }
 
   return {
+    blockhash: bundle.blockhash,
+    lastValidBlockHeight: bundle.lastValidBlockHeight,
     errorMessage,
     errorCode,
+    confirmationStatus: confirmation?.status ?? null,
+    confirmed: confirmation?.status === 'confirmed',
     readBack,
     signature,
+    signingState: signingStateFromEvidence({
+      confirmed: confirmation?.status === 'confirmed',
+      readBackVerified: errors.length === 0 && readBack !== null,
+      signatureObtained: true,
+    }),
     validationErrors: errors,
     validationWarnings: warnings,
-    verified: errors.length === 0,
+    // Trois preuves exigees (signature, confirmation, relecture) : verified
+    // n'est vrai que si la confirmation a ete obtenue.
+    verified: errors.length === 0 && confirmation?.status === 'confirmed',
   };
 }

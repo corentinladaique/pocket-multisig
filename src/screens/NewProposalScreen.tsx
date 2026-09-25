@@ -31,6 +31,8 @@ import {
 } from '../squads/simulateProposalCreation';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
+import { buildOperationReport, classifyOperationResult } from '../wallet/operationState';
+import { signingStateTitle } from '../wallet/signingWindow';
 
 /**
  * Creation d'une proposition de transfert SOL, de bout en bout.
@@ -201,14 +203,32 @@ export function NewProposalScreen({
       setCreateResult(result);
       if (!result.verified) {
         setCreateError(
-          result.errorMessage !== null
-            ? // Échec côté wallet : étape, code et message conservés tels quels.
-              formatMwaError({
-                code: result.errorCode ?? null,
-                message: result.errorMessage,
-                step: 'signAndSendTransactions',
-              })
-            : result.validationErrors.join(' '),
+          // La machine d'état parle d'abord : « sent, verification pending »
+          // ne doit jamais être présenté comme un échec de création.
+          `${
+            result.signingState !== undefined
+              ? signingStateTitle(result.signingState)
+              : buildOperationReport({
+              evidence: {
+                confirmed: result.confirmed === true,
+                readBackVerified: result.verified,
+                signatureObtained: result.signature !== null,
+              },
+              state: classifyOperationResult({
+                confirmed: result.confirmed === true,
+                readBackVerified: result.verified,
+                signatureObtained: result.signature !== null,
+              }),
+            }).title
+          } ${
+            result.errorMessage !== null
+              ? formatMwaError({
+                  code: result.errorCode ?? null,
+                  message: result.errorMessage,
+                  step: 'signAndSendTransactions',
+                })
+              : result.validationErrors.join(' ')
+          }`,
         );
       }
     } catch (caught: unknown) {
