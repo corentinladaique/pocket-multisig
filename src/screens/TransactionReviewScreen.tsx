@@ -2,8 +2,8 @@
 // Ce composant n'appelle AUCUNE fonction d'écriture : ni approve, ni execute,
 // ni signTransaction, ni signAndSendTransaction, ni aucune fonction RPC.
 // Il affiche un modèle déjà construit (voir src/types/transactionReview.ts).
-import { useCallback, useState } from 'react';
-import { Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { BackHandler, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
@@ -165,6 +165,16 @@ export function TransactionReviewScreen({
   const handleBack = useCallback(() => {
     onBack();
   }, [onBack]);
+
+  // Retour systeme Android (bouton physique et geste) : revient a l'ecran
+  // appelant. Sans ce handler, un geste depuis cet ecran fermait l'application.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [handleBack]);
 
   const handleCancelConfirm = useCallback(() => {
     setConfirmStep(false);

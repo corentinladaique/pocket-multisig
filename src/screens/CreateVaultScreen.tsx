@@ -34,6 +34,7 @@ import {
   classifyOperationFailure,
   classifyOperationResult,
   describeAttemptOutcome,
+  isTemporaryNetworkFailure,
   type OperationReport,
 } from '../wallet/operationState';
 import { confirmSignature } from '../solana/confirmSignature';
@@ -127,6 +128,8 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
       : describeAttemptOutcome({
           confirmed: createResult.confirmed === true,
           evidence: checkEvidence,
+          // Réseau injoignable : temporaire, la signature reste valable.
+          networkFailure: isTemporaryNetworkFailure(createResult.errorMessage ?? ''),
           signature: createResult.signature,
           verified: createResult.verified,
         });

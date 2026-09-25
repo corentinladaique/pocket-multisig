@@ -33,7 +33,7 @@ import {
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
-import { buildOperationReport, classifyOperationResult, describeAttemptOutcome } from '../wallet/operationState';
+import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle, type SigningState } from '../wallet/signingWindow';
 
 /**
@@ -176,6 +176,7 @@ export function ProposalDetailsScreen({
             lastValidBlockHeight: approvalResult.lastValidBlockHeight ?? null,
             status: approvalResult.confirmationStatus ?? 'notFound',
           },
+          networkFailure: isTemporaryNetworkFailure(approvalResult.errorMessage ?? ''),
           signature: approvalResult.signature,
           verified: approvalResult.verified,
         });
@@ -189,6 +190,7 @@ export function ProposalDetailsScreen({
             lastValidBlockHeight: executionResult.lastValidBlockHeight ?? null,
             status: executionResult.confirmationStatus ?? 'notFound',
           },
+          networkFailure: isTemporaryNetworkFailure(executionResult.errorMessage ?? ''),
           signature: executionResult.signature,
           verified: executionResult.verified,
         });
@@ -654,7 +656,7 @@ export function ProposalDetailsScreen({
               onPress={() => setReviewOpen(true)}
               style={[styles.button, decodedModel === null && styles.disabled]}
             >
-            <Text style={styles.buttonText}>Open transaction review</Text>
+            <Text style={styles.buttonText}>Review proposal</Text>
           </Pressable>
           {decodedModel === null ? (
             <Text style={styles.fieldNote}>

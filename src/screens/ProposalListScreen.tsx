@@ -94,6 +94,19 @@ export function ProposalListScreen({
           </View>
         ) : null}
 
+        {/* Relecture explicite : en lecture seule, aucun wallet, aucune signature. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Refresh proposals from the chain"
+          disabled={proposals.status === 'loading'}
+          onPress={proposals.retry}
+          style={[styles.button, styles.secondary, proposals.status === 'loading' && styles.disabled]}
+        >
+          <Text style={styles.secondaryText}>
+            {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh'}
+          </Text>
+        </Pressable>
+
         {proposals.status === 'error' ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>
@@ -347,5 +360,8 @@ const styles = StyleSheet.create({
     color: '#1a56db',
     fontSize: 15,
     fontWeight: '600',
+  },
+  disabled: {
+    opacity: 0.5,
   },
 });

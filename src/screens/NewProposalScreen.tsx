@@ -31,7 +31,7 @@ import {
 } from '../squads/simulateProposalCreation';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
-import { buildOperationReport, classifyOperationResult, describeAttemptOutcome } from '../wallet/operationState';
+import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
 
 /**
@@ -104,6 +104,7 @@ export function NewProposalScreen({
             lastValidBlockHeight: createResult.lastValidBlockHeight ?? null,
             status: createResult.confirmationStatus ?? 'notFound',
           },
+          networkFailure: isTemporaryNetworkFailure(createResult.errorMessage ?? ''),
           signature: createResult.signature,
           verified: createResult.verified,
         });

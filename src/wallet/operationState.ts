@@ -225,6 +225,25 @@ export function buildOperationReport(input: {
 export type SignatureConfirmationStatus = 'confirmed' | 'pending' | 'failed' | 'notFound';
 
 /**
+ * Erreur réseau TEMPORAIRE : le RPC est injoignable, la transaction n'est ni
+ * invalide ni absente. À ne jamais confondre avec un échec définitif.
+ *
+ * `UnknownHostException` / « Unable to resolve host » viennent d'Android,
+ * `fetch failed` / `Network request failed` de la couche réseau JS.
+ */
+export function isTemporaryNetworkFailure(caught: unknown): boolean {
+  const text =
+    caught instanceof Error
+      ? `${caught.name} ${caught.message}`
+      : typeof caught === 'string'
+        ? caught
+        : '';
+  return /UnknownHostException|Unable to resolve host|fetch failed|Network request failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|socket hang up|network is unreachable/i.test(
+    text,
+  );
+}
+
+/**
  * Décide si un nouvel envoi est permis après qu'une signature a existé.
  *
  * Autorisé uniquement s'il est PROUVÉ que la transaction est absente et
@@ -297,6 +316,11 @@ export function describeAttemptOutcome(input: {
   signature: string | null;
   verified: boolean;
   confirmed?: boolean;
+  /**
+   * Confirmation ou relecture impossible POUR UNE RAISON RESEAU : la signature
+   * existe, la transaction n'est ni invalide ni perdue. Aucune reconstruction.
+   */
+  networkFailure?: boolean;
   /** Preuve de signature relue sur la chaîne, si disponible. */
   evidence?: {
     status: SignatureConfirmationStatus;
@@ -336,9 +360,11 @@ export function describeAttemptOutcome(input: {
     allowCheckAgain: true,
     allowNewAttempt: retryAllowed,
     label:
-      input.confirmed === true
-        ? 'Confirmed but read-back failed.'
-        : 'Transaction signed, confirmation pending.',
+      input.networkFailure === true
+        ? 'Transaction signed, verification temporarily unavailable.'
+        : input.confirmed === true
+          ? 'Confirmed but read-back failed.'
+          : 'Transaction signed, confirmation pending.',
     sent: true,
     tone: 'warning',
   };

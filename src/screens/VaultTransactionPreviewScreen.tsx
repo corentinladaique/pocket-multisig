@@ -17,7 +17,7 @@ import {
 } from '../vault/vaultDraft';
 import type { MultisigCreationSignSendResult } from '../vault/signAndSendMultisigCreation';
 import type { OperationReport } from '../wallet/operationState';
-import { describeAttemptOutcome } from '../wallet/operationState';
+import { describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
 
 /**
@@ -81,6 +81,7 @@ export function VaultTransactionPreviewScreen({
       ? null
       : describeAttemptOutcome({
           confirmed: createResult.confirmed === true,
+          networkFailure: isTemporaryNetworkFailure(createResult.errorMessage ?? ''),
           signature: createResult.signature,
           verified: createResult.verified,
         });

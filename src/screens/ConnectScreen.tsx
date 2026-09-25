@@ -642,6 +642,25 @@ export function ConnectScreen() {
                 <Text style={styles.hint}>Lecture…</Text>
               ) : null}
 
+              {/* Relecture en lecture seule : le dernier état lisible est conservé
+                  si le réseau échoue, et aucun wallet n'est sollicité. */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh proposals from the chain"
+                disabled={proposals.status === 'loading'}
+                onPress={proposals.retry}
+                style={[
+                  styles.button,
+                  styles.secondary,
+                  styles.sideButton,
+                  proposals.status === 'loading' && styles.disabled,
+                ]}
+              >
+                <Text style={styles.secondaryText}>
+                  {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh proposals'}
+                </Text>
+              </Pressable>
+
               {proposals.status === 'loaded' && inboxDecisions.length === 0 ? (
                 <Text style={styles.hint}>No proposals yet</Text>
               ) : null}
