@@ -24,6 +24,8 @@ import {
   type ProposalExecutionSignSendResult,
 } from '../squads/signAndSendProposalExecution';
 import { connection } from '../solana/connection';
+import { estimateRemainingBalance, formatSol, describeTransferSource } from '../wallet/vaultBalance';
+
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
 import {
   computeProposalDecision,
@@ -209,6 +211,32 @@ export function ProposalDetailsScreen({
   const model = decodedModel ?? selfModel;
   const effectiveGuardContext = guardContext ?? selfGuardContext;
 
+  // Solde du vault, relu à l'ouverture et AVANT chaque exécution. Lecture seule.
+  const vaultPda = (() => {
+    try {
+      return multisig.getVaultPda({ index: 0, multisigPda: new PublicKey(address) })[0].toBase58();
+    } catch {
+      return null;
+    }
+  })();
+  const [proposalVaultLamports, setProposalVaultLamports] = useState<number | null>(null);
+  const readVaultBalance = useCallback(async (): Promise<number | null> => {
+    if (vaultPda === null) return null;
+    try {
+      const lamports = await connection.getBalance(new PublicKey(vaultPda), 'confirmed');
+      setProposalVaultLamports(lamports);
+      return lamports;
+    } catch {
+      // Une lecture impossible ne bloque pas l'écran : l'estimation devient
+      // indisponible, sans inventer de valeur.
+      return null;
+    }
+  }, [vaultPda]);
+
+  useEffect(() => {
+    void readVaultBalance();
+  }, [readVaultBalance]);
+
   const guard = useWalletGuard(effectiveGuardContext ?? null);
   const allowlist = model === null ? null : checkReviewAllowlist(model);
   const canConfirm =
@@ -273,6 +301,23 @@ export function ProposalDetailsScreen({
         });
 
   const runExecution = async () => {
+    // Contrôle pré-exécution : le solde est RELU ici. L'affichage précédent ne
+    // remplace jamais ce contrôle.
+    const freshLamports = await readVaultBalance();
+    if (
+      freshLamports !== null &&
+      isRecognizedTransfer &&
+      sourceVerdict.matches &&
+      amountLamports !== null &&
+      freshLamports < amountLamports
+    ) {
+      setExecutionError(
+        'Insufficient vault balance: the vault does not hold the amount this proposal moves. Nothing was sent.',
+      );
+      executionAttemptedRef.current = false;
+      setExecuting(false);
+      return;
+    }
     if (approvalAttemptedRef.current || executionAttemptedRef.current) return;
     if (walletAddress === null) {
       setExecutionError('No wallet connected: an execution must be signed by a member.');
@@ -294,6 +339,8 @@ export function ProposalDetailsScreen({
       });
       signature = result.signature;
       setExecutionResult(result);
+      // Après une exécution vérifiée, le solde du vault a changé : on le relit.
+      if (result.verified) void readVaultBalance();
       if (!result.verified) {
         setExecutionError(describeOperationFailure(result));
       }
@@ -310,7 +357,13 @@ export function ProposalDetailsScreen({
    * wallet. Rien ne part du premier dialogue, ni d'un effet, ni d'un rendu.
    */
   const onExecute = () => {
-    if (!canExecute || executing || executionAttemptedRef.current) return;
+    if (!canExecute || insufficientBalance || executing || executionAttemptedRef.current) return;
+    if (insufficientBalance) {
+      setExecutionError(
+        'Insufficient vault balance: the vault does not currently hold the amount this proposal moves. Nothing was sent.',
+      );
+      return;
+    }
     // Nouvelle tentative après un échec SANS signature : on repart d'un état
     // propre. Une tentative déjà signée n'ouvre jamais ce chemin (bouton
     // désactivé), donc aucun résultat signé n'est effacé ici.
@@ -451,6 +504,34 @@ export function ProposalDetailsScreen({
   // cartes compactes ne permet pas de vérifier où part l'argent.
   const fullDestination =
     model !== null && model.destination.known ? model.destination.value : null;
+  // Vault index 0 dérivé localement : aucune lecture réseau pour l'obtenir.
+  const vaultPdaAddress = (() => {
+    try {
+      return multisig.getVaultPda({ index: 0, multisigPda: new PublicKey(address) })[0].toBase58();
+    } catch {
+      return null;
+    }
+  })();
+  const sourceVerdict = describeTransferSource({
+    source: model !== null && model.source.known ? model.source.value : null,
+    vaultAddress: vaultPdaAddress ?? '',
+  });
+  const amountLamports = model !== null && model.amount.known ? Number(model.amount.value.lamports) : null;
+  const isRecognizedTransfer = summary !== null && summary.action === 'SOL transfer';
+  const remaining = estimateRemainingBalance({
+    amountLamports,
+    recognizedSolTransfer: isRecognizedTransfer,
+    sourceMatchesVault: sourceVerdict.matches,
+    vaultLamports: proposalVaultLamports,
+  });
+  // Solde insuffisant : découvert AVANT toute signature, jamais présenté comme
+  // un solde restant négatif.
+  const insufficientBalance =
+    isRecognizedTransfer &&
+    sourceVerdict.matches &&
+    proposalVaultLamports !== null &&
+    amountLamports !== null &&
+    proposalVaultLamports < amountLamports;
   const pda = proposalPda(address, index);
 
   // Relecture de la revue existante : aucun nouvel écran, aucune écriture.
@@ -500,6 +581,24 @@ export function ProposalDetailsScreen({
             ))
           )}
 
+          <Text style={styles.fieldLabel}>Vault balance and this proposal</Text>
+          <Text style={styles.fieldNote}>Current vault balance</Text>
+          <Text selectable style={styles.monoValue}>
+            {proposalVaultLamports === null ? 'Balance unavailable' : `${formatSol(proposalVaultLamports)} SOL`}
+          </Text>
+          <Text style={styles.fieldNote}>Proposal amount</Text>
+          <Text selectable style={styles.monoValue}>
+            {amountLamports === null ? 'Not decoded yet' : `${formatSol(amountLamports)} SOL`}
+          </Text>
+          <Text style={styles.fieldNote}>Estimated remaining balance</Text>
+          <Text selectable style={styles.monoValue}>
+            {remaining.sol === null ? 'Not available' : `${remaining.sol} SOL`}
+          </Text>
+          <Text style={styles.fieldNote}>{remaining.reason}</Text>
+          {insufficientBalance ? (
+            <Text style={styles.errorText}>Insufficient vault balance</Text>
+          ) : null}
+
           <Text style={styles.fieldLabel}>Operation summary</Text>
           {summary === null ? (
             <Text style={styles.fieldNote}>
@@ -520,9 +619,19 @@ export function ProposalDetailsScreen({
               </Text>
               {model !== null && model.source.known ? (
                 <>
-                  <Text style={styles.fieldNote}>From</Text>
+                  <Text style={styles.fieldNote}>Transfer source</Text>
                   <Text selectable style={styles.monoValue}>
                     {model.source.value}
+                  </Text>
+                </>
+              ) : null}
+              <Text style={styles.fieldNote}>{sourceVerdict.label}</Text>
+              <Text style={styles.fieldNote}>{sourceVerdict.hint}</Text>
+              {!sourceVerdict.matches && vaultPdaAddress !== null ? (
+                <>
+                  <Text style={styles.fieldNote}>Vault address index 0</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {vaultPdaAddress}
                   </Text>
                 </>
               ) : null}
@@ -581,13 +690,17 @@ export function ProposalDetailsScreen({
 
             {!canConfirm ? (
               <Text style={styles.fieldNote}>
-                {model === null
-                  ? 'Approval needs the decoded transaction review: the guard and the allowlist cannot be evaluated without it.'
-                  : guard.status !== 'allowed'
-                    ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
-                    : allowlist !== null && allowlist.status !== 'allowed'
-                      ? `Instruction allowlist: ${allowlist.status}.`
-                      : 'Approval is not available for this proposal in its current state.'}
+                {decoding || model === null
+                  ? // Pas refus terminal : le contexte se construit localement
+                    // (multisig + proposition + modèle + wallet + vault PDA).
+                    'Checking approval permissions…'
+                  : effectiveGuardContext === null
+                    ? 'Checking approval permissions…'
+                    : guard.status !== 'allowed'
+                      ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
+                      : allowlist !== null && allowlist.status !== 'allowed'
+                        ? `Instruction allowlist: ${allowlist.status}.`
+                        : 'Approval is not available for this proposal in its current state.'}
               </Text>
             ) : null}
 
@@ -648,14 +761,14 @@ export function ProposalDetailsScreen({
               accessibilityLabel="Execute this proposal"
               accessibilityState={{
                 busy: executing,
-                disabled: !canExecute || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false)),
+                disabled: !canExecute || insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false)),
               }}
-              disabled={!canExecute || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))}
+              disabled={!canExecute || insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))}
               onPress={onExecute}
               style={[
                 styles.button,
                 styles.executeButton,
-                (!canExecute || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))) &&
+                (!canExecute || insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))) &&
                   styles.disabled,
               ]}
             >

@@ -13,6 +13,8 @@ import { PublicKey } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
+import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance';
+
 import type { ReviewGuardContext } from '../wallet/useWalletGuard';
 import { connection } from '../solana/connection';
 import { loadMultisig, MultisigLookupError, type MultisigView } from '../squads/multisig';
@@ -61,8 +63,20 @@ export function MultisigDetailsScreen({
   const { account } = useMobileWallet();
   const walletAddress = account === undefined ? null : account.address.toString();
 
+  // Solde du vault : information de premier niveau, indépendante des propositions.
+  // Il porte toujours SON adresse : changer de multisig remet l'affichage à zéro
+  // immédiatement, sans jamais montrer le solde du multisig précédent.
+  const [vaultBalance, setVaultBalance] = useState<{
+    address: string;
+    lamports: number | null;
+    stale: boolean;
+    status: BalanceStatus;
+  } | null>(null);
+
   const load = useCallback(() => {
     setState({ status: 'loading' });
+    // Changement de multisig : le solde de l'ancien disparaît tout de suite.
+    setVaultBalance(null);
     void (async () => {
       try {
         const key = new PublicKey(address);
@@ -79,6 +93,54 @@ export function MultisigDetailsScreen({
     })();
   }, [address]);
 
+  const view = state.status === 'loaded' ? state.view : null;
+  const vaultAddress = view?.vaultAddress ?? null;
+
+  // Le solde affiché appartient TOUJOURS à l'adresse du vault courant : sinon
+  // il est considéré comme absent, jamais comme celui du multisig précédent.
+  const balanceView = describeVaultBalance({
+    addressMatches: vaultBalance !== null && vaultAddress !== null && vaultBalance.address === vaultAddress,
+    lamports: vaultBalance?.lamports ?? null,
+    status: vaultBalance?.status ?? 'idle',
+    stale: vaultBalance?.stale === true,
+  });
+
+  /** Lecture seule du solde du vault index 0. Aucun wallet, aucune signature. */
+  const refreshBalance = useCallback(
+    (targetVaultAddress: string) => {
+      setVaultBalance((previous) => ({
+        // Une lecture en cours ne conserve l'ancienne valeur que si elle
+        // concerne la MÊME adresse de vault.
+        address: targetVaultAddress,
+        lamports: previous !== null && previous.address === targetVaultAddress ? previous.lamports : null,
+        stale: previous !== null && previous.address === targetVaultAddress && previous.lamports !== null,
+        status: 'loading',
+      }));
+      void (async () => {
+        try {
+          const lamports = await connection.getBalance(new PublicKey(targetVaultAddress), 'confirmed');
+          setVaultBalance({ address: targetVaultAddress, lamports, stale: false, status: 'loaded' });
+        } catch {
+          // Un échec de lecture du solde ne fait JAMAIS échouer le détail.
+          setVaultBalance((previous) => ({
+            address: targetVaultAddress,
+            lamports: previous !== null && previous.address === targetVaultAddress ? previous.lamports : null,
+            stale: previous !== null && previous.address === targetVaultAddress && previous.lamports !== null,
+            status: 'error',
+          }));
+        }
+      })();
+    },
+    [],
+  );
+
+  // Rafraîchissement : ouverture, changement d'adresse, retour d'un écran
+  // enfant (une exécution vérifiée y change le solde).
+  useEffect(() => {
+    if (vaultAddress === null) return;
+    refreshBalance(vaultAddress);
+  }, [vaultAddress, proposalsOpen, openProposal, newProposalOpen, refreshBalance]);
+
   useEffect(() => {
     load();
   }, [load]);
@@ -91,8 +153,6 @@ export function MultisigDetailsScreen({
     });
     return () => subscription.remove();
   }, [onBack]);
-
-  const view = state.status === 'loaded' ? state.view : null;
 
   // Membres porteurs du droit de vote : sert a qualifier l'etat des propositions.
   const votingMembers =
@@ -218,11 +278,42 @@ export function MultisigDetailsScreen({
 
         {view !== null ? (
           <View style={styles.block}>
-            <Text style={styles.fieldLabel}>Multisig address</Text>
-            <Text selectable style={styles.fieldValue}>{view.address}</Text>
+            {/* Information de premier niveau : le solde du vault, visible même
+                sans aucune proposition ouverte. */}
+            <Text style={styles.fieldLabel}>{balanceView.title}</Text>
+            {balanceView.sol !== null ? (
+              <Text selectable style={styles.balanceValue}>
+                {balanceView.sol} SOL
+              </Text>
+            ) : null}
+            {balanceView.stale ? <Text style={styles.fieldNote}>stale</Text> : null}
+            <Text style={styles.fieldNote}>{balanceView.hint}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Refresh the vault balance"
+              disabled={vaultBalance?.status === 'loading'}
+              onPress={() => {
+                refreshBalance(view.vaultAddress);
+              }}
+              style={styles.retry}
+            >
+              <Text style={styles.retryText}>
+                {vaultBalance?.status === 'loading' ? 'Refreshing…' : 'Refresh balance'}
+              </Text>
+            </Pressable>
 
-            <Text style={styles.fieldLabel}>Vault address (index 0)</Text>
+            <Text style={styles.fieldLabel}>Vault address index 0</Text>
             <Text selectable style={styles.fieldValue}>{view.vaultAddress}</Text>
+            <Text style={styles.fieldNote}>
+              Holds the funds controlled by the multisig.
+            </Text>
+
+            <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+            <Text selectable style={styles.fieldValue}>{view.address}</Text>
+            <Text style={styles.fieldNote}>
+              Stores members, permissions and threshold. Do not use it as the vault deposit
+              address.
+            </Text>
 
             <Text style={styles.fieldLabel}>Threshold</Text>
             <Text style={styles.fieldValue}>
@@ -428,8 +519,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   retryText: {
-    color: '#1a56db',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-});
+      color: '#1a56db',
+      fontSize: 14,
+      fontWeight: '700',
+    },
+    balanceValue: {
+      color: '#101317',
+      fontSize: 22,
+      fontWeight: '700',
+    },
+  });
