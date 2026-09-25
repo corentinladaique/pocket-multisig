@@ -31,7 +31,7 @@ import {
 } from '../squads/simulateProposalCreation';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
-import { buildOperationReport, classifyOperationResult } from '../wallet/operationState';
+import { buildOperationReport, classifyOperationResult, describeAttemptOutcome } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
 
 /**
@@ -91,6 +91,22 @@ export function NewProposalScreen({
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResult, setCreateResult] = useState<ProposalCreationSignSendResult | null>(null);
   const sendAttemptedRef = useRef(false);
+  // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
+  const attemptOutcome =
+    createResult === null
+      ? null
+      : describeAttemptOutcome({
+          confirmed: createResult.confirmed === true,
+          // Preuve disponible sans nouvelle lecture : hauteur inconnue, donc
+          // aucun déverrouillage après signature (règle B).
+          evidence: {
+            blockHeight: null,
+            lastValidBlockHeight: createResult.lastValidBlockHeight ?? null,
+            status: createResult.confirmationStatus ?? 'notFound',
+          },
+          signature: createResult.signature,
+          verified: createResult.verified,
+        });
 
   // Saisie entiere uniquement : tout le reste devient NaN et le builder refuse.
   const lamports = /^\d+$/.test(lamportsText.trim()) ? Number(lamportsText.trim()) : Number.NaN;
@@ -128,8 +144,8 @@ export function NewProposalScreen({
     creator.length > 0 && build.errors.length === 0 && pipeline.status !== 'working';
 
   /** Portes locales + une lecture de solde, puis simulation (aucun envoi). */
-  const runPipeline = async () => {
-    if (!canRunPipeline) return;
+  const runPipeline = async (): Promise<ProposalCreationSimulationResult | null> => {
+    if (!canRunPipeline) return null;
     setPipeline({ status: 'working' });
     setPreflight(null);
     setSimulation(null);
@@ -147,7 +163,7 @@ export function NewProposalScreen({
           message: preflightResult.errors.join(' ') || 'The local preflight refused this build.',
           status: 'error',
         });
-        return;
+        return null;
       }
       const simulationResult = await simulateProposalCreation({
         build,
@@ -160,14 +176,16 @@ export function NewProposalScreen({
           message: simulationResult.errors.join(' ') || 'The simulation refused this build.',
           status: 'error',
         });
-        return;
+        return null;
       }
       setPipeline({ status: 'ready' });
+      return simulationResult;
     } catch (caught: unknown) {
       setPipeline({
         message: caught instanceof Error ? caught.message : String(caught),
         status: 'error',
       });
+      return null;
     }
   };
 
@@ -184,8 +202,10 @@ export function NewProposalScreen({
     });
   }, [address, build.messageInstructions, build.transactionIndexNext, creator, reviewOpen, vaultAddress]);
 
-  const runCreate = async () => {
-    if (sendAttemptedRef.current || simulation === null || preflight === null) return;
+  const runCreate = async (freshSimulation?: ProposalCreationSimulationResult | null) => {
+    const effectiveSimulation = freshSimulation ?? simulation;
+    if (sendAttemptedRef.current || effectiveSimulation === null || preflight === null) return;
+    if (effectiveSimulation.readyToSign !== true) return;
     sendAttemptedRef.current = true;
     setCreating(true);
     setCreateError(null);
@@ -197,7 +217,7 @@ export function NewProposalScreen({
         connection,
         preflight,
         signAndSendTransactions,
-        simulation,
+        simulation: effectiveSimulation,
       });
       signature = result.signature;
       setCreateResult(result);
@@ -242,6 +262,14 @@ export function NewProposalScreen({
   /** Double confirmation explicite avant toute demande au wallet. */
   const onCreate = () => {
     if (simulation === null || creating || sendAttemptedRef.current) return;
+    // Nouvelle tentative après un échec SANS signature : état propre, saisie
+    // (destination, montant, memo) intacte. Une tentative signée ne peut pas
+    // emprunter ce chemin (bouton désactivé).
+    const isRetry = createResult !== null && attemptOutcome?.allowNewAttempt === true;
+    if (isRetry) {
+      setCreateResult(null);
+      setCreateError(null);
+    }
     Alert.alert(
       'Create this proposal?',
       [
@@ -267,6 +295,16 @@ export function NewProposalScreen({
                 { style: 'cancel', text: 'Cancel' },
                 {
                   onPress: () => {
+                    // Nouvelle tentative : préflight et simulation sont refaits
+                    // AVANT d'ouvrir le wallet (transaction neuve, blockhash neuf).
+                    if (isRetry) {
+                      void (async () => {
+                        const fresh = await runPipeline();
+                        if (fresh === null || fresh.readyToSign !== true) return;
+                        await runCreate(fresh);
+                      })();
+                      return;
+                    }
                     void runCreate();
                   },
                   text: 'Create',
@@ -427,15 +465,27 @@ export function NewProposalScreen({
         {pipeline.status === 'ready' || createResult !== null ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ busy: creating, disabled: creating || createResult !== null }}
-            disabled={creating || createResult !== null}
+            accessibilityState={{
+              busy: creating,
+              disabled: creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false)),
+            }}
+            disabled={creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false))}
             onPress={onCreate}
-            style={[styles.button, styles.createButton, (creating || createResult !== null) && styles.disabled]}
+            style={[
+              styles.button,
+              styles.createButton,
+              (creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false))) &&
+                styles.disabled,
+            ]}
           >
             {creating ? (
               <ActivityIndicator color="#ffffff" />
             ) : (
-              <Text style={styles.buttonText}>Create on Devnet</Text>
+              <Text style={styles.buttonText}>
+                {createResult !== null && (attemptOutcome?.allowNewAttempt ?? false)
+                  ? 'Prepare again'
+                  : 'Create on Devnet'}
+              </Text>
             )}
           </Pressable>
         ) : null}
@@ -451,9 +501,22 @@ export function NewProposalScreen({
         ) : null}
 
         {createResult !== null ? (
-          <View style={createResult.verified ? styles.successBox : styles.errorBox}>
-            <Text style={createResult.verified ? styles.successTitle : styles.errorTitle}>
-              {createResult.verified ? 'Proposal created and verified' : 'Sent, but verification failed'}
+          <View
+            style={
+              attemptOutcome !== null && attemptOutcome.tone === 'success'
+                ? styles.successBox
+                : styles.errorBox
+            }
+          >
+            <Text
+              style={
+                attemptOutcome !== null && attemptOutcome.tone === 'success'
+                  ? styles.successTitle
+                  : styles.errorTitle
+              }
+            >
+              {/* Sans signature, jamais « Sent » : le libellé vient du verdict. */}
+              {attemptOutcome?.label ?? 'Proposal created and verified'}
             </Text>
             <Text selectable style={styles.monoValue}>
               Signature: {createResult.signature ?? 'none'}

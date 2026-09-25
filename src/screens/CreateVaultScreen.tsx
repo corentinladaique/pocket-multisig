@@ -33,9 +33,11 @@ import {
   buildOperationReport,
   classifyOperationFailure,
   classifyOperationResult,
+  describeAttemptOutcome,
   type OperationReport,
 } from '../wallet/operationState';
 import { confirmSignature } from '../solana/confirmSignature';
+import type { SignatureConfirmationStatus } from '../wallet/operationState';
 import { describeWalletIdentity } from '../wallet/mwaDiagnostics';
 import * as multisig from '@sqds/multisig';
 import { PublicKey } from '@solana/web3.js';
@@ -111,6 +113,23 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   const [operationReport, setOperationReport] = useState<OperationReport | null>(null);
   const [checkReport, setCheckReport] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  // Preuve relue sur la chaîne lors du dernier « Check transaction again » :
+  // seule source capable d'autoriser une nouvelle tentative APRÈS signature.
+  const [checkEvidence, setCheckEvidence] = useState<{
+    status: SignatureConfirmationStatus;
+    blockHeight: number | null;
+    lastValidBlockHeight: number | null;
+  } | null>(null);
+  // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
+  const attemptOutcome =
+    createResult === null
+      ? null
+      : describeAttemptOutcome({
+          confirmed: createResult.confirmed === true,
+          evidence: checkEvidence,
+          signature: createResult.signature,
+          verified: createResult.verified,
+        });
 
   const memberCounter = useRef(0);
 
@@ -471,6 +490,19 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
     setCheckReport(null);
     try {
       const confirmation = await confirmSignature({ connection, signature });
+      // Hauteur de bloc relue : c'est elle, avec lastValidBlockHeight, qui
+      // décide si une nouvelle tentative est permise après signature.
+      let currentBlockHeight: number | null = null;
+      try {
+        currentBlockHeight = await connection.getBlockHeight('confirmed');
+      } catch {
+        currentBlockHeight = null;
+      }
+      setCheckEvidence({
+        blockHeight: currentBlockHeight,
+        lastValidBlockHeight: createResult?.lastValidBlockHeight ?? null,
+        status: confirmation.status,
+      });
       const lines = [`Confirmation: ${confirmation.status}`];
       let readBackVerified = false;
       if (address !== null) {
@@ -610,7 +642,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
         canCreate={
           walletAddress !== null &&
           plan.readyForInstructionBuild &&
-          createResult === null &&
+          (createResult === null || attemptOutcome?.allowNewAttempt === true) &&
           !creating
         }
         checkReport={checkReport}

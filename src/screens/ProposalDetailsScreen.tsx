@@ -33,7 +33,7 @@ import {
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
-import { buildOperationReport, classifyOperationResult } from '../wallet/operationState';
+import { buildOperationReport, classifyOperationResult, describeAttemptOutcome } from '../wallet/operationState';
 import { signingStateTitle, type SigningState } from '../wallet/signingWindow';
 
 /**
@@ -165,6 +165,34 @@ export function ProposalDetailsScreen({
   );
   const executionAttemptedRef = useRef(false);
 
+  // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
+  const approvalOutcome =
+    approvalResult === null
+      ? null
+      : describeAttemptOutcome({
+          confirmed: approvalResult.confirmed === true,
+          evidence: {
+            blockHeight: null,
+            lastValidBlockHeight: approvalResult.lastValidBlockHeight ?? null,
+            status: approvalResult.confirmationStatus ?? 'notFound',
+          },
+          signature: approvalResult.signature,
+          verified: approvalResult.verified,
+        });
+  const executionOutcome =
+    executionResult === null
+      ? null
+      : describeAttemptOutcome({
+          confirmed: executionResult.confirmed === true,
+          evidence: {
+            blockHeight: null,
+            lastValidBlockHeight: executionResult.lastValidBlockHeight ?? null,
+            status: executionResult.confirmationStatus ?? 'notFound',
+          },
+          signature: executionResult.signature,
+          verified: executionResult.verified,
+        });
+
   const runExecution = async () => {
     if (approvalAttemptedRef.current || executionAttemptedRef.current) return;
     if (walletAddress === null) {
@@ -204,6 +232,13 @@ export function ProposalDetailsScreen({
    */
   const onExecute = () => {
     if (!canExecute || executing || executionAttemptedRef.current) return;
+    // Nouvelle tentative après un échec SANS signature : on repart d'un état
+    // propre. Une tentative déjà signée n'ouvre jamais ce chemin (bouton
+    // désactivé), donc aucun résultat signé n'est effacé ici.
+    if (executionResult !== null && executionOutcome?.allowNewAttempt === true) {
+      setExecutionResult(null);
+      setExecutionError(null);
+    }
     Alert.alert(
       'Execute this proposal?',
       [
@@ -286,6 +321,12 @@ export function ProposalDetailsScreen({
   /** Tap sur Approve : préparation des verdicts déjà là, puis confirmation. */
   const onApprove = () => {
     if (!canConfirm || approving || approvalAttemptedRef.current) return;
+    // Même logique qu'Execute : un échec sans signature redevient une tentative
+    // neuve, un envoi signé ne peut jamais être réessayé.
+    if (approvalResult !== null && approvalOutcome?.allowNewAttempt === true) {
+      setApprovalResult(null);
+      setApprovalError(null);
+    }
     Alert.alert(
       'Approve this proposal?',
       [
@@ -417,15 +458,26 @@ export function ProposalDetailsScreen({
           <Pressable
               accessibilityRole="button"
               accessibilityLabel="Approve this proposal"
-              accessibilityState={{ busy: approving, disabled: !canConfirm || approving || approvalResult !== null }}
-              disabled={!canConfirm || approving || approvalResult !== null}
+              accessibilityState={{
+                busy: approving,
+                disabled: !canConfirm || approving || (approvalResult !== null && !(approvalOutcome?.allowNewAttempt ?? false)),
+              }}
+              disabled={!canConfirm || approving || (approvalResult !== null && !(approvalOutcome?.allowNewAttempt ?? false))}
               onPress={onApprove}
-              style={[styles.button, (!canConfirm || approving || approvalResult !== null) && styles.disabled]}
+              style={[
+                styles.button,
+                (!canConfirm || approving || (approvalResult !== null && !(approvalOutcome?.allowNewAttempt ?? false))) &&
+                  styles.disabled,
+              ]}
             >
               {approving ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.buttonText}>Approve</Text>
+                <Text style={styles.buttonText}>
+                  {approvalResult !== null && (approvalOutcome?.allowNewAttempt ?? false)
+                    ? 'Prepare again'
+                    : 'Approve'}
+                </Text>
               )}
             </Pressable>
 
@@ -454,11 +506,22 @@ export function ProposalDetailsScreen({
             ) : null}
 
             {approvalResult !== null ? (
-              <View style={approvalResult.verified ? styles.successBox : styles.errorBox}>
-                <Text style={approvalResult.verified ? styles.successText : styles.errorText}>
-                  {approvalResult.verified
-                    ? 'Approval recorded on-chain'
-                    : 'Sent, but verification failed'}
+              <View
+                style={
+                  approvalOutcome !== null && approvalOutcome.tone === 'success'
+                    ? styles.successBox
+                    : styles.errorBox
+                }
+              >
+                <Text
+                  style={
+                    approvalOutcome !== null && approvalOutcome.tone === 'success'
+                      ? styles.successText
+                      : styles.errorText
+                  }
+                >
+                  {/* Sans signature, ce libellé est le SEUL autorisé : jamais « Sent ». */}
+                  {approvalOutcome?.label ?? 'Approval recorded on-chain'}
                 </Text>
                 {approvalResult.signature !== null ? (
                   <Text selectable style={styles.monoValue}>
@@ -485,10 +548,18 @@ export function ProposalDetailsScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Execute this proposal"
-              accessibilityState={{ busy: executing, disabled: !canExecute || executing || executionResult !== null }}
-              disabled={!canExecute || executing || executionResult !== null}
+              accessibilityState={{
+                busy: executing,
+                disabled: !canExecute || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false)),
+              }}
+              disabled={!canExecute || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))}
               onPress={onExecute}
-              style={[styles.button, styles.executeButton, (!canExecute || executing || executionResult !== null) && styles.disabled]}
+              style={[
+                styles.button,
+                styles.executeButton,
+                (!canExecute || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))) &&
+                  styles.disabled,
+              ]}
             >
               {executing ? (
                 <ActivityIndicator color="#ffffff" />
@@ -523,11 +594,22 @@ export function ProposalDetailsScreen({
             ) : null}
 
             {executionResult !== null ? (
-              <View style={executionResult.verified ? styles.successBox : styles.errorBox}>
-                <Text style={executionResult.verified ? styles.successText : styles.errorText}>
-                  {executionResult.verified
-                    ? 'Execution verified on-chain'
-                    : 'Sent, but verification failed'}
+              <View
+                style={
+                  executionOutcome !== null && executionOutcome.tone === 'success'
+                    ? styles.successBox
+                    : styles.errorBox
+                }
+              >
+                <Text
+                  style={
+                    executionOutcome !== null && executionOutcome.tone === 'success'
+                      ? styles.successText
+                      : styles.errorText
+                  }
+                >
+                  {/* Sans signature, jamais « Sent » : le libellé vient du verdict. */}
+                  {executionOutcome?.label ?? 'Execution verified on-chain'}
                 </Text>
                 {executionResult.signature !== null ? (
                   <Text selectable style={styles.monoValue}>

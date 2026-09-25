@@ -273,3 +273,73 @@ export function evaluateSignatureEvidence(input: {
     retryAllowed: false,
   };
 }
+
+export type AttemptOutcome = {
+  /** Libellé d'interface unique pour les quatre flux. */
+  label: string;
+  tone: 'success' | 'warning' | 'neutral';
+  /** Un envoi a-t-il réellement eu lieu ? (signature existante) */
+  sent: boolean;
+  /** Nouvelle tentative complète autorisée (build, préflight, simulation, blockhash). */
+  allowNewAttempt: boolean;
+  /** Relecture seule autorisée. */
+  allowCheckAgain: boolean;
+};
+
+/**
+ * Libellé et permissions d'une tentative, source unique de vérité pour l'UI.
+ *
+ * Règle non négociable : sans signature, AUCUN libellé ne peut laisser croire
+ * qu'un envoi a eu lieu. C'est ce qui interdit définitivement le fameux
+ * « Sent but verification failed » sur une annulation ou une expiration.
+ */
+export function describeAttemptOutcome(input: {
+  signature: string | null;
+  verified: boolean;
+  confirmed?: boolean;
+  /** Preuve de signature relue sur la chaîne, si disponible. */
+  evidence?: {
+    status: SignatureConfirmationStatus;
+    blockHeight: number | null;
+    lastValidBlockHeight: number | null;
+  } | null;
+}): AttemptOutcome {
+  // A. Aucune signature : rien n'a été envoyé, la tentative peut être refaite.
+  if (input.signature === null) {
+    return {
+      allowCheckAgain: false,
+      allowNewAttempt: true,
+      label: 'Nothing was sent.',
+      sent: false,
+      tone: 'warning',
+    };
+  }
+
+  const retryAllowed =
+    input.evidence === undefined || input.evidence === null
+      ? false
+      : evaluateSignatureEvidence(input.evidence).retryAllowed;
+
+  // C. Succès complet : trois preuves réunies.
+  if (input.verified) {
+    return {
+      allowCheckAgain: false,
+      allowNewAttempt: false,
+      label: 'Operation confirmed and verified.',
+      sent: true,
+      tone: 'success',
+    };
+  }
+
+  // B. Signature obtenue : confirmation en attente ou relecture manquante.
+  return {
+    allowCheckAgain: true,
+    allowNewAttempt: retryAllowed,
+    label:
+      input.confirmed === true
+        ? 'Confirmed but read-back failed.'
+        : 'Transaction signed, confirmation pending.',
+    sent: true,
+    tone: 'warning',
+  };
+}

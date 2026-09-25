@@ -17,6 +17,7 @@ import {
 } from '../vault/vaultDraft';
 import type { MultisigCreationSignSendResult } from '../vault/signAndSendMultisigCreation';
 import type { OperationReport } from '../wallet/operationState';
+import { describeAttemptOutcome } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
 
 /**
@@ -73,6 +74,17 @@ export function VaultTransactionPreviewScreen({
     () => buildTransactionPreviewData(buildPreviewData(request)),
     [request],
   );
+
+  // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
+  const attemptOutcome =
+    createResult === null
+      ? null
+      : describeAttemptOutcome({
+          confirmed: createResult.confirmed === true,
+          signature: createResult.signature,
+          verified: createResult.verified,
+        });
+  const attemptOutcomeLabel = attemptOutcome?.label ?? 'Nothing was sent.';
 
   // Retour systeme Android (bouton physique et geste) : revient a Preview.
   useEffect(() => {
@@ -174,7 +186,7 @@ export function VaultTransactionPreviewScreen({
               style={createResult.verified ? styles.successBox : styles.errorBox}
             >
               <Text style={createResult.verified ? styles.successText : styles.errorText}>
-                {createResult.verified ? 'Multisig created and verified' : 'Created, but verification failed'}
+                {createResult.verified ? 'Multisig created and verified' : attemptOutcomeLabel}
               </Text>
               {createResult.signature !== null ? (
                 <Text selectable style={styles.resultValue}>
@@ -277,10 +289,11 @@ export function VaultTransactionPreviewScreen({
                       accessibilityRole="button"
                       accessibilityLabel="Prepare and retry with a fresh transaction"
                       onPress={onCreateOnDevnet}
-                      style={[styles.button, styles.disabled]}
+                      style={[styles.button]}
                     >
                       <Text style={styles.buttonText}>
-                {createResult?.signingState === 'signature-request-expired'
+                {attemptOutcome?.allowNewAttempt === true ||
+                createResult?.signingState === 'signature-request-expired'
                   ? 'Prepare again'
                   : 'Prepare and retry'}
               </Text>
