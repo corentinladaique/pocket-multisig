@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,6 +27,7 @@ import { connection } from '../solana/connection';
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
 import {
   computeProposalDecision,
+  loadProposalReview,
   summarizeOperation,
   type ProposalStatusKind,
 } from '../squads/proposals';
@@ -132,12 +133,88 @@ export function ProposalDetailsScreen({
 
   // --- Approbation : uniquement des verdicts DÉJÀ calculés par l'existant.
   const { signAndSendTransactions } = useMobileWallet();
-  const guard = useWalletGuard(guardContext ?? null);
-  const allowlist = decodedModel === null ? null : checkReviewAllowlist(decodedModel);
+  // Décodage fait ICI, quel que soit le chemin d'entrée (Home ou Inbox) :
+  // c'est ce qui rend visibles le montant, la destination et la revue, et qui
+  // les rafraîchit en relisant la chaîne. Lecture seule, aucun wallet.
+  const [selfModel, setSelfModel] = useState<TransactionReviewModel | null>(null);
+  const [selfGuardContext, setSelfGuardContext] = useState<ReviewGuardContext | null>(null);
+  const [decoding, setDecoding] = useState(false);
+  const [decodeError, setDecodeError] = useState<string | null>(null);
+
+  const deriveGuardContext = useCallback(
+    (reviewModel: TransactionReviewModel): ReviewGuardContext | null => {
+      try {
+        const multisigPda = new PublicKey(address);
+        const [vaultPda] = multisig.getVaultPda({ index: 0, multisigPda });
+        return {
+          multisig: {
+            address,
+            members: members.map((member) => ({
+              address: member.address,
+              roles: [...member.roles],
+            })),
+            threshold,
+            vaultAddress: vaultPda.toBase58(),
+          },
+          proposal: {
+            approvedAddresses: proposal.approvedAddresses,
+            index,
+            status: proposal.status,
+          },
+          review: reviewModel,
+          walletAddress,
+        };
+      } catch {
+        return null;
+      }
+    },
+    [address, index, members, proposal.approvedAddresses, proposal.status, threshold, walletAddress],
+  );
+
+  /** Relecture + décodage : aucune signature, aucun envoi, aucun wallet. */
+  const runDecode = useCallback(async () => {
+    setDecoding(true);
+    setDecodeError(null);
+    try {
+      const multisigPda = new PublicKey(address);
+      const [vaultPda] = multisig.getVaultPda({ index: 0, multisigPda });
+      const result = await loadProposalReview(
+        connection,
+        multisigPda,
+        {
+          multisigAddress: address,
+          network: 'devnet',
+          proposalIndex: index,
+          proposalStatus: proposal.status,
+          signerWallet: walletAddress ?? 'Unknown',
+          vaultAddress: vaultPda.toBase58(),
+        },
+        index,
+      );
+      setSelfModel(result.model);
+      setSelfGuardContext(deriveGuardContext(result.model));
+    } catch (caught: unknown) {
+      setDecodeError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setDecoding(false);
+    }
+  }, [address, deriveGuardContext, index, proposal.status, walletAddress]);
+
+  // Décodage automatique à l'ouverture, uniquement si l'appelant n'a pas déjà
+  // fourni un modèle (aucune lecture dupliquée dans ce cas).
+  useEffect(() => {
+    if (decodedModel === null) void runDecode();
+  }, [decodedModel, runDecode]);
+
+  const model = decodedModel ?? selfModel;
+  const effectiveGuardContext = guardContext ?? selfGuardContext;
+
+  const guard = useWalletGuard(effectiveGuardContext ?? null);
+  const allowlist = model === null ? null : checkReviewAllowlist(model);
   const canConfirm =
-    decodedModel !== null &&
+    model !== null &&
     allowlist !== null &&
-    computeCanConfirm(decodedModel, guard.status, allowlist.status);
+    computeCanConfirm(model, guard.status, allowlist.status);
   const [approving, setApproving] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [approvalResult, setApprovalResult] = useState<ProposalApprovalSignSendResult | null>(null);
@@ -281,7 +358,7 @@ export function ProposalDetailsScreen({
   };
 
   const runApproval = async () => {
-    if (decodedModel === null || allowlist === null || approvalAttemptedRef.current) return;
+    if (model === null || allowlist === null || approvalAttemptedRef.current) return;
     if (walletAddress === null) {
       setApprovalError('No wallet connected: an approval must be signed by a member.');
       return;
@@ -369,15 +446,19 @@ export function ProposalDetailsScreen({
     walletCanApprove,
   });
 
-  const summary = summarizeOperation(decodedModel);
+  const summary = summarizeOperation(model);
+  // Adresse de destination COMPLETE, telle que décodée : l'abréviation des
+  // cartes compactes ne permet pas de vérifier où part l'argent.
+  const fullDestination =
+    model !== null && model.destination.known ? model.destination.value : null;
   const pda = proposalPda(address, index);
 
   // Relecture de la revue existante : aucun nouvel écran, aucune écriture.
-  if (reviewOpen && decodedModel !== null) {
+  if (reviewOpen && model !== null) {
     return (
       <TransactionReviewScreen
-        guardContext={guardContext ?? null}
-        model={decodedModel}
+        guardContext={effectiveGuardContext ?? null}
+        model={model}
         onBack={() => setReviewOpen(false)}
       />
     );
@@ -422,14 +503,29 @@ export function ProposalDetailsScreen({
           <Text style={styles.fieldLabel}>Operation summary</Text>
           {summary === null ? (
             <Text style={styles.fieldNote}>
-              Not decoded yet: no already-decoded model is available for this proposal, and this
-              screen never triggers a new read.
+              Decoding this proposal… the amount and the destination appear as soon as the
+              transaction message is decoded. No wallet is involved.
             </Text>
           ) : (
             <>
               <Text style={styles.fieldValue}>{summary.action}</Text>
-              <Text selectable style={styles.monoValue}>{summary.amount}</Text>
-              <Text selectable style={styles.monoValue}>to {summary.destination}</Text>
+              <Text selectable style={styles.monoValue}>
+                Amount: {summary.amount}
+              </Text>
+              {/* Destination en entier : l'adresse abrégée des cartes compactes
+                  ne suffit pas pour vérifier où part l'argent. */}
+              <Text style={styles.fieldNote}>Destination</Text>
+              <Text selectable style={styles.monoValue}>
+                {fullDestination ?? summary.destination}
+              </Text>
+              {model !== null && model.source.known ? (
+                <>
+                  <Text style={styles.fieldNote}>From</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {model.source.value}
+                  </Text>
+                </>
+              ) : null}
             </>
           )}
 
@@ -440,14 +536,14 @@ export function ProposalDetailsScreen({
           <Text selectable style={styles.monoValue}>{vaultTransactionAddress}</Text>
           <Text style={styles.fieldNote}>Multisig</Text>
           <Text selectable style={styles.monoValue}>{address}</Text>
-          {decodedModel !== null ? (
+          {model !== null ? (
             <>
               <Text style={styles.fieldNote}>Decode status</Text>
-              <Text style={styles.fieldValue}>{decodedModel.decodeStatus}</Text>
-              {decodedModel.notes.length > 0 ? (
+              <Text style={styles.fieldValue}>{model.decodeStatus}</Text>
+              {model.notes.length > 0 ? (
                 <>
-                  <Text style={styles.fieldNote}>Notes ({decodedModel.notes.length})</Text>
-                  {decodedModel.notes.map((note) => (
+                  <Text style={styles.fieldNote}>Notes ({model.notes.length})</Text>
+                  {model.notes.map((note) => (
                     <Text key={note} style={styles.fieldNote}>
                       · {note}
                     </Text>
@@ -485,7 +581,7 @@ export function ProposalDetailsScreen({
 
             {!canConfirm ? (
               <Text style={styles.fieldNote}>
-                {decodedModel === null
+                {model === null
                   ? 'Approval needs the decoded transaction review: the guard and the allowlist cannot be evaluated without it.'
                   : guard.status !== 'allowed'
                     ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
@@ -649,16 +745,52 @@ export function ProposalDetailsScreen({
               </View>
             ) : null}
 
-            <Pressable
+            {decoding ? (
+            <Text style={styles.fieldNote}>Decoding the transaction from the chain…</Text>
+          ) : null}
+
+          {decodeError !== null ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{decodeError}</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Retry decoding this proposal"
+                onPress={() => {
+                  void runDecode();
+                }}
+                style={styles.retry}
+              >
+                <Text style={styles.retryText}>Retry decode</Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* Relecture lecture seule : re-decode la proposition et son message.
+              Aucune signature, aucun envoi, aucun wallet sollicité. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh this proposal and decode it again"
+            disabled={decoding}
+            onPress={() => {
+              void runDecode();
+            }}
+            style={[styles.button, styles.secondary, decoding && styles.disabled]}
+          >
+            <Text style={styles.secondaryText}>
+              {decoding ? 'Refreshing…' : 'Refresh proposal'}
+            </Text>
+          </Pressable>
+
+          <Pressable
               accessibilityRole="button"
-              accessibilityState={{ disabled: decodedModel === null }}
-              disabled={decodedModel === null}
+              accessibilityState={{ disabled: model === null }}
+              disabled={model === null}
               onPress={() => setReviewOpen(true)}
-              style={[styles.button, decodedModel === null && styles.disabled]}
+              style={[styles.button, model === null && styles.disabled]}
             >
             <Text style={styles.buttonText}>Review proposal</Text>
           </Pressable>
-          {decodedModel === null ? (
+          {model === null ? (
             <Text style={styles.fieldNote}>
               The full transaction review is available once the proposal has been decoded by the
               existing review flow.
@@ -809,5 +941,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  retry: {
+    alignItems: 'center',
+    marginTop: 8,
+    paddingVertical: 6,
+  },
+  retryText: {
+    color: '#1a56db',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });

@@ -33,6 +33,7 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { CreateVaultScreen } from './CreateVaultScreen';
 import { MultisigDetailsScreen } from './MultisigDetailsScreen';
 import { MultisigInboxScreen } from './MultisigInboxScreen';
+import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
 
@@ -87,6 +88,9 @@ export function ConnectScreen() {
   const [inboxOpen, setInboxOpen] = useState(false);
   // Multisig ouvert depuis l'inbox (registre local) : lecture seule.
   const [openEntry, setOpenEntry] = useState<MultisigRegistryEntry | null>(null);
+  // Proposition ouverte depuis l'inbox : MÊME écran que depuis Home, et son
+  // décodage est fait sur place. Aucun envoi, aucun wallet sollicité ici.
+  const [openDecisionIndex, setOpenDecisionIndex] = useState<number | null>(null);
   // Multisig charge manuellement : meme ecran de detail que ceux de l'inbox.
   const [manualDetailsOpen, setManualDetailsOpen] = useState(false);
   // Prechargement de l'operation de la proposition PRIORITAIRE : un seul appel
@@ -384,6 +388,36 @@ export function ConnectScreen() {
   );
 
   // Revue d'une proposition réelle : prioritaire sur les previews de dev.
+  // Proposition ouverte depuis l'inbox : exactement le MEME ecran que depuis
+  // Home (ProposalDetailsScreen), avec decodage sur place. Lecture seule.
+  if (openDecisionIndex !== null && msig.view !== null) {
+    const view = msig.view;
+    const decision =
+      proposals.list?.proposals.find((entry) => entry.index === openDecisionIndex) ?? null;
+    if (decision !== null) {
+      return (
+        <ProposalDetailsScreen
+          address={view.address}
+          decodedModel={
+            inboxDecoded !== null && inboxDecoded.model.proposalIndex === decision.index
+              ? inboxDecoded.model
+              : null
+          }
+          index={decision.index}
+          members={view.members}
+          onBack={() => setOpenDecisionIndex(null)}
+          proposal={{ approvedAddresses: decision.approvedAddresses, status: decision.status }}
+          threshold={view.threshold}
+          vaultTransactionAddress={decision.vaultTransactionAddress}
+          walletAddress={walletAddress}
+          walletCanApprove={view.members.some(
+            (member) => member.address === walletAddress && member.roles.includes('Vote'),
+          )}
+        />
+      );
+    }
+  }
+
   if (review !== null) {
     // Données déjà chargées uniquement : le guard ne fait aucun appel RPC.
     const matched = proposals.list?.proposals.find(
@@ -690,14 +724,24 @@ export function ConnectScreen() {
                     <Text style={styles.decisionState}>{decision.stateLabel}</Text>
                     <Pressable
                       accessibilityRole="button"
-                      accessibilityLabel={`View details of proposal ${decision.index}`}
+                      accessibilityLabel={`Open proposal ${decision.index} in the shared detail screen`}
+                      onPress={() => {
+                        setOpenDecisionIndex(decision.index);
+                      }}
+                      style={styles.retry}
+                    >
+                      <Text style={styles.proposalAction}>Review proposal</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Open the full transaction review of proposal ${decision.index}`}
                       onPress={() => {
                         void openProposalReview(decision.index);
                       }}
                       style={styles.retry}
                     >
                       <Text style={styles.proposalAction}>
-                        {reviewLoading ? 'Loading…' : 'View details'}
+                        {reviewLoading ? 'Loading…' : 'Full review'}
                       </Text>
                     </Pressable>
                   </View>
