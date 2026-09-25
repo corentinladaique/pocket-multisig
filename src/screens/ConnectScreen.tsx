@@ -13,6 +13,12 @@ import {
   type LayoutChangeEvent,
 } from 'react-native';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+
+import {
+  describeMwaError,
+  describeWalletIdentity,
+  type MwaErrorReport,
+} from '../wallet/mwaDiagnostics';
 import { PublicKey } from '@solana/web3.js';
 
 import { connection } from '../solana/connection';
@@ -62,7 +68,7 @@ function toReadableError(error: unknown): string {
 }
 
 export function ConnectScreen() {
-  const { account, connect, disconnect } = useMobileWallet();
+  const { account, connect, connectAnd, disconnect, store } = useMobileWallet();
   const { detail: rpcDetail, retry: retryRpc, status: rpcStatus } = useRpcHealth();
   const msig = useMultisigLookup();
   const proposals = useProposals(
@@ -181,14 +187,20 @@ export function ConnectScreen() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
+  // Diagnostics MWA : étape, code et message exacts, jamais reformulés.
+  const [mwaReport, setMwaReport] = useState<MwaErrorReport | null>(null);
+  const [resetReport, setResetReport] = useState<string | null>(null);
 
   const onConnect = useCallback(async () => {
     setError(null);
+    setMwaReport(null);
+    setResetReport(null);
     setPhase('connecting');
     try {
       await connect();
     } catch (caught: unknown) {
       setError(toReadableError(caught));
+      setMwaReport(describeMwaError(caught, 'authorize'));
     } finally {
       setPhase('idle');
     }
@@ -196,17 +208,88 @@ export function ConnectScreen() {
 
   const onDisconnect = useCallback(async () => {
     setError(null);
+    setMwaReport(null);
+    setResetReport(null);
     setPhase('disconnecting');
     try {
       await disconnect();
     } catch (caught: unknown) {
       setError(toReadableError(caught));
+      setMwaReport(describeMwaError(caught, 'deauthorize'));
     } finally {
       setPhase('idle');
     }
   }, [disconnect]);
 
+  /**
+   * Reset explicite d'une session MWA devenue invalide.
+   *
+   * Ne signe rien et n'envoie aucune transaction : la seule opération
+   * éventuellement demandée au wallet est `deauthorize`. Le cache local est
+   * vidé dans tous les cas, même si la révocation côté wallet échoue.
+   */
+  const onResetWalletSession = useCallback(async () => {
+    setError(null);
+    setMwaReport(null);
+    setResetReport(null);
+    setPhase('disconnecting');
+    const parts: string[] = [];
+    try {
+      let authToken: string | null = null;
+      try {
+        const authorization = await store.fetch();
+        authToken =
+          authorization === null || authorization.authToken.length === 0
+            ? null
+            : authorization.authToken;
+      } catch (caught: unknown) {
+        parts.push(`Stored authorization unreadable (${describeMwaError(caught, 'deauthorize').message}).`);
+      }
+
+      if (authToken === null) {
+        parts.push('No stored authorization: nothing to revoke on the wallet side.');
+      } else {
+        try {
+          await connectAnd(async (wallet) => {
+            // Le wrapper type ce paramètre comme `AuthorizeAPI`, alors que
+            // l'objet réel implémente le `MobileWallet` complet (le protocole
+            // déclare `MobileWallet extends … DeauthorizeAPI …`). On ne peut
+            // donc pas appeler `deauthorize` sans le préciser explicitement.
+            const protocolWallet = wallet as unknown as {
+              deauthorize(params: { auth_token: string }): Promise<unknown>;
+            };
+            await protocolWallet.deauthorize({ auth_token: authToken });
+          });
+          parts.push('Wallet-side session revoked.');
+        } catch (caught: unknown) {
+          const report = describeMwaError(caught, 'deauthorize');
+          parts.push(`Wallet-side revocation failed (${report.message}).`);
+        }
+      }
+    } finally {
+      try {
+        await disconnect();
+        parts.push('Local authorization cache cleared.');
+      } catch (caught: unknown) {
+        parts.push(`Local cache clear failed (${toReadableError(caught)}).`);
+      }
+      setPhase('idle');
+      setResetReport(parts.join(' '));
+    }
+  }, [connectAnd, disconnect, store]);
+
   const busy = phase !== 'idle';
+
+  // Ce que le wallet a réellement fourni lors de l'autorisation : labels et
+  // icône sont facultatifs dans le protocole, donc on affiche aussi leur absence.
+  const walletIdentity =
+    account === undefined
+      ? null
+      : describeWalletIdentity({
+          address: account.address.toString(),
+          icon: account.icon,
+          label: account.label,
+        });
 
   // Charge la revue RÉELLE d'une proposition : un seul appel RPC ciblé.
   // Une seule lecture par index prioritaire ; aucun retry automatique.
@@ -416,9 +499,18 @@ export function ConnectScreen() {
       {account ? (
         <View style={styles.card}>
           <Text style={styles.label}>Wallet connecté</Text>
-          {account.label ? <Text style={styles.walletLabel}>{account.label}</Text> : null}
+          <Text style={styles.walletLabel}>{walletIdentity?.label ?? 'Wallet without label'}</Text>
           <Text style={styles.address}>{shortenAddress(account.address.toString())}</Text>
           <Text style={styles.fullAddress}>{account.address.toString()}</Text>
+          <Text style={styles.hint}>
+            Icon supplied by the wallet: {walletIdentity !== null && walletIdentity.iconUri !== null ? 'yes' : 'no'} ·
+            label supplied: {walletIdentity !== null && walletIdentity.label !== null ? 'yes' : 'no'}
+          </Text>
+          {walletIdentity !== null && walletIdentity.iconUri !== null ? (
+            <Text selectable style={styles.diagnosticsText}>
+              Icon URI: {walletIdentity.iconUri}
+            </Text>
+          ) : null}
           <Pressable
             accessibilityRole="button"
             disabled={busy}
@@ -431,6 +523,24 @@ export function ConnectScreen() {
               <Text style={styles.secondaryText}>Disconnect</Text>
             )}
           </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Reset the mobile wallet adapter session"
+            disabled={busy}
+            onPress={() => {
+              void onResetWalletSession();
+            }}
+            style={[styles.button, styles.secondary, busy && styles.disabled]}
+          >
+            <Text style={styles.secondaryText}>Reset wallet session</Text>
+          </Pressable>
+          <Text style={styles.hint}>
+            Clears the local authorization and revokes the session on the wallet when possible.
+            Nothing is signed and no transaction is sent.
+          </Text>
+          {resetReport !== null ? (
+            <Text style={styles.diagnosticsText}>{resetReport}</Text>
+          ) : null}
         </View>
       ) : (
         <Pressable
@@ -667,9 +777,26 @@ export function ConnectScreen() {
         <Text style={styles.secondaryText}>Inbox</Text>
       </Pressable>
 
-      {error ? (
+      {error || mwaReport !== null ? (
         <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{error}</Text>
+          {error !== null ? <Text style={styles.errorText}>{error}</Text> : null}
+          {mwaReport !== null ? (
+            <>
+              <Text style={styles.diagnosticsTitle}>MWA diagnostics</Text>
+              <Text style={styles.diagnosticsText}>Step: {mwaReport.step}</Text>
+              <Text style={styles.diagnosticsText}>
+                Protocol code: {mwaReport.code ?? 'none returned'}
+              </Text>
+              <Text style={styles.diagnosticsText}>
+                Error type: {mwaReport.name ?? 'not an Error instance'}
+              </Text>
+              <Text style={styles.diagnosticsText}>Message: {mwaReport.message}</Text>
+              {mwaReport.data !== null ? (
+                <Text style={styles.diagnosticsText}>Data: {mwaReport.data}</Text>
+              ) : null}
+              <Text style={styles.diagnosticsText}>{mwaReport.hint}</Text>
+            </>
+          ) : null}
           {!account ? (
             <Pressable accessibilityRole="button" onPress={onConnect} style={styles.retry}>
               <Text style={styles.retryText}>Retry</Text>
@@ -1014,5 +1141,17 @@ const styles = StyleSheet.create({
     color: '#1a56db',
     fontSize: 15,
     fontWeight: '600',
+  },
+  // Diagnostics MWA : valeurs exactes, jamais reformulées.
+  diagnosticsTitle: {
+    color: '#991b1b',
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 8,
+  },
+  diagnosticsText: {
+    color: '#7f1d1d',
+    fontSize: 12,
+    marginTop: 4,
   },
 });
