@@ -703,6 +703,30 @@ export function ConnectScreen() {
         </Pressable>
       )}
 
+      {/* Apprentissage : accessible IMMEDIATEMENT, sans wallet connecte, sans
+          multisig charge et sans reseau. Aucune donnee wallet n'est touchee. */}
+      <View style={styles.helpBox}>
+        <Text style={styles.fieldLabel}>Learn</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Learn about multisig"
+          onPress={onboarding.open}
+          style={[styles.button, styles.secondary]}
+        >
+          <Text style={styles.secondaryText}>Learn about multisig</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Reset onboarding"
+          onPress={() => {
+            void onboarding.reset();
+          }}
+          style={styles.retry}
+        >
+          <Text style={styles.retryText}>Reset onboarding</Text>
+        </Pressable>
+      </View>
+
       {phase === 'connecting' ? (
         <Text style={styles.hint}>Ouverture du wallet…</Text>
       ) : null}
@@ -1460,5 +1484,13 @@ const styles = StyleSheet.create({
   statusBarSpacer: {
     backgroundColor: '#ffffff',
     height: SAFE_TOP_PADDING.paddingTop,
+  },
+  helpBox: {
+    backgroundColor: '#f9fafb',
+    borderColor: '#e5e7eb',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
   },
 });

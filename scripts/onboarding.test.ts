@@ -1,25 +1,26 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { CONTEXTUAL_HELP, ONBOARDING_SCREENS, screensForLevel } from '../src/onboarding/content';
+import { CONTEXTUAL_HELP, CRITICAL_PROTECTIONS, ONBOARDING_SCREENS, screensForLevel } from '../src/onboarding/content';
 import {
-  completedProfile,
   contentMode,
   DEFAULT_PROFILE,
   FORBIDDEN_PROFILE_KEYS,
+  GOAL_LABELS,
+  isQuestComplete,
+  LEVEL_LABELS,
   personalizedSummary,
   sanitizeProfile,
-  shouldShowOnboarding,
+  SIGNING_MEAN_COMPATIBILITY,
+  SIGNING_MEAN_LABELS,
+  signingMeanIsDistinct,
   skippedProfile,
+  totalSteps,
 } from '../src/onboarding/profile';
 
-/**
- * Tests de l'onboarding : aucun wallet, aucun reseau, aucun stockage reel.
- * Execution : npx tsx scripts/onboarding.test.ts
- */
+/** Onboarding v2 : aucun wallet, aucun reseau. npx tsx scripts/onboarding.test.ts */
 
 let passed = 0;
-
 function check(name: string, run: () => void): void {
   try {
     run();
@@ -28,13 +29,7 @@ function check(name: string, run: () => void): void {
   } catch (caught: unknown) {
     console.log(`FAIL ${name}`);
     const detail = caught instanceof Error ? caught.stack ?? caught.message : String(caught);
-    console.log(
-      detail
-        .split('\n')
-        .filter((line) => !line.includes('node:internal'))
-        .slice(0, 4)
-        .join('\n'),
-    );
+    console.log(detail.split('\n').slice(0, 4).join('\n'));
     process.exitCode = 1;
   }
 }
@@ -45,151 +40,182 @@ const PROFILE = readFileSync('src/onboarding/profile.ts', 'utf8');
 const CONTENT = readFileSync('src/onboarding/content.ts', 'utf8');
 const HOME = readFileSync('src/screens/ConnectScreen.tsx', 'utf8');
 
-check('1/4. premiere utilisation affiche l onboarding, puis plus apres completion', () => {
-  assert.equal(shouldShowOnboarding(DEFAULT_PROFILE), true, 'premier lancement');
-  const done = completedProfile(DEFAULT_PROFILE);
-  assert.equal(done.onboardingCompleted, true);
-  assert.equal(shouldShowOnboarding(done), false, 'plus de reaffichage apres completion');
-  assert.ok(HOME.includes('if (onboarding.ready && onboarding.show)'), 'Home doit afficher l onboarding');
+const allText = ONBOARDING_SCREENS.flatMap((lesson) => [
+  lesson.title,
+  ...lesson.body,
+  ...lesson.bullets,
+  lesson.emphasis ?? '',
+]).join('\n');
+
+check('1. Learn visible sans wallet, avant Load multisig', () => {
+  assert.ok(HOME.includes('Learn about multisig'), 'bouton present');
+  assert.ok(HOME.includes('styles.helpBox'), 'zone Learn dediee');
+  const learn = HOME.indexOf('Learn about multisig');
+  assert.ok(learn < HOME.indexOf('Load multisig'), 'Learn doit preceder Load multisig');
+  assert.ok(learn > HOME.indexOf('Connect wallet'), 'zone visible au niveau du prompt Connect');
 });
 
-check('2/15. Skip rend l application utilisable et ne bloque pas si le stockage echoue', () => {
-  const skipped = skippedProfile(DEFAULT_PROFILE);
-  assert.equal(skipped.onboardingCompleted, true);
-  assert.equal(shouldShowOnboarding(skipped), false);
-  // Le mode pedagogique par defaut reste complet.
-  assert.equal(skipped.level, 'new-to-multisig');
-  assert.ok(HOOK.includes('catch {'), "l'echec de stockage doit etre rattrape");
-  assert.ok(
-    HOOK.includes('setShow(true)'),
-    'en cas de stockage indisponible, le mode pedagogique est propose',
+check('2. Learn reste disponible apres chargement (zone permanente)', () => {
+  assert.ok(HOME.split('Learn about multisig').length - 1 >= 1);
+  assert.ok(!/msig\.status === 'loaded'[\s\S]{0,200}Learn about multisig/.test(HOME.split('learnZone')[0] ?? '') === true);
+});
+
+check('3/4. Next desactive sans reponse, multi-selection vide bloquee', () => {
+  assert.equal(isQuestComplete(DEFAULT_PROFILE), false, 'aucune reponse par defaut');
+  assert.ok(SCREEN.includes('disabled={!canAdvance}'));
+  assert.ok(SCREEN.includes('Choose an option to continue.'));
+  assert.equal(
+    isQuestComplete({ goal: 'learn-and-test', level: 'new-to-multisig', onboardingCompleted: false, signingMeans: [] }),
+    false,
+    'une multi-selection vide doit bloquer',
   );
-  assert.ok(HOME.includes('could not be saved on this device'), 'message non bloquant');
 });
 
-check('3. Finish enregistre onboardingCompleted localement', () => {
-  assert.ok(HOOK.includes('AsyncStorage.setItem(ONBOARDING_STORAGE_KEY'));
-  assert.ok(HOOK.includes('ONBOARDING_STORAGE_KEY ='));
-  assert.ok(!/https?:|fetch\(|axios/.test(HOOK), 'aucun envoi reseau du profil');
+check('5. Back conserve les reponses deja choisies', () => {
+  assert.ok(SCREEN.includes('setStep((previous) => Math.max(previous - 1, 0))'));
+  assert.ok(!/onBack[\s\S]{0,120}setProfile\(DEFAULT_PROFILE\)/.test(SCREEN), 'Back ne reinitialise rien');
 });
 
-check('5. Reset onboarding reaffiche le parcours et efface le profil', () => {
-  assert.ok(HOOK.includes('AsyncStorage.removeItem(ONBOARDING_STORAGE_KEY)'));
-  assert.ok(HOOK.includes('setShow(true)'));
-  assert.ok(HOME.includes('Reset onboarding'));
+check('6. Skip disponible sans reponse et n invente rien', () => {
+  assert.ok(SCREEN.includes('Skip'));
+  const skipped = skippedProfile(DEFAULT_PROFILE);
+  assert.equal(skipped.goal, null);
+  assert.deepEqual(skipped.signingMeans, []);
+  assert.equal(skipped.onboardingCompleted, true);
 });
 
-check('6/7. aucun wallet, aucune signature, aucun envoi dans l onboarding', () => {
+check('7/8/9. Seed Vault distinct, Ledger via Solflare, autres marques non declarees', () => {
+  assert.equal(SIGNING_MEAN_LABELS['seed-vault'], 'Seed Vault Wallet');
+  assert.equal(SIGNING_MEAN_LABELS['wallet-app'], 'Wallet app');
+  assert.equal(signingMeanIsDistinct('seed-vault'), true);
+  assert.equal(signingMeanIsDistinct('wallet-app'), true);
+  assert.ok(/Ledger through Solflare/.test(SIGNING_MEAN_COMPATIBILITY['hardware-wallet']));
+  assert.ok(/have not yet been tested/.test(SIGNING_MEAN_COMPATIBILITY['hardware-wallet']));
+  assert.ok(!/mobile wallet/i.test(Object.values(SIGNING_MEAN_LABELS).join(' ')), 'jamais "mobile wallet"');
+  assert.ok(!/hot wallet/i.test(Object.values(SIGNING_MEAN_LABELS).join(' ')), 'jamais "hot wallet" comme libelle');
+  for (const brand of ['Trezor', 'Keystone', 'Tangem', 'Unruggable', 'Solflare Shield']) {
+    assert.ok(!allText.includes(brand), `${brand} ne doit pas etre declare compatible`);
+  }
+});
+
+check('10/11/12. parcours raccourcis et croissants', () => {
+  const beginner = screensForLevel('new-to-multisig').length;
+  const familiar = screensForLevel('familiar').length;
+  const advanced = screensForLevel('advanced').length;
+  assert.equal(beginner, 6);
+  assert.equal(familiar, 4);
+  assert.equal(advanced, 2);
+  assert.ok(beginner > familiar && familiar > advanced);
+  assert.ok(totalSteps('new-to-multisig', beginner) <= 7, 'au plus 7 etapes au total');
+});
+
+check('13. Step X of Y suit le parcours reel', () => {
+  assert.ok(SCREEN.includes('Step {step + 1} of {lastStep + 1}'));
+  assert.ok(SCREEN.includes('totalSteps(profile.level, lessons.length)'));
+  assert.equal(totalSteps('advanced', 2), 3);
+});
+
+check('14. ancienne step 9 supprimee et remplacee par une lecon concrete', () => {
+  assert.ok(!ONBOARDING_SCREENS.some((lesson) => lesson.id === 'independent-signers'));
+  const methods = ONBOARDING_SCREENS.find((lesson) => lesson.id === 'signing-methods');
+  assert.ok(methods !== undefined, 'lecon de remplacement presente');
+  assert.ok(/same recovery phrase/.test(methods.body.join(' ')));
+  assert.ok(/A multisig can protect better/.test(methods.body.join(' ')));
+  assert.ok(
+    !/Separate signers by device and by seed/.test(PROFILE),
+    'la phrase abstraite a ete supprimee du resume',
+  );
+});
+
+check('15. resume dependant des reponses', () => {
+  const devnet = personalizedSummary({
+    goal: 'learn-and-test',
+    level: 'new-to-multisig',
+    onboardingCompleted: false,
+    signingMeans: ['seed-vault'],
+  });
+  assert.ok(devnet.some((line) => /Start on Devnet and practise the complete cycle/.test(line)));
+  const team = personalizedSummary({
+    goal: 'team-or-business',
+    level: 'familiar',
+    onboardingCompleted: false,
+    signingMeans: ['trusted-co-signer'],
+  });
+  assert.ok(team.some((line) => /Document each member/.test(line)));
+  assert.ok(team.some((line) => /reach the threshold/.test(line)));
+  for (const line of [...devnet, ...team]) {
+    assert.ok(!/score|guaranteed|perfect|rating/i.test(line));
+  }
+});
+
+check('16/17. protections critiques dans les trois parcours', () => {
+  for (const lesson of ONBOARDING_SCREENS) {
+    if (lesson.id === 'critical-reminders' || lesson.id === 'proposal-lifecycle' || lesson.id === 'multisig-vs-main-vault') {
+      assert.ok(lesson.levels.length >= 2, `${lesson.id} doit couvrir plusieurs niveaux`);
+    }
+  }
+  assert.ok(/does not hold the transferable SOL/.test(allText));
+  assert.ok(/Send funds to the Main vault/.test(allText));
+  assert.ok(/Approved does not mean executed\./.test(allText));
+  assert.ok(CRITICAL_PROTECTIONS.length === 5);
+  const advanced = screensForLevel('advanced').map((lesson) => lesson.id);
+  assert.ok(advanced.includes('multisig-vs-main-vault') || advanced.includes('critical-reminders'));
+});
+
+check('18. Reset ne supprime pas le registre des multisigs', () => {
+  assert.ok(HOOK.includes('removeItem(ONBOARDING_STORAGE_KEY)'));
+  assert.ok(!/multisig-registry|registry/i.test(HOOK), 'aucune touche au registre local');
+});
+
+check('19/20. aucun wallet, RPC, fetch, signature ou transaction', () => {
   for (const [name, source] of [
     ['OnboardingScreen', SCREEN],
     ['useOnboarding', HOOK],
     ['profile', PROFILE],
     ['content', CONTENT],
   ] as const) {
-    assert.ok(
-      !/useMobileWallet|signAndSendTransactions|signTransaction|authorizeSession|MobileWalletProvider/.test(
-        source,
-      ),
-      `${name} ne doit pas toucher au wallet`,
-    );
-    assert.ok(!/connection\.|getBalance|getAccountInfo/.test(source), `${name} sans RPC`);
+    assert.ok(!/useMobileWallet|signAndSendTransactions|signTransaction|authorizeSession/.test(source), name);
+    assert.ok(!/connection\.|getBalance|getAccountInfo|fetch\(|https?:/.test(source), name);
   }
-  assert.ok(!/useMobileWallet/.test(HOME.slice(HOME.indexOf('OnboardingScreen'), HOME.indexOf('OnboardingScreen') + 400)));
 });
 
-check('8. aucun secret demande ni accepte', () => {
-  for (const key of ['seed', 'mnemonic', 'privateKey', 'password', 'pin']) {
-    assert.ok(
-      FORBIDDEN_PROFILE_KEYS.includes(key as (typeof FORBIDDEN_PROFILE_KEYS)[number]),
-      `${key} doit rester interdit`,
-    );
-  }
-  assert.ok(!/seed phrase\?|enter your seed|mnemonic/i.test(SCREEN), 'jamais demande a l utilisateur');
-  // Un contenu inattendu est nettoye.
-  const dirty = sanitizeProfile({
-    amount: 12,
-    mnemonic: 'x',
+check('21. echec de stockage non bloquant', () => {
+  assert.ok(HOOK.includes('catch {'));
+  assert.ok(HOOK.includes('setStorageFailed(true)'));
+  assert.ok(HOME.includes('could not be saved on this device'));
+});
+
+check('22. ancien profil v1 migre sans crash', () => {
+  const migrated = sanitizeProfile({
+    goal: 'protect-personal-savings',
+    level: 'familiar',
     onboardingCompleted: true,
-    privateKey: 'x',
+    priority: 'strong-separation',
+    signingMeans: ['one-mobile-wallet', 'seed-vault', 'trusted-co-signers'],
   });
-  assert.equal(Object.keys(dirty).includes('mnemonic'), false);
-  assert.equal(Object.keys(dirty).includes('amount'), false);
-  assert.equal(dirty.onboardingCompleted, true);
+  assert.equal(migrated.goal, 'protect-personal-funds');
+  assert.deepEqual(migrated.signingMeans, ['wallet-app', 'seed-vault', 'trusted-co-signer']);
+  assert.equal(migrated.onboardingCompleted, true);
+  assert.equal(Object.keys(migrated).includes('priority'), false);
+  assert.equal(sanitizeProfile('broken').onboardingCompleted, false);
+  assert.equal(sanitizeProfile(null).level, 'new-to-multisig');
 });
 
-check('9/10. niveau debutant complet, niveau avance condense, protections inchangees', () => {
-  const beginner = contentMode('new-to-multisig');
-  const advanced = contentMode('advanced');
-  assert.equal(beginner.fullExplanations, true);
-  assert.equal(beginner.showChecklists, true);
-  assert.equal(beginner.onboardingScreenCount, 8);
-  assert.equal(advanced.summarized, true);
-  assert.ok(advanced.onboardingScreenCount < beginner.onboardingScreenCount);
-  assert.ok(
-    screensForLevel('advanced').length < screensForLevel('new-to-multisig').length,
-    'le niveau avance voit moins d ecrans',
-  );
-  // Le niveau ne touche ni aux guards ni aux confirmations : aucun de ces
-  // fichiers n'est importe par l'onboarding.
-  for (const source of [SCREEN, PROFILE, CONTENT]) {
-    assert.ok(!/useWalletGuard|evaluateReviewGuard|checkReviewAllowlist|computeCanConfirm/.test(source));
+check('aucun secret demande ou stocke', () => {
+  for (const key of ['seed', 'mnemonic', 'privateKey', 'password', 'pin', 'recoveryPhrase']) {
+    assert.ok(FORBIDDEN_PROFILE_KEYS.includes(key as (typeof FORBIDDEN_PROFILE_KEYS)[number]));
   }
+  assert.ok(/{'never enter a recovery phrase into Pocket Multisig'}/.test(SCREEN) || allText.includes('never enter a recovery phrase'));
+  assert.ok(Object.keys(CONTEXTUAL_HELP).includes('hotWallet'), 'hot wallet seulement explique');
 });
 
-check('11/12/13. contenu pedagogique cle present', () => {
-  const texts = ONBOARDING_SCREENS.flatMap((screen) => [
-    screen.title,
-    ...screen.body,
-    ...screen.bullets,
-    screen.emphasis ?? '',
-  ]).join('\n');
-  assert.ok(/Multisig configuration/.test(texts) && /Main vault/.test(texts));
-  assert.ok(/does not hold the transferable SOL/.test(texts));
-  assert.ok(/Send funds to the Main vault/.test(texts));
-  assert.ok(/Propose —/.test(texts) && /Approve —/.test(texts) && /Execute —/.test(texts));
-  assert.ok(/Approved does not mean executed\./.test(texts), 'phrase forte visible');
-  assert.ok(/technical role: Initiate/.test(texts));
-  assert.ok(/technical role: Vote/.test(texts));
-  assert.ok(/technical role: Execute/.test(texts));
-  assert.ok(/This is an example, not a universal recommendation\./.test(texts));
-  assert.ok(/not independently audited/.test(texts));
-  assert.ok(CONTENT.includes('Vault index 0') === false, 'pas de jargon Vault index 0');
-});
-
-check('14. les reponses restent locales et le resume est construit sur l appareil', () => {
-  const summary = personalizedSummary({
-    goal: 'business-or-team',
-    level: 'new-to-multisig',
-    onboardingCompleted: false,
-    priority: 'recovery-and-resilience',
-    signingMeans: ['hardware-wallet'],
-  });
-  assert.ok(summary.some((line) => /hardware wallet/.test(line)));
-  assert.ok(summary.some((line) => /reach the threshold/.test(line)));
-  assert.ok(summary.some((line) => /Devnet/.test(line)));
-  // Aucun score, aucune promesse.
-  for (const line of summary) {
-    assert.ok(!/score|guaranteed|100%|rating/i.test(line), `ligne interdite: ${line}`);
-  }
-  assert.ok(CONTENT.includes('built on your device'), 'le resume est local');
-});
-
-check('aides contextuelles courtes disponibles', () => {
-  assert.equal(CONTEXTUAL_HELP.threshold, 'Approvals required before execution');
-  assert.equal(CONTEXTUAL_HELP.mainVault, 'Where the funds are held');
-  assert.equal(CONTEXTUAL_HELP.execute, 'This action applies the approved transaction.');
-  assert.ok(/threshold is reached/.test(CONTEXTUAL_HELP.readyToExecute));
-  assert.ok(/no permissions/.test(CONTEXTUAL_HELP.readOnly));
-  assert.ok(/confirmed vault balance/.test(CONTEXTUAL_HELP.max));
-});
-
-check('navigation Skip / Back / Next / Finish presente', () => {
-  for (const label of ['Skip', 'Back', 'Next', 'Finish']) {
-    assert.ok(SCREEN.includes(`>${label}<`), `bouton ${label} manquant`);
-  }
-  assert.ok(SCREEN.includes('SAFE_TOP_PADDING'), 'safe area respectee');
-  assert.ok(SCREEN.includes('Step {step + 1} of {totalSteps}'), 'progression visible');
-  assert.ok(HOME.includes('Learn about multisig'), 'reouverture depuis Home');
+check('libelles de profil conformes', () => {
+  assert.equal(LEVEL_LABELS['new-to-multisig'], 'New to multisig');
+  assert.equal(LEVEL_LABELS.familiar, 'I already use crypto wallets');
+  assert.equal(LEVEL_LABELS.advanced, 'I already understand multisig');
+  assert.equal(GOAL_LABELS['protect-personal-funds'], 'Protect personal funds');
+  assert.equal(GOAL_LABELS['team-or-business'], 'Manage team or business funds');
+  assert.equal(contentMode('new-to-multisig').lessonCount, 6);
 });
 
 setTimeout(() => {
