@@ -357,3 +357,112 @@ Blocage restant, hors app : aucune vault transaction n'existe dans la fixture,
 donc les tâches T09 (décodage), T11 (approbation) et T12 (exécution) ne sont pas
 testables en l'état — il faudra créer une proposition de test depuis un script
 machine, sous autorisation explicite.
+
+## UI refactor backlog
+
+Audit UI réalisé en lecture seule (aucun code applicatif modifié). À traiter
+pendant la mission de refonte UI. Aucun élément de cette section n'est
+implémenté aujourd'hui.
+
+### High priority — accessibility
+
+- TransactionReviewScreen :
+  corriger le contraste du bouton principal désactivé.
+- Le texte blanc `#ffffff` sur le fond désactivé `#9ca3af`
+  avec `opacity: 0.7` est insuffisamment contrasté
+  (environ 2,1–2,3:1, sous le seuil WCAG AA de 4,5:1).
+- Utiliser soit :
+  - un texte foncé `#101317` sur l'état désactivé ;
+  - soit un fond désactivé suffisamment sombre.
+- Vérifier également qu'aucun `buttonText` blanc
+  ne soit utilisé sur la variante `secondary` `#f3f4f6`.
+
+### Shared header and Safe Area
+
+Créer ultérieurement :
+
+`src/ui/ScreenHeader.tsx`
+
+API envisagée :
+
+- `title` ;
+- `onBack` ;
+- `backLabel` :
+  - `Back` ;
+  - `Cancel creation` ;
+  - `Go to Inbox` ;
+- `badge` optionnel :
+  - `label` ;
+  - `tone: devnet | readonly` ;
+- `secondaryAction` optionnelle ;
+- `showInset`.
+
+Responsabilités :
+
+- porter le fond du header jusque dans la Safe Area ;
+- utiliser `SAFE_TOP_PADDING` comme unique source de vérité ;
+- ajouter un espacement visuel après l'inset (`DEVNET` doit respirer) ;
+- afficher une rangée cohérente :
+  `Back | Title | Network badge` ;
+- éviter tout double inset (les écrans se rendant en exclusion mutuelle,
+  un seul header porte l'inset) ;
+- préparer la future migration vers `useSafeAreaInsets`
+  (`react-native-safe-area-context` n'est pas installé : aucune dépendance
+  native ne doit être ajoutée avant la refonte).
+
+### Home header
+
+- supprimer le bandeau noir isolé : `keyboardAvoider` n'a aucun
+  `backgroundColor`, la zone d'inset hérite du fond de fenêtre Android ;
+- donner à la zone Safe Area le même fond que le header ;
+- harmoniser Home avec les autres écrans ;
+- conserver le solde du Main vault comme information principale.
+
+### Navigation labels
+
+Remplacer selon le contexte :
+
+- `CreateVaultScreen` :
+  `Cancel and back to inbox`
+  → `Cancel creation` si un draft est abandonné ;
+  → `Go to Inbox` si aucune saisie n'est abandonnée.
+
+- `TransactionReviewScreen` :
+  `Cancel`
+  → `Back` lorsqu'il s'agit d'un simple retour.
+
+- `NewProposalScreen` :
+  `Cancel`
+  → `Back` si le formulaire est vide ;
+  → `Cancel creation` si destination, montant ou mémo sont renseignés.
+
+Conserver les boutons `Cancel` des `Alert` lorsqu'ils annulent réellement
+une confirmation ou une action.
+
+Aligner les `accessibilityLabel` avec les libellés visibles.
+
+### Proposal list
+
+Prévoir des filtres locaux :
+
+- Action required ;
+- Active ;
+- Completed ;
+- All.
+
+Prévoir une archive locale non destructive :
+
+- ne rien supprimer on-chain ;
+- masquer seulement les propositions archivées dans la vue par défaut ;
+- permettre `Restore` ;
+- conserver un accès à l'historique complet.
+
+### Wallet roles terminology
+
+Afficher en langage utilisateur :
+
+- `Initiate` → Create proposals ;
+- `Vote` → Approve proposals ;
+- `Execute` → Execute approved proposals.
+
+Conserver les noms Squads techniques dans Technical details.
