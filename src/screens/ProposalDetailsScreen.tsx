@@ -24,6 +24,7 @@ import {
   type ProposalExecutionSignSendResult,
 } from '../squads/signAndSendProposalExecution';
 import { connection } from '../solana/connection';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import { estimateRemainingBalance, formatSol, describeTransferSource } from '../wallet/vaultBalance';
 
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
@@ -567,7 +568,7 @@ export function ProposalDetailsScreen({
   }
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"

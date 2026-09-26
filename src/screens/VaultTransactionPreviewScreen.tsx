@@ -19,6 +19,7 @@ import type { MultisigCreationSignSendResult } from '../vault/signAndSendMultisi
 import type { OperationReport } from '../wallet/operationState';
 import { describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 
 /**
  * Preview de transaction.
@@ -101,7 +102,7 @@ export function VaultTransactionPreviewScreen({
   }, [onBack]);
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"

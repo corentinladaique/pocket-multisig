@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 
 import { shortenMemberAddress } from '../vault/vaultDraft';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import type { MultisigRegistryEntry } from '../vault/multisigRegistry';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 
@@ -52,7 +53,7 @@ export function MultisigInboxScreen({
   }, [registry]);
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"

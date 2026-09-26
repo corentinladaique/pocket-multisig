@@ -5,12 +5,12 @@ import {
   KeyboardAvoidingView,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 
 import {
   computeProposalDecision,
@@ -71,8 +71,7 @@ export function ProposalListScreen({
   }, [onBack]);
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
-      <View style={styles.safeTop} />
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
@@ -362,11 +361,6 @@ const styles = StyleSheet.create({
     color: '#1a56db',
     fontSize: 15,
     fontWeight: '600',
-  },
-  safeTop: {
-    backgroundColor: '#ffffff',
-    height: StatusBar.currentHeight ?? 24,
-    width: '100%',
   },
   disabled: {
     opacity: 0.5,

@@ -33,6 +33,7 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
   computeMaxTransfer,
   isMaxSnapshotCurrent,
@@ -400,7 +401,7 @@ export function NewProposalScreen({
   }
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"

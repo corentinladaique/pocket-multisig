@@ -14,6 +14,7 @@ import * as multisig from '@sqds/multisig';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
 import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 
 import type { ReviewGuardContext } from '../wallet/useWalletGuard';
 import { connection } from '../solana/connection';
@@ -241,7 +242,7 @@ export function MultisigDetailsScreen({
   }
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"

@@ -29,6 +29,7 @@ import {
 } from '../vault/signAndSendMultisigCreation';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
   buildOperationReport,
   classifyOperationFailure,
@@ -683,7 +684,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   }
 
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardDismissMode="on-drag"

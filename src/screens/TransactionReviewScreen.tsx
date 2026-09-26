@@ -3,7 +3,7 @@
 // ni signTransaction, ni signAndSendTransaction, ni aucune fonction RPC.
 // Il affiche un modèle déjà construit (voir src/types/transactionReview.ts).
 import { useCallback, useEffect, useState } from 'react';
-import { BackHandler, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
@@ -13,6 +13,7 @@ import {
   useWalletGuard,
 } from '../wallet/useWalletGuard';
 import { checkReviewAllowlist } from '../squads/instructionAllowlist';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import { planProposalApproval, type ApprovalPlan } from '../squads/proposalApproval';
 import { connection } from '../solana/connection';
 import { TransactionTechnicalDetails } from './TransactionTechnicalDetails';
@@ -423,7 +424,7 @@ export function TransactionReviewScreen({
 
   return (
     <ScrollView
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[styles.container, SAFE_TOP_PADDING]}
       keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.badge}>DEVNET</Text>
@@ -552,7 +553,7 @@ const styles = StyleSheet.create({
     // barre d'état du Seeker (Android 16, API 36). Basé uniquement sur l'API
     // React Native déjà présente, sans nouvelle dépendance.
     // Doit rester APRÈS `padding` pour ne pas être écrasé par le raccourci.
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) + 16 : 16,
+    paddingTop: SAFE_TOP_PADDING.paddingTop + 16,
     paddingBottom: 48,
   },
   badge: {

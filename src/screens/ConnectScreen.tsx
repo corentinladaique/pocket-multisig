@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { StatusBar } from 'react-native';
+import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
   ActivityIndicator,
   Keyboard,
@@ -611,7 +611,7 @@ export function ConnectScreen() {
   // le KeyboardAvoidingView en mode "padding" est necessaire sur les deux
   // plateformes (aucune hauteur codee en dur).
   return (
-    <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardDismissMode="on-drag"
@@ -1413,6 +1413,6 @@ const styles = StyleSheet.create({
   },
   statusBarSpacer: {
     backgroundColor: '#ffffff',
-    height: StatusBar.currentHeight ?? 24,
+    height: SAFE_TOP_PADDING.paddingTop,
   },
 });
