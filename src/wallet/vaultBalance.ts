@@ -66,12 +66,12 @@ export function describeVaultBalance(input: {
 
   if (input.lamports === 0) {
     return {
-      hint: 'This vault holds no SOL: transfer proposals will be refused or cannot be executed until it is funded.',
+      hint: 'This Main vault holds no SOL: transfer proposals will be refused or cannot be executed until it is funded.',
       lamports: 0,
       notFunded: true,
       sol: formatSol(0),
       stale,
-      title: 'Vault not funded',
+      title: 'Main vault not funded',
     };
   }
 

@@ -33,6 +33,8 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { CreateVaultScreen } from './CreateVaultScreen';
 import { MultisigDetailsScreen } from './MultisigDetailsScreen';
 import { MultisigInboxScreen } from './MultisigInboxScreen';
+import { useMultisigRegistry } from '../vault/useMultisigRegistry';
+import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance';
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
@@ -301,6 +303,95 @@ export function ConnectScreen() {
   // chaque rendu relanceraient l'effet et annuleraient la lecture en cours.
   const viewAddress = msig.view?.address ?? null;
   const viewVaultAddress = msig.view?.vaultAddress ?? null;
+  const view = msig.view ?? null;
+
+  // --- Tableau de bord Home -------------------------------------------------
+  // Solde du Main vault, chargé en lecture seule AVEC son adresse : changer de
+  // multisig purge immédiatement la valeur précédente.
+  const [homeBalance, setHomeBalance] = useState<{
+    address: string;
+    lamports: number | null;
+    stale: boolean;
+    status: BalanceStatus;
+  } | null>(null);
+  const [homeBalanceError, setHomeBalanceError] = useState(false);
+  // Registre LOCAL : sert uniquement à afficher le nom donné au vault par
+  // l'utilisateur. Rien n'en est jamais transmis ni synchronisé.
+  const registry = useMultisigRegistry();
+
+  const refreshHomeBalance = useCallback((targetVaultAddress: string) => {
+    setHomeBalance((previous) => ({
+      address: targetVaultAddress,
+      lamports:
+        previous !== null && previous.address === targetVaultAddress ? previous.lamports : null,
+      stale:
+        previous !== null && previous.address === targetVaultAddress && previous.lamports !== null,
+      status: 'loading',
+    }));
+    setHomeBalanceError(false);
+    void (async () => {
+      try {
+        const lamports = await connection.getBalance(
+          new PublicKey(targetVaultAddress),
+          'confirmed',
+        );
+        setHomeBalance({ address: targetVaultAddress, lamports, stale: false, status: 'loaded' });
+      } catch {
+        setHomeBalance((previous) => ({
+          address: targetVaultAddress,
+          lamports:
+            previous !== null && previous.address === targetVaultAddress ? previous.lamports : null,
+          stale:
+            previous !== null && previous.address === targetVaultAddress && previous.lamports !== null,
+          status: 'error',
+        }));
+        setHomeBalanceError(true);
+      }
+    })();
+  }, []);
+
+  // Purge + lecture à chaque changement d'adresse de multisig / de vault.
+  useEffect(() => {
+    if (viewVaultAddress === null) {
+      setHomeBalance(null);
+      return;
+    }
+    refreshHomeBalance(viewVaultAddress);
+  }, [viewVaultAddress, refreshHomeBalance]);
+
+  const homeBalanceView = describeVaultBalance({
+    addressMatches:
+      homeBalance !== null && viewVaultAddress !== null && homeBalance.address === viewVaultAddress,
+    lamports: homeBalance?.lamports ?? null,
+    status: homeBalance?.status ?? 'idle',
+    stale: homeBalance?.stale === true,
+  });
+
+  // Rôles RÉELLEMENT lus on-chain pour le wallet connecté.
+  const homeWalletRoles =
+    view === null || walletAddress === null
+      ? []
+      : (view.members.find((member) => member.address === walletAddress)?.roles ?? []);
+  const homeIsMember = homeWalletRoles.length > 0;
+  const homeVaultName = registry.entries.find((entry) => entry.address === viewAddress)?.vaultName ?? null;
+
+  // Compteurs : ce qui attend une action du wallet (vote) et ce qui est prêt à
+  // être exécuté par lui. Aucune lecture supplémentaire : propositions déjà lues.
+  const homeNeedsVote = view === undefined
+    ? 0
+    : (proposals.list?.proposals ?? []).filter(
+        (proposal) =>
+          proposal.status === 'Active' &&
+          homeIsMember &&
+          homeWalletRoles.includes('Vote') &&
+          !proposal.approvedAddresses.includes(walletAddress ?? ''),
+      ).length;
+  const homeReadyToExecute = view === undefined
+    ? 0
+    : (proposals.list?.proposals ?? []).filter(
+        (proposal) =>
+          proposal.status === 'Approved' && homeIsMember && homeWalletRoles.includes('Execute'),
+      ).length;
   const proposalsLoaded = proposals.list !== null;
 
   useEffect(() => {
@@ -662,6 +753,85 @@ export function ConnectScreen() {
             <View style={styles.msigResult}>
               <Text style={styles.inboxHeading}>{inboxHeading}</Text>
               <Text style={styles.inboxCount}>{inboxDecisions.length}</Text>
+
+              {/* Tableau de bord du multisig ACTIF : identité, statut du wallet,
+                  Main vault, configuration et actions attendues. Aucun label
+                  local n'est transmis : tout reste sur l'appareil. */}
+              <Text style={styles.fieldLabel}>Active multisig</Text>
+              <Text style={styles.fieldValue}>{homeVaultName ?? 'Unnamed multisig'}</Text>
+              <Text selectable style={styles.hint}>
+                {msig.view.address}
+              </Text>
+
+              <Text style={styles.fieldLabel}>Wallet status</Text>
+              <Text style={styles.fieldValue}>
+                {homeIsMember ? 'My multisig' : 'Observed multisig · Read only'}
+              </Text>
+              {homeIsMember ? (
+                <Text style={styles.hint}>Roles read on-chain: {homeWalletRoles.join(' · ')}</Text>
+              ) : (
+                <Text style={styles.hint}>
+                  This is public on-chain information. Your connected wallet has no permissions in
+                  this multisig.
+                </Text>
+              )}
+
+              {/* Main vault : solde, adresse à financer, relecture explicite. */}
+              <Text style={styles.fieldLabel}>{homeBalanceView.title}</Text>
+              {homeBalanceView.sol !== null ? (
+                <Text selectable style={styles.fieldValue}>
+                  {homeBalanceView.sol} SOL
+                </Text>
+              ) : null}
+              {homeBalanceView.stale ? <Text style={styles.hint}>stale</Text> : null}
+              <Text style={styles.hint}>{homeBalanceView.hint}</Text>
+              <Text selectable style={styles.fieldValue}>{msig.view.vaultAddress}</Text>
+              <Text style={styles.hint}>
+                This account holds the funds controlled by the multisig.
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh the Main vault balance"
+                disabled={homeBalance?.status === 'loading'}
+                onPress={() => {
+                  refreshHomeBalance(viewVaultAddress ?? '');
+                }}
+                style={styles.retry}
+              >
+                <Text style={styles.retryText}>
+                  {homeBalance?.status === 'loading' ? 'Loading vault balance…' : 'Refresh balance'}
+                </Text>
+              </Pressable>
+              {homeBalanceError ? (
+                <Text style={styles.hint}>
+                  Balance unavailable: the last readable value is kept if it belongs to this vault.
+                </Text>
+              ) : null}
+
+              <Text style={styles.fieldLabel}>Configuration</Text>
+              <Text style={styles.hint}>
+                Threshold {msig.view.threshold} of {msig.view.members.length} member(s). The
+                configuration address is in Technical details.
+              </Text>
+
+              {/* Compteurs : calculés depuis les propositions DÉJÀ lues. */}
+              <Text style={styles.fieldLabel}>Actions required</Text>
+              <Text style={styles.hint}>
+                {homeNeedsVote} proposal(s) waiting for your vote · {homeReadyToExecute} ready to
+                execute
+              </Text>
+              {priorityIndex !== null ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Review proposal ${priorityIndex}`}
+                  onPress={() => {
+                    setOpenDecisionIndex(priorityIndex);
+                  }}
+                  style={styles.retry}
+                >
+                  <Text style={styles.retryText}>Review proposal #{priorityIndex}</Text>
+                </Pressable>
+              ) : null}
 
               <Pressable
                 accessibilityRole="button"

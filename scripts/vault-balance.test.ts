@@ -77,7 +77,7 @@ check('3. 0.1 SOL au vault, 0.02 SOL proposes : reste 0.08 SOL', () => {
 
 check('4. vault vide : message explicite', () => {
   const view = describeVaultBalance({ addressMatches: true, lamports: 0, status: 'loaded' });
-  assert.equal(view.title, 'Vault not funded');
+  assert.equal(view.title, 'Main vault not funded');
   assert.equal(view.notFunded, true);
   assert.ok(/refused|cannot be executed/.test(view.hint));
 });
