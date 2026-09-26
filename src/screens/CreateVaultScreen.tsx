@@ -86,6 +86,8 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
 
   const [step, setStep] = useState(1);
   const [vaultName, setVaultName] = useState('');
+  /** Le champ nom a-t-il ete touche ? Aucune erreur agressive avant interaction. */
+  const [nameTouched, setNameTouched] = useState(false);
   const [setupType, setSetupType] = useState<SetupType | null>(null);
   const [members, setMembers] = useState<VaultMemberDraft[]>([]);
   const [threshold, setThreshold] = useState(1);
@@ -641,10 +643,62 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             : true;
 
   // Preview de transaction : ecran lecture seule, sans construction Squads.
+  /**
+     * Verdict de preparation : la MEME condition que le bouton, avec une raison
+     * utilisateur. Aucune validation n'est assouplie.
+     */
   if (transactionPreviewOpen) {
     return (
       <VaultTransactionPreviewScreen
-        canCreate={
+        createReadiness={(() => {
+        if (walletAddress === null) {
+          return {
+            ready: false,
+            reasonCode: 'no-creator-wallet',
+            recommendedAction: 'Connect your wallet',
+            userMessage: 'Connect your wallet to create this multisig.',
+          };
+        }
+        if (plan.validationErrors.length > 0) {
+          return {
+            ready: false,
+            reasonCode: 'invalid-draft',
+            recommendedAction: 'Fix the members and the threshold',
+            userMessage: 'Fix the validation errors above.',
+          };
+        }
+        if (!request.readyForCreation) {
+          return {
+            ready: false,
+            reasonCode: 'draft-incomplete',
+            recommendedAction: 'Add members and set the threshold',
+            userMessage: 'Complete the member configuration.',
+          };
+        }
+        if (request.vaultName.trim().length === 0) {
+          return {
+            ready: false,
+            reasonCode: 'missing-vault-name',
+            recommendedAction: 'Back to vault setup',
+            userMessage: 'Enter a vault name to create this multisig.',
+          };
+        }
+        if (!plan.readyForInstructionBuild) {
+          return {
+            ready: false,
+            reasonCode: 'plan-not-ready',
+            recommendedAction: 'Run the checks again',
+            userMessage: 'Run the readiness checks before creating.',
+          };
+        }
+        return {
+          ready: true,
+          reasonCode: 'ready',
+          recommendedAction: 'Create on Devnet',
+          userMessage: 'Ready to create on Devnet.',
+        };
+      })()}
+      canCreate={
           walletAddress !== null &&
           plan.readyForInstructionBuild &&
           (createResult === null || attemptOutcome?.allowNewAttempt === true) &&
@@ -727,18 +781,28 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
               </Pressable>
             ))}
 
-            <Text style={styles.fieldLabel}>Vault name</Text>
+            <Text style={styles.fieldLabel}>Vault name *</Text>
             <TextInput
               autoCapitalize="words"
               onChangeText={setVaultName}
-              onBlur={onFieldBlur}
+              onBlur={() => {
+                setNameTouched(true);
+                onFieldBlur();
+              }}
               onFocus={onFieldFocus('vaultName')}
-              placeholder="Personal vault"
+              placeholder="Personal savings vault"
               placeholderTextColor="#9ca3af"
               ref={registerField('vaultName')}
               style={styles.input}
               value={vaultName}
             />
+            {/* Nom OBLIGATOIRE : le placeholder ne devient jamais la valeur. */}
+            <Text style={styles.errorText}>
+              Vault name * — Required. Enter a name for this vault.
+            </Text>
+            {vaultName.trim().length === 0 && nameTouched ? (
+              <Text style={styles.errorText}>Enter a vault name to continue.</Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -940,9 +1004,9 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
           <View style={styles.block}>
             <Text style={styles.blockTitle}>Review</Text>
 
-            <Text style={styles.fieldLabel}>Vault name</Text>
+            <Text style={styles.fieldLabel}>Vault name *</Text>
             <Text style={styles.fieldValue}>
-              {vaultName.trim().length > 0 ? vaultName.trim() : 'Untitled vault'}
+              {vaultName.trim().length > 0 ? vaultName.trim() : 'Vault name required'}
             </Text>
 
             <Text style={styles.fieldLabel}>Members ({members.length})</Text>

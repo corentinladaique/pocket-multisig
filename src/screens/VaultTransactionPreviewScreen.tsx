@@ -42,6 +42,7 @@ export function VaultTransactionPreviewScreen({
   onBack,
   onCheckTransactionAgain,
   onCreateOnDevnet,
+  createReadiness,
   onReconnectWallet,
   operationReport,
   payer,
@@ -56,6 +57,13 @@ export function VaultTransactionPreviewScreen({
   checking: boolean;
   createError: string | null;
   createResult: MultisigCreationSignSendResult | null;
+  /** Verdict de preparation : meme condition que le CTA, avec une raison claire. */
+  createReadiness: {
+    ready: boolean;
+    reasonCode: string;
+    userMessage: string;
+    recommendedAction: string;
+  };
   creating: boolean;
   onBack: () => void;
   /** Relecture seule : confirmation + compte métier. Ne signe ni n'envoie. */
@@ -133,7 +141,9 @@ export function VaultTransactionPreviewScreen({
 
           <Text style={styles.fieldLabel}>Vault name</Text>
           <Text style={styles.fieldValue}>
-            {transaction.vaultName.length > 0 ? transaction.vaultName : 'Untitled vault'}
+            {transaction.vaultName.trim().length > 0
+              ? transaction.vaultName.trim()
+              : 'Vault name required'}
           </Text>
 
           <Text style={styles.fieldLabel}>Signers</Text>
@@ -163,6 +173,15 @@ export function VaultTransactionPreviewScreen({
               wallet to sign and send this single transaction on Devnet.
             </Text>
           </View>
+
+          {/* Raison precise lorsque le CTA doit legitimement rester desactive :
+              le bouton n'est jamais active en contournant une validation. */}
+          {!canCreate || creating ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{createReadiness.userMessage}</Text>
+              <Text style={styles.errorText}>{createReadiness.recommendedAction}</Text>
+            </View>
+          ) : null}
 
           <Pressable
             accessibilityRole="button"

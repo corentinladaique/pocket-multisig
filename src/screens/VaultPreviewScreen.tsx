@@ -56,7 +56,9 @@ export function VaultPreviewScreen({
         <View style={styles.block}>
           <Text style={styles.fieldLabel}>Vault name</Text>
           <Text style={styles.fieldValue}>
-            {preview.vaultName.length > 0 ? preview.vaultName : 'Untitled vault'}
+            {preview.vaultName.trim().length > 0
+              ? preview.vaultName.trim()
+              : 'Vault name required'}
           </Text>
 
           <Text style={styles.fieldLabel}>Threshold</Text>
