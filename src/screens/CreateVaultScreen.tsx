@@ -633,7 +633,9 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
 
   const canContinue =
     step === 1
-      ? setupType !== null
+      ? // Nom OBLIGATOIRE des Vault setup : le placeholder n'est jamais une
+        // valeur, et des espaces seuls ne comptent pas comme un nom.
+        setupType !== null && vaultName.trim().length > 0
       : step === 2
         ? members.length >= requiredMembers
         : step === 3
