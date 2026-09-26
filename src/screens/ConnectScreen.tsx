@@ -34,6 +34,8 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { CreateVaultScreen } from './CreateVaultScreen';
 import { MultisigDetailsScreen } from './MultisigDetailsScreen';
 import { MultisigInboxScreen } from './MultisigInboxScreen';
+import { OnboardingScreen } from './OnboardingScreen';
+import { useOnboarding } from '../onboarding/useOnboarding';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance';
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
@@ -319,6 +321,8 @@ export function ConnectScreen() {
   // Registre LOCAL : sert uniquement à afficher le nom donné au vault par
   // l'utilisateur. Rien n'en est jamais transmis ni synchronisé.
   const registry = useMultisigRegistry();
+  // Onboarding pedagogique : profil LOCAL uniquement, aucun wallet, aucun RPC.
+  const onboarding = useOnboarding();
 
   const refreshHomeBalance = useCallback((targetVaultAddress: string) => {
     setHomeBalance((previous) => ({
@@ -480,6 +484,22 @@ export function ConnectScreen() {
   );
 
   // Revue d'une proposition réelle : prioritaire sur les previews de dev.
+  // Onboarding : premiere utilisation (ou reouverture depuis Home). Cet ecran ne
+  // connecte aucun wallet, ne signe rien et ne fait aucun appel reseau.
+  if (onboarding.ready && onboarding.show) {
+    return (
+      <OnboardingScreen
+        initialProfile={onboarding.profile}
+        onFinish={(profile) => {
+          void onboarding.complete(profile);
+        }}
+        onSkip={(profile) => {
+          void onboarding.skip(profile);
+        }}
+      />
+    );
+  }
+
   // Proposition ouverte depuis l'inbox : exactement le MEME ecran que depuis
   // Home (ProposalDetailsScreen), avec decodage sur place. Lecture seule.
   if (openDecisionIndex !== null && msig.view !== null) {
@@ -853,6 +873,32 @@ export function ConnectScreen() {
               >
                 <Text style={styles.secondaryText}>Open multisig</Text>
               </Pressable>
+
+              {/* Apprentissage : reouverture et remise a zero, purement locales. */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Learn about multisig"
+                onPress={onboarding.open}
+                style={[styles.button, styles.secondary, styles.sideButton]}
+              >
+                <Text style={styles.secondaryText}>Learn about multisig</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reset onboarding"
+                onPress={() => {
+                  void onboarding.reset();
+                }}
+                style={styles.retry}
+              >
+                <Text style={styles.retryText}>Reset onboarding</Text>
+              </Pressable>
+              {onboarding.storageFailed ? (
+                <Text style={styles.hint}>
+                  Your answers could not be saved on this device: the app keeps working with the
+                  default learning mode, and nothing is sent anywhere.
+                </Text>
+              ) : null}
 
               {proposals.status === 'loading' ? (
                 <Text style={styles.hint}>Lecture…</Text>
