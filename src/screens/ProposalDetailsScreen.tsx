@@ -202,14 +202,17 @@ export function ProposalDetailsScreen({
     }
   }, [address, deriveGuardContext, index, proposal.status, walletAddress]);
 
-  // Décodage automatique à l'ouverture, uniquement si l'appelant n'a pas déjà
-  // fourni un modèle (aucune lecture dupliquée dans ce cas).
+  // Relecture canonique à l'ouverture, quel que soit le chemin (Home ou Inbox) :
+  // le modèle et le contexte fournis par l'appelant servent d'affichage immédiat,
+  // mais le verdict du guard est TOUJOURS calculé sur une relecture on-chain
+  // fraîche — exactement la même lecture que « Refresh proposal ». Strictement
+  // en lecture seule : aucun wallet, aucune signature, aucun envoi.
   useEffect(() => {
-    if (decodedModel === null) void runDecode();
-  }, [decodedModel, runDecode]);
+    void runDecode();
+  }, [runDecode]);
 
-  const model = decodedModel ?? selfModel;
-  const effectiveGuardContext = guardContext ?? selfGuardContext;
+  const model = selfModel ?? decodedModel;
+  const effectiveGuardContext = selfGuardContext ?? guardContext;
 
   // Solde du vault, relu à l'ouverture et AVANT chaque exécution. Lecture seule.
   const vaultPda = (() => {
@@ -518,6 +521,24 @@ export function ProposalDetailsScreen({
   });
   const amountLamports = model !== null && model.amount.known ? Number(model.amount.value.lamports) : null;
   const isRecognizedTransfer = summary !== null && summary.action === 'SOL transfer';
+
+  // Instrumentation de développement : quelles données sont disponibles, pour
+  // diagnostiquer un guard bloqué au premier rendu. Aucune donnée sensible.
+  useEffect(() => {
+    if (!__DEV__) return;
+    console.log(
+      '[proposal-details] availability',
+      JSON.stringify({
+        allowlistReady: model !== null,
+        decodedModelReady: model !== null,
+        guardContextReady: effectiveGuardContext !== null,
+        multisigReady: address.length > 0,
+        proposalReady: index >= 0,
+        vaultPdaReady: vaultPdaAddress !== null,
+        walletReady: walletAddress !== null,
+      }),
+    );
+  }, [address, effectiveGuardContext, index, model, vaultPdaAddress, walletAddress]);
   const remaining = estimateRemainingBalance({
     amountLamports,
     recognizedSolTransfer: isRecognizedTransfer,

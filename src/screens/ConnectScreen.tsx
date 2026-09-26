@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { StatusBar } from 'react-native';
 import {
   ActivityIndicator,
   Keyboard,
@@ -776,19 +777,30 @@ export function ConnectScreen() {
                 </Text>
               )}
 
-              {/* Main vault : solde, adresse à financer, relecture explicite. */}
-              <Text style={styles.fieldLabel}>{homeBalanceView.title}</Text>
+              {/* Main vault : le SOLDE est l'information principale du bloc, une
+                  seule explication, aucune zone vide. */}
+              <Text style={styles.fieldLabel}>MAIN VAULT</Text>
               {homeBalanceView.sol !== null ? (
-                <Text selectable style={styles.fieldValue}>
+                <Text selectable style={styles.balanceValue}>
                   {homeBalanceView.sol} SOL
                 </Text>
               ) : null}
-              {homeBalanceView.stale ? <Text style={styles.hint}>stale</Text> : null}
-              <Text style={styles.hint}>{homeBalanceView.hint}</Text>
-              <Text selectable style={styles.fieldValue}>{msig.view.vaultAddress}</Text>
+              {homeBalanceView.title === 'Main vault not funded' ? (
+                <Text style={styles.balanceNote}>Main vault not funded</Text>
+              ) : null}
+              {homeBalanceView.title === 'Balance unavailable' ? (
+                <Text style={styles.balanceNote}>Balance unavailable</Text>
+              ) : null}
+              <Text selectable style={styles.hint}>
+                {msig.view.vaultAddress}
+              </Text>
               <Text style={styles.hint}>
                 This account holds the funds controlled by the multisig.
               </Text>
+              {homeBalanceView.stale ? <Text style={styles.hint}>stale</Text> : null}
+              {homeBalanceView.hint.length > 0 ? (
+                <Text style={styles.hint}>{homeBalanceView.hint}</Text>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Refresh the Main vault balance"
@@ -799,22 +811,16 @@ export function ConnectScreen() {
                 style={styles.retry}
               >
                 <Text style={styles.retryText}>
-                  {homeBalance?.status === 'loading' ? 'Loading vault balance…' : 'Refresh balance'}
+                  {homeBalance?.status === 'loading'
+                    ? 'Loading vault balance…'
+                    : homeBalanceError
+                      ? 'Retry balance'
+                      : 'Refresh balance'}
                 </Text>
               </Pressable>
-              {homeBalanceError ? (
-                <Text style={styles.hint}>
-                  Balance unavailable: the last readable value is kept if it belongs to this vault.
-                </Text>
-              ) : null}
 
-              <Text style={styles.fieldLabel}>Configuration</Text>
-              <Text style={styles.hint}>
-                Threshold {msig.view.threshold} of {msig.view.members.length} member(s). The
-                configuration address is in Technical details.
-              </Text>
-
-              {/* Compteurs : calculés depuis les propositions DÉJÀ lues. */}
+              {/* Action prioritaire : placée juste après le solde, avant tout
+                  détail technique, pour éviter un long scroll. */}
               <Text style={styles.fieldLabel}>Actions required</Text>
               <Text style={styles.hint}>
                 {homeNeedsVote} proposal(s) waiting for your vote · {homeReadyToExecute} ready to
@@ -827,11 +833,17 @@ export function ConnectScreen() {
                   onPress={() => {
                     setOpenDecisionIndex(priorityIndex);
                   }}
-                  style={styles.retry}
+                  style={[styles.button, styles.secondary, styles.sideButton]}
                 >
-                  <Text style={styles.retryText}>Review proposal #{priorityIndex}</Text>
+                  <Text style={styles.secondaryText}>Review proposal #{priorityIndex}</Text>
                 </Pressable>
               ) : null}
+
+              <Text style={styles.fieldLabel}>Technical details</Text>
+              <Text style={styles.hint}>
+                Threshold {msig.view.threshold} of {msig.view.members.length} member(s). Multisig
+                configuration: {msig.view.address}
+              </Text>
 
               <Pressable
                 accessibilityRole="button"
@@ -1382,9 +1394,25 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 8,
   },
+  balanceValue: {
+    color: '#101317',
+    fontSize: 30,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  balanceNote: {
+    color: '#7c2d12',
+    fontSize: 15,
+    fontWeight: '700',
+    marginTop: 4,
+  },
   diagnosticsText: {
     color: '#7f1d1d',
     fontSize: 12,
     marginTop: 4,
+  },
+  statusBarSpacer: {
+    backgroundColor: '#ffffff',
+    height: StatusBar.currentHeight ?? 24,
   },
 });

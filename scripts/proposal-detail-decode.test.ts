@@ -127,8 +127,8 @@ check('Proposal Details decode sur place et n est plus bloque par decodedModel',
   const source = readFileSync('src/screens/ProposalDetailsScreen.tsx', 'utf8');
   assert.ok(source.includes('loadProposalReview('), 'le detail doit decoder lui-meme');
   assert.ok(
-    source.includes('const model = decodedModel ?? selfModel'),
-    'le modele local doit completer le modele fourni',
+    source.includes('const model = selfModel ?? decodedModel'),
+    'le modele local doit primer sur le modele fourni',
   );
   // Le bouton de revue ne doit plus dependre du seul modele fourni par le parent.
   assert.ok(

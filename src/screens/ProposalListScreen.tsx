@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Pressable,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -71,6 +72,7 @@ export function ProposalListScreen({
 
   return (
     <KeyboardAvoidingView behavior="padding" style={styles.keyboardAvoider}>
+      <View style={styles.safeTop} />
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
@@ -360,6 +362,11 @@ const styles = StyleSheet.create({
     color: '#1a56db',
     fontSize: 15,
     fontWeight: '600',
+  },
+  safeTop: {
+    backgroundColor: '#ffffff',
+    height: StatusBar.currentHeight ?? 24,
+    width: '100%',
   },
   disabled: {
     opacity: 0.5,

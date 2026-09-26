@@ -40,7 +40,10 @@ check('1. Home affiche le solde du Main vault apres Load multisig', () => {
     'la lecture doit viser le vault de la vue courante',
   );
   assert.ok(HOME.includes('{homeBalanceView.sol} SOL'), 'le solde doit etre affiche');
-  assert.ok(HOME.includes('{homeBalanceView.title}'), "l'etat du solde doit etre affiche");
+  assert.ok(
+    HOME.includes('{homeBalanceView.title === \'Main vault not funded\' ? ('),
+    "l'etat du solde doit etre affiche",
+  );
 });
 
 check('2. changement de multisig A vers B : purge immediatement', () => {
@@ -80,7 +83,10 @@ check('4. wallet non membre : Observed multisig, lecture seule', () => {
 check('5. vault vide : Main vault not funded', () => {
   const view = describeVaultBalance({ addressMatches: true, lamports: 0, status: 'loaded' });
   assert.equal(view.title, 'Main vault not funded');
-  assert.ok(HOME.includes('{homeBalanceView.title}'), 'Home doit afficher cet etat');
+  assert.ok(
+    HOME.includes('<Text style={styles.balanceNote}>Main vault not funded</Text>'),
+    'Home doit afficher cet etat',
+  );
 });
 
 check('6. erreur RPC : dernier solde du meme vault conserve, marque stale', () => {
@@ -93,7 +99,8 @@ check('6. erreur RPC : dernier solde du meme vault conserve, marque stale', () =
   assert.equal(stale.sol, '1.000000000');
   assert.equal(stale.stale, true);
   assert.ok(HOME.includes('setHomeBalanceError(true)'));
-  assert.ok(HOME.includes('Balance unavailable: the last readable value is kept'));
+  assert.ok(HOME.includes('Retry balance'), 'le bouton doit proposer une relecture');
+  assert.ok(HOME.includes('Balance unavailable'), 'letat doit etre explicite');
 });
 
 check('7. compteurs d actions calcules depuis les propositions deja lues', () => {
@@ -123,8 +130,8 @@ check("8. CTA Home ouvre ProposalDetailsScreen canonique", () => {
 
 check('9. Approve disponible sans Refresh si le guard autorise', () => {
   const details = readFileSync('src/screens/ProposalDetailsScreen.tsx', 'utf8');
-  assert.ok(details.includes('if (decodedModel === null) void runDecode();'));
-  assert.ok(details.includes('const effectiveGuardContext = guardContext ?? selfGuardContext'));
+  assert.ok(details.includes('useEffect(() => {\n    void runDecode();'));
+  assert.ok(details.includes('const effectiveGuardContext = selfGuardContext ?? guardContext'));
   assert.ok(details.includes('Checking approval permissions…'));
   const review = readFileSync('src/screens/TransactionReviewScreen.tsx', 'utf8');
   assert.ok(

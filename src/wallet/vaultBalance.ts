@@ -78,7 +78,8 @@ export function describeVaultBalance(input: {
   return {
     hint: stale
       ? 'Shown from the last successful read: refresh to confirm on-chain.'
-      : 'This address holds the funds controlled by the multisig.',
+      : // Aucune explication ici : chaque écran affiche la sienne, une seule fois.
+        '',
     lamports: input.lamports,
     notFunded: false,
     sol: formatSol(input.lamports),

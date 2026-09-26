@@ -33,7 +33,13 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
-import { computeMaxTransfer, type MaxTransferPlan } from '../vault/maxTransfer';
+import {
+  computeMaxTransfer,
+  isMaxSnapshotCurrent,
+  maxSnapshotFrom,
+  type MaxSnapshot,
+  type MaxTransferPlan,
+} from '../vault/maxTransfer';
 
 /**
  * Creation d'une proposition de transfert SOL, de bout en bout.
@@ -85,6 +91,11 @@ export function NewProposalScreen({
   /** Buffer EXPLICITE choisi par l'utilisateur : jamais une réserve cachée. */
   const [bufferText, setBufferText] = useState('');
   const [maxPlan, setMaxPlan] = useState<MaxTransferPlan | null>(null);
+  /**
+   * Instantané du calcul Max : le résumé et son avertissement ne s'affichent que
+   * si montant, destination, buffer ET solde de référence correspondent encore.
+   */
+  const [maxSnapshot, setMaxSnapshot] = useState<MaxSnapshot | null>(null);
   const [memo, setMemo] = useState('');
 
   const [pipeline, setPipeline] = useState<PipelineState>({ status: 'idle' });
@@ -146,6 +157,19 @@ export function NewProposalScreen({
     return () => subscription.remove();
   }, [onBack]);
 
+  // Le résumé Max n'est visible que si la saisie correspond encore exactement à
+  // l'instantané du calcul : montant, destination, buffer et solde de référence.
+  const maxBufferLamports = /^\d+$/.test(bufferText.trim()) ? Number(bufferText.trim()) : 0;
+  const maxSummaryVisible =
+    maxPlan !== null &&
+    maxPlan.ready &&
+    isMaxSnapshotCurrent(maxSnapshot, {
+      amountLamports: Number.isFinite(lamports) && lamports > 0 ? lamports : null,
+      bufferLamports: maxBufferLamports,
+      destination,
+      vaultLamports: maxSnapshot?.vaultLamports ?? null,
+    });
+
   const canRunPipeline =
     creator.length > 0 && build.errors.length === 0 && pipeline.status !== 'working';
 
@@ -173,14 +197,18 @@ export function NewProposalScreen({
       vaultLamports: freshLamports,
     });
     setMaxPlan(plan);
-    if (plan.amountLamports !== null) {
+    if (plan.amountLamports !== null && freshLamports !== null) {
       // Montant figé maintenant : il ne suivra jamais un solde futur.
       setLamportsText(String(plan.amountLamports));
+      // Instantané : le résumé disparaîtra dès que la saisie changera.
+      setMaxSnapshot(maxSnapshotFrom(plan, destination, freshLamports));
       setPipeline({ status: 'idle' });
       setPreflight(null);
       setSimulation(null);
+    } else {
+      setMaxSnapshot(null);
     }
-  }, [bufferText, vaultAddress]);
+  }, [bufferText, destination, vaultAddress]);
 
   /** Portes locales + une lecture de solde, puis simulation (aucun envoi). */
   const runPipeline = async (): Promise<ProposalCreationSimulationResult | null> => {
@@ -437,7 +465,7 @@ export function NewProposalScreen({
             <Text style={styles.secondaryText}>Max</Text>
           </Pressable>
 
-          {maxPlan !== null ? (
+          {maxSummaryVisible && maxPlan !== null ? (
             <View style={maxPlan.ready ? styles.noticeBox : styles.errorBox}>
               <Text style={maxPlan.ready ? styles.noticeText : styles.errorText}>
                 {maxPlan.label}
@@ -465,8 +493,16 @@ export function NewProposalScreen({
                   <Text selectable style={styles.monoValue}>
                     {formatSol(maxPlan.remainingLamports ?? 0)} SOL
                   </Text>
+                  <Text style={styles.fieldNote}>
+                    This summary matches the current amount, destination and buffer.
+                  </Text>
                 </>
               ) : null}
+            </View>
+          ) : maxPlan !== null && !maxPlan.ready ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{maxPlan.label}</Text>
+              <Text style={styles.fieldNote}>{maxPlan.hint}</Text>
             </View>
           ) : null}
 

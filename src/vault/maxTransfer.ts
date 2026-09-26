@@ -123,6 +123,52 @@ export function computeMaxTransfer(input: {
   };
 }
 
+export type MaxSnapshot = {
+  amountLamports: number;
+  bufferLamports: number;
+  destination: string;
+  /** Solde qui a servi au calcul : si le solde change, le résumé n'est plus vrai. */
+  vaultLamports: number;
+};
+
+export function maxSnapshotFrom(
+  plan: MaxTransferPlan,
+  destination: string,
+  vaultLamports: number,
+): MaxSnapshot | null {
+  if (plan.amountLamports === null) return null;
+  return {
+    amountLamports: plan.amountLamports,
+    bufferLamports: plan.bufferLamports,
+    destination,
+    vaultLamports,
+  };
+}
+
+/**
+ * Le résumé Max n'est affiché que si le montant, la destination, le buffer ET le
+ * solde de référence correspondent encore EXACTEMENT au calcul. Toute
+ * modification manuelle fait disparaître le résumé et son avertissement.
+ */
+export function isMaxSnapshotCurrent(
+  snapshot: MaxSnapshot | null,
+  current: {
+    amountLamports: number | null;
+    bufferLamports: number;
+    destination: string;
+    vaultLamports: number | null;
+  },
+): boolean {
+  if (snapshot === null) return false;
+  if (current.amountLamports !== snapshot.amountLamports) return false;
+  if (current.bufferLamports !== snapshot.bufferLamports) return false;
+  if (current.destination.trim().toLowerCase() !== snapshot.destination.trim().toLowerCase()) {
+    return false;
+  }
+  if (current.vaultLamports !== snapshot.vaultLamports) return false;
+  return true;
+}
+
 /**
  * Un montant saisi (ou calculé par Max) reste-t-il valable après une nouvelle
  * lecture du solde ? Sinon la simulation doit être invalidée, jamais ajustée
