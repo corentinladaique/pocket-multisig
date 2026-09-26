@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   BackHandler,
   Keyboard,
@@ -645,6 +646,27 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             : true;
 
   // Preview de transaction : ecran lecture seule, sans construction Squads.
+  /** Meme condition que le CTA de Preview : partagee avec Step 5 (Review). */
+  const canCreate =
+    walletAddress !== null &&
+    plan.readyForInstructionBuild &&
+    (createResult === null || attemptOutcome?.allowNewAttempt === true) &&
+    !creating;
+
+  /** Raison utilisateur affichee a cote du CTA (jamais « not available yet »). */
+  const createBlockedReason =
+    walletAddress === null
+      ? { action: 'Connect your wallet', message: 'Connect the wallet that will create this multisig.' }
+      : !request.readyForCreation
+        ? { action: 'Add members and set the threshold', message: 'Complete the member configuration.' }
+        : request.vaultName.trim().length === 0
+          ? { action: 'Back to vault setup', message: 'Enter a vault name to continue.' }
+          : plan.validationErrors.length > 0
+            ? { action: 'Fix the members and the threshold', message: 'Preflight failed.' }
+            : {
+                action: 'Run the checks again',
+                message: creating ? 'Preparing creation…' : 'Ready to create on Devnet.',
+              };
   /**
      * Verdict de preparation : la MEME condition que le bouton, avec une raison
      * utilisateur. Aucune validation n'est assouplie.
@@ -700,12 +722,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
           userMessage: 'Ready to create on Devnet.',
         };
       })()}
-      canCreate={
-          walletAddress !== null &&
-          plan.readyForInstructionBuild &&
-          (createResult === null || attemptOutcome?.allowNewAttempt === true) &&
-          !creating
-        }
+      canCreate={canCreate}
         checkReport={checkReport}
         checking={checking}
         createError={createError}
@@ -1071,26 +1088,48 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
               </View>
             ) : null}
 
+            {/* Action secondaire : la vue technique reste FACULTATIVE et n'est plus
+              une etape obligatoire du parcours. */}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Preview creation"
+              accessibilityLabel="Technical transaction details"
               onPress={() => setPreviewOpen(true)}
               style={[styles.button, styles.secondary]}
             >
-              <Text style={styles.secondaryText}>Preview</Text>
+              <Text style={styles.secondaryText}>Technical transaction details</Text>
             </Pressable>
 
+            {/* Raison utilisateur lorsque la creation n'est pas possible. */}
+            <View style={styles.noticeBox}>
+              <Text style={styles.warningText}>
+                {canCreate ? 'Ready to create on Devnet.' : 'Not ready to create'}
+              </Text>
+              {!canCreate ? (
+                <Text style={styles.warningText}>{createBlockedReason.message}</Text>
+              ) : null}
+              {!canCreate ? (
+                <Text style={styles.warningText}>{createBlockedReason.action}</Text>
+              ) : null}
+            </View>
+
+            {/* CTA PRINCIPAL : meme handler et meme condition que le bouton de
+                Transaction Preview. Aucune action sans tap explicite. */}
             <Pressable
               accessibilityRole="button"
-              accessibilityState={{ disabled: true }}
-              disabled
-              style={[styles.button, styles.disabled]}
+              accessibilityState={{ busy: creating, disabled: !canCreate || creating }}
+              disabled={!canCreate || creating}
+              onPress={onCreateOnDevnet}
+              style={[styles.button, (!canCreate || creating) && styles.disabled]}
             >
-              <Text style={styles.buttonText}>Create on Devnet — not available yet</Text>
+              {creating ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.buttonText}>Prepare and create on Devnet</Text>
+              )}
             </Pressable>
 
             <Text style={styles.hint}>
-              Nothing is sent on-chain in this phase: no RPC call, no signature.
+              Nothing is sent on-chain before the final confirmation.
             </Text>
           </View>
         ) : null}
