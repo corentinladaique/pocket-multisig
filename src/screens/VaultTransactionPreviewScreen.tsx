@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  Keyboard,
   KeyboardAvoidingView,
   Pressable,
   ScrollView,
@@ -101,8 +102,17 @@ export function VaultTransactionPreviewScreen({
     onBack();
   }, [onBack]);
 
+  /**
+   * Le clavier peut rester ouvert apres le wizard : avec behavior="padding" il
+   * reduisait la zone scrollable et rendait le CTA inatteignable. Cet ecran
+   * n'ayant AUCUN champ de saisie, on ferme le clavier et on ne le gere plus.
+   */
+  useEffect(() => {
+    Keyboard.dismiss();
+  }, []);
+
   return (
-    <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
+    <KeyboardAvoidingView behavior={undefined} style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
@@ -338,7 +348,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     flexGrow: 1,
     padding: 24,
-    paddingBottom: 96,
+    // Marge basse large : le dernier element (CTA « Create on Devnet », erreurs
+    // longues) reste toujours atteignable, y compris sur petite hauteur.
+    paddingBottom: 160,
   },
   badge: {
     backgroundColor: '#e8f0fe',

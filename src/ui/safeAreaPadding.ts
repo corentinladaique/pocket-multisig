@@ -1,6 +1,6 @@
 import { Platform, StatusBar } from 'react-native';
 
-import { topInset } from './safeArea';
+import { SAFE_TOP_SPACING, topInset } from './safeArea';
 
 /**
  * SEUL endroit du projet qui lit la plateforme pour l'espace supérieur : aucun
@@ -13,5 +13,7 @@ import { topInset } from './safeArea';
  * lors de la refonte UI, quand une dépendance native pourra être ajoutée.
  */
 export const SAFE_TOP_PADDING = {
-  paddingTop: topInset(Platform.OS, StatusBar.currentHeight),
+  // Inset reel + espace visuel : le bandeau reseau reste entierement lisible
+  // sous la camera frontale du Seeker, et ne la touche pas.
+  paddingTop: topInset(Platform.OS, StatusBar.currentHeight) + SAFE_TOP_SPACING,
 };

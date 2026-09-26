@@ -1069,7 +1069,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     flexGrow: 1,
     padding: 24,
-    paddingBottom: 96,
+    // Meme marge basse que la preview : le dernier bloc du wizard reste
+    // atteignable au scroll.
+    paddingBottom: 160,
   },
   // En-tete du wizard : Cancel reste accessible sans scroller.
   headerRow: {
