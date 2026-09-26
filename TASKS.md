@@ -466,3 +466,75 @@ Afficher en langage utilisateur :
 - `Execute` → Execute approved proposals.
 
 Conserver les noms Squads techniques dans Technical details.
+
+### Main navigation menu
+
+Prévoir un bouton menu visible dans le futur header partagé :
+
+`☰`
+
+Objectif :
+
+- alléger Home ;
+- retirer les actions pédagogiques et secondaires du flux principal
+  du vault ;
+- conserver un accès permanent à l'aide, même sans wallet ou multisig
+  chargé.
+
+Contenu envisagé :
+
+- Learn about multisig ;
+- Help & Security ;
+- Settings ;
+- About Pocket Multisig.
+
+Action secondaire :
+
+- Reset onboarding.
+
+Règles UX :
+
+1. `Learn about multisig` ne doit plus apparaître comme un CTA principal
+   au milieu du tableau de bord Home.
+2. `Reset onboarding` doit être placé dans `Help & Security` ou `Settings`,
+   et non parmi les actions du vault.
+3. Le bouton menu doit rester accessible :
+   - avant connexion wallet ;
+   - après connexion ;
+   - avant Load multisig ;
+   - après chargement d'un multisig.
+4. L'ouverture du menu ne doit provoquer :
+   - aucun RPC ;
+   - aucun wallet prompt ;
+   - aucune signature ;
+   - aucune transaction.
+5. Le menu ne doit jamais masquer définitivement l'action Back d'un écran
+   enfant.
+6. Le menu doit respecter :
+   - Safe Area ;
+   - accessibilité ;
+   - fermeture par swipe ou tap extérieur ;
+   - bouton `Close` explicite ;
+   - retour Android cohérent.
+7. Ne pas implémenter immédiatement un drawer natif ni installer un package
+   de navigation.
+8. Étudier pendant la refonte UI si le meilleur modèle est :
+   - menu latéral ;
+   - panneau modal ;
+   - page `More / Settings`.
+9. Conserver Home centré sur :
+   - Main vault ;
+   - Actions required ;
+   - Quick actions.
+
+### Clipboard API — dette technique
+
+- L'incrément Paste utilise le module Clipboard **interne** du cœur de
+  React Native 0.86 (`Libraries/Components/Clipboard/Clipboard`) : il est
+  **déprécié** et isolé dans un seul fichier (`src/ui/AddressInput.tsx`).
+- Solution provisoire : aucun écran n'importe Clipboard directement.
+- Migration future nécessaire vers une API Clipboard **publique**
+  (`@react-native-clipboard/clipboard`).
+- Cette migration exigera une **installation de package** et un
+  **rebuild natif** : elle doit faire l'objet d'une autorisation explicite.
+- Aucun package ne doit être installé dans la mission en cours.
