@@ -35,6 +35,7 @@ import { CreateVaultScreen } from './CreateVaultScreen';
 import { MultisigDetailsScreen } from './MultisigDetailsScreen';
 import { MultisigInboxScreen } from './MultisigInboxScreen';
 import { OnboardingScreen } from './OnboardingScreen';
+import { AddressInput } from '../ui/AddressInput';
 import { useOnboarding } from '../onboarding/useOnboarding';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance';
@@ -758,17 +759,16 @@ export function ConnectScreen() {
       {account ? (
         <View onLayout={onMultisigBlockLayout} style={styles.msigBlock}>
           <Text style={styles.msigHeading}>Multisig (lecture seule)</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            editable={msig.status !== 'loading'}
+          {/* Load multisig : le collage remplit le champ UNIQUEMENT. Aucun
+              chargement automatique, aucun RPC, aucun wallet. */}
+          <AddressInput
+            disabled={msig.status === 'loading'}
+            inputRef={multisigInputRef}
+            label="Multisig address"
             onBlur={onMultisigInputBlur}
             onChangeText={setMultisigInput}
             onFocus={onMultisigInputFocus}
             placeholder="Multisig address"
-            placeholderTextColor="#9ca3af"
-            ref={multisigInputRef}
-            style={styles.input}
             value={multisigInput}
           />
           <Pressable

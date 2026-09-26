@@ -33,6 +33,7 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
+import { AddressInput } from '../ui/AddressInput';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
   computeMaxTransfer,
@@ -414,14 +415,13 @@ export function NewProposalScreen({
         </Text>
 
         <View style={styles.block}>
-          <Text style={styles.fieldLabel}>Destination</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
+          {/* Destination : le collage passe par le MEME setter qu'une saisie
+              manuelle, donc le build et la simulation sont invalidés pareil. */}
+          <AddressInput
+            label="Destination"
             onChangeText={setDestination}
             placeholder="Public address"
-            placeholderTextColor="#9ca3af"
-            style={styles.input}
+            testID="proposal-destination"
             value={destination}
           />
 

@@ -29,6 +29,7 @@ import {
 } from '../vault/signAndSendMultisigCreation';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
+import { AddressInput } from '../ui/AddressInput';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
   buildOperationReport,
@@ -765,17 +766,16 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
               </Text>
             )}
 
-            <Text style={styles.fieldLabel}>Public address</Text>
-            <TextInput
-              autoCapitalize="none"
-              autoCorrect={false}
-              onChangeText={setPendingAddress}
+            {/* Adresse du membre en cours d'ajout : le collage remplit le champ
+                UNIQUEMENT. Aucun membre ajoute, aucun role selectionne. */}
+            <AddressInput
+              inputRef={registerField('pendingAddress')}
+              label="Public address"
               onBlur={onFieldBlur}
+              onChangeText={setPendingAddress}
               onFocus={onFieldFocus('pendingAddress')}
               placeholder="Solana public address"
-              placeholderTextColor="#9ca3af"
-              ref={registerField('pendingAddress')}
-              style={styles.input}
+              testID="member-pending-address"
               value={pendingAddress}
             />
 
