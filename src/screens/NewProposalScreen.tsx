@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -33,6 +33,7 @@ import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
+import { computeMaxTransfer, type MaxTransferPlan } from '../vault/maxTransfer';
 
 /**
  * Creation d'une proposition de transfert SOL, de bout en bout.
@@ -81,6 +82,9 @@ export function NewProposalScreen({
 
   const [destination, setDestination] = useState('');
   const [lamportsText, setLamportsText] = useState('');
+  /** Buffer EXPLICITE choisi par l'utilisateur : jamais une réserve cachée. */
+  const [bufferText, setBufferText] = useState('');
+  const [maxPlan, setMaxPlan] = useState<MaxTransferPlan | null>(null);
   const [memo, setMemo] = useState('');
 
   const [pipeline, setPipeline] = useState<PipelineState>({ status: 'idle' });
@@ -126,12 +130,13 @@ export function NewProposalScreen({
   );
 
   // Toute modification de la saisie invalide le pipeline déjà calculé : on ne
-  // signe jamais sur la base d'une simulation qui ne correspond plus.
+  // signe jamais sur la base d'une simulation qui ne correspond plus. Le buffer
+  // du Max en fait partie : changer le buffer change le montant.
   useEffect(() => {
     setPipeline({ status: 'idle' });
     setPreflight(null);
     setSimulation(null);
-  }, [build]);
+  }, [build, bufferText]);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -143,6 +148,39 @@ export function NewProposalScreen({
 
   const canRunPipeline =
     creator.length > 0 && build.errors.length === 0 && pipeline.status !== 'working';
+
+  /**
+   * Max : relit le solde CONFIRMÉ du Main vault, puis fige un montant exact en
+   * lamports. Aucune réserve cachée : seul le buffer explicite est retiré, et
+   * aucun frais n'est déduit du vault (le membre signataire paie les frais).
+   * Aucun wallet, aucune signature, aucun envoi.
+   */
+  const onMax = useCallback(async () => {
+    setMaxPlan(null);
+    let freshLamports: number | null = null;
+    try {
+      freshLamports = await connection.getBalance(new PublicKey(vaultAddress), 'confirmed');
+    } catch {
+      freshLamports = null;
+    }
+    const bufferLamports = /^\d+$/.test(bufferText.trim()) ? Number(bufferText.trim()) : 0;
+    const plan = computeMaxTransfer({
+      explicitBufferLamports: bufferLamports,
+      // Faits du chemin de code : ce formulaire ne construit qu'un transfert SOL
+      // dont la source est le Main vault (buildProposalCreation).
+      recognizedSolTransfer: true,
+      sourceMatchesMainVault: true,
+      vaultLamports: freshLamports,
+    });
+    setMaxPlan(plan);
+    if (plan.amountLamports !== null) {
+      // Montant figé maintenant : il ne suivra jamais un solde futur.
+      setLamportsText(String(plan.amountLamports));
+      setPipeline({ status: 'idle' });
+      setPreflight(null);
+      setSimulation(null);
+    }
+  }, [bufferText, vaultAddress]);
 
   /** Portes locales + une lecture de solde, puis simulation (aucun envoi). */
   const runPipeline = async (): Promise<ProposalCreationSimulationResult | null> => {
@@ -374,6 +412,63 @@ export function NewProposalScreen({
               ? `= ${formatSol(lamports)}`
               : 'Integer number of lamports, greater than 0.'}
           </Text>
+
+          {/* Max : relit le solde confirme puis fige un montant exact. Le buffer
+              est EXPLICITE et facultatif : aucune reserve cachee n'est appliquee. */}
+          <Text style={styles.fieldLabel}>Optional explicit buffer (lamports)</Text>
+          <TextInput
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="number-pad"
+            onChangeText={setBufferText}
+            placeholder="0"
+            placeholderTextColor="#9ca3af"
+            style={styles.input}
+            value={bufferText}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Fill the maximum transferable amount"
+            onPress={() => {
+              void onMax();
+            }}
+            style={[styles.button, styles.secondary, styles.maxButton]}
+          >
+            <Text style={styles.secondaryText}>Max</Text>
+          </Pressable>
+
+          {maxPlan !== null ? (
+            <View style={maxPlan.ready ? styles.noticeBox : styles.errorBox}>
+              <Text style={maxPlan.ready ? styles.noticeText : styles.errorText}>
+                {maxPlan.label}
+              </Text>
+              <Text style={styles.fieldNote}>{maxPlan.hint}</Text>
+              {maxPlan.warnings.map((warning) => (
+                <Text key={warning} style={styles.fieldNote}>
+                  · {warning}
+                </Text>
+              ))}
+              {maxPlan.ready ? (
+                <>
+                  <Text style={styles.fieldNote}>Current vault balance</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {formatSol((maxPlan.amountLamports ?? 0) + maxPlan.bufferLamports)} SOL
+                  </Text>
+                  <Text style={styles.fieldNote}>Proposed transfer</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {formatSol(maxPlan.amountLamports ?? 0)} SOL
+                  </Text>
+                  <Text style={styles.fieldNote}>
+                    Explicit buffer: {maxPlan.bufferLamports} lamports
+                  </Text>
+                  <Text style={styles.fieldNote}>Estimated remaining balance</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {formatSol(maxPlan.remainingLamports ?? 0)} SOL
+                  </Text>
+                </>
+              ) : null}
+            </View>
+          ) : null}
 
           <Text style={styles.fieldLabel}>Memo (optional)</Text>
           <TextInput
@@ -658,6 +753,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: 16,
     padding: 12,
+  },
+  noticeText: { color: '#3730a3', fontSize: 14, fontWeight: '800' },
+  maxButton: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    paddingHorizontal: 24,
   },
   warningText: { color: '#3730a3', fontSize: 12, marginTop: 4 },
   monoValue: { color: '#101317', fontFamily: 'monospace', fontSize: 11, marginTop: 4 },

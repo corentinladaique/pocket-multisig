@@ -619,7 +619,7 @@ export function ProposalDetailsScreen({
               </Text>
               {model !== null && model.source.known ? (
                 <>
-                  <Text style={styles.fieldNote}>Transfer source</Text>
+                  <Text style={styles.fieldNote}>Funds will be sent from</Text>
                   <Text selectable style={styles.monoValue}>
                     {model.source.value}
                   </Text>

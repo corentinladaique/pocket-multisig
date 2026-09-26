@@ -174,20 +174,20 @@ export function describeTransferSource(input: {
   if (input.source === null) {
     return {
       hint: 'The transfer source could not be decoded from this proposal.',
-      label: 'Transfer source unknown',
+      label: 'Funds will be sent from: unknown',
       matches: false,
     };
   }
   if (input.source === input.vaultAddress) {
     return {
-      hint: 'Account from which this proposal will move funds.',
-      label: 'Source verified: Vault index 0',
+      hint: 'Funds will be sent from this account.',
+      label: 'Source verified: Main vault',
       matches: true,
     };
   }
   return {
-    hint: 'Source does not match Vault index 0. No explanation is inferred: the shown addresses are the only facts.',
-    label: 'Source does not match Vault index 0',
+    hint: 'Source does not match the Main vault. No explanation is inferred: the shown addresses are the only facts.',
+    label: 'Source does not match the Main vault',
     matches: false,
   };
 }

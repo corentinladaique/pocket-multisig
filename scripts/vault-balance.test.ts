@@ -113,13 +113,13 @@ check('5. echec RPC : solde indisponible ou stale, jamais un ecran en echec', ()
 check('6. source = vault : source verifiee', () => {
   const verdict = describeTransferSource({ source: 'VAULT', vaultAddress: 'VAULT' });
   assert.equal(verdict.matches, true);
-  assert.equal(verdict.label, 'Source verified: Vault index 0');
+  assert.equal(verdict.label, 'Source verified: Main vault');
 });
 
 check('7. source differente : divergence visible, rien d invente', () => {
   const verdict = describeTransferSource({ source: 'AUTRE', vaultAddress: 'VAULT' });
   assert.equal(verdict.matches, false);
-  assert.equal(verdict.label, 'Source does not match Vault index 0');
+  assert.equal(verdict.label, 'Source does not match the Main vault');
   assert.ok(/No explanation is inferred/.test(verdict.hint));
   // L'estimation est refusee : rien n'est suppose sur une source inconnue.
   const remaining = estimateRemainingBalance({

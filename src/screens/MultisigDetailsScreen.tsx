@@ -302,17 +302,16 @@ export function MultisigDetailsScreen({
               </Text>
             </Pressable>
 
-            <Text style={styles.fieldLabel}>Vault address index 0</Text>
+            <Text style={styles.fieldLabel}>Main vault</Text>
             <Text selectable style={styles.fieldValue}>{view.vaultAddress}</Text>
             <Text style={styles.fieldNote}>
-              Holds the funds controlled by the multisig.
+              This account holds the funds controlled by the multisig.
             </Text>
 
-            <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+            <Text style={styles.fieldLabel}>Multisig configuration</Text>
             <Text selectable style={styles.fieldValue}>{view.address}</Text>
             <Text style={styles.fieldNote}>
-              Stores members, permissions and threshold. Do not use it as the vault deposit
-              address.
+              Stores members, roles and threshold. Do not send funds to this address.
             </Text>
 
             <Text style={styles.fieldLabel}>Threshold</Text>

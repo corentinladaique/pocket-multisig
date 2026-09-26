@@ -484,11 +484,20 @@ export function TransactionReviewScreen({
             </Text>
           ) : null}
           {guard.status === 'blocked' && !showUserState
-            ? guard.reasons.map((reason) => (
-                <Text key={reason} style={styles.warnText}>
-                  • {reason}
-                </Text>
-              ))
+            ? // Un contexte absent n'est PAS un refus : c'est un chargement en
+              // cours. Le refus réel (rôle manquant, réseau, statut) s'affiche
+              // avec ses raisons d'origine.
+              guardContext === null
+              ? (
+                  <Text style={styles.warnText}>
+                    • Checking approval permissions…
+                  </Text>
+                )
+              : guard.reasons.map((reason) => (
+                  <Text key={reason} style={styles.warnText}>
+                    • {reason}
+                  </Text>
+                ))
             : null}
           {model.notes.map((note) => (
             <Text key={note} style={styles.warnText}>
