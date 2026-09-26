@@ -729,7 +729,7 @@ export function ConnectScreen() {
       </View>
 
       {phase === 'connecting' ? (
-        <Text style={styles.hint}>Ouverture du wallet…</Text>
+        <Text style={styles.hint}>Opening the wallet…</Text>
       ) : null}
 
       <View style={styles.rpcBox}>
@@ -758,7 +758,7 @@ export function ConnectScreen() {
 
       {account ? (
         <View onLayout={onMultisigBlockLayout} style={styles.msigBlock}>
-          <Text style={styles.msigHeading}>Multisig (lecture seule)</Text>
+          <Text style={styles.msigHeading}>Multisig (read only)</Text>
           {/* Load multisig : le collage remplit le champ UNIQUEMENT. Aucun
               chargement automatique, aucun RPC, aucun wallet. */}
           <AddressInput
@@ -925,7 +925,7 @@ export function ConnectScreen() {
               ) : null}
 
               {proposals.status === 'loading' ? (
-                <Text style={styles.hint}>Lecture…</Text>
+                <Text style={styles.hint}>Reading…</Text>
               ) : null}
 
               {/* Relecture en lecture seule : le dernier état lisible est conservé

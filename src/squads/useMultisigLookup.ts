@@ -42,7 +42,7 @@ export function useMultisigLookup(): MultisigLookup {
       setError(
         caught instanceof MultisigLookupError
           ? caught.message
-          : 'Adresse invalide : ce n’est pas une adresse base58 valide.',
+          : 'Enter a valid Solana multisig address.',
       );
       setStatus('error');
       return;

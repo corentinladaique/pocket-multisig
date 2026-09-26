@@ -98,6 +98,12 @@ export function NewProposalScreen({
    * si montant, destination, buffer ET solde de référence correspondent encore.
    */
   const [maxSnapshot, setMaxSnapshot] = useState<MaxSnapshot | null>(null);
+  /**
+   * Une tentative EXPLICITE (Prepare / Preview / Create) a-t-elle eu lieu ?
+   * Tant que non, aucune erreur de montant n'est affichee : coller une adresse
+   * ne doit jamais ressembler a une erreur de saisie.
+   */
+  const [amountAttempted, setAmountAttempted] = useState(false);
   const [memo, setMemo] = useState('');
 
   const [pipeline, setPipeline] = useState<PipelineState>({ status: 'idle' });
@@ -214,6 +220,8 @@ export function NewProposalScreen({
 
   /** Portes locales + une lecture de solde, puis simulation (aucun envoi). */
   const runPipeline = async (): Promise<ProposalCreationSimulationResult | null> => {
+    // Action explicite : a partir d'ici, les erreurs de montant sont legitimes.
+    setAmountAttempted(true);
     if (!canRunPipeline) return null;
     setPipeline({ status: 'working' });
     setPreflight(null);
@@ -330,6 +338,7 @@ export function NewProposalScreen({
 
   /** Double confirmation explicite avant toute demande au wallet. */
   const onCreate = () => {
+    setAmountAttempted(true);
     if (simulation === null || creating || sendAttemptedRef.current) return;
     // Nouvelle tentative après un échec SANS signature : état propre, saisie
     // (destination, montant, memo) intacte. Une tentative signée ne peut pas
@@ -520,15 +529,22 @@ export function NewProposalScreen({
           />
         </View>
 
-        {build.errors.length > 0 ? (
+        {/* Etats utilisateur : un montant vide n'est PAS une erreur avant toute
+            tentative explicite. Les details en lamports restent techniques. */}
+        {build.errors.length > 0 && amountAttempted ? (
           <View style={styles.errorBox}>
-            <Text style={styles.errorTitle}>Not ready</Text>
+            <Text style={styles.errorTitle}>
+              {lamports <= 0 ? 'Enter an amount to continue.' : 'Not ready'}
+            </Text>
             {build.errors.map((error) => (
               <Text key={error} style={styles.errorText}>
                 · {error}
               </Text>
             ))}
           </View>
+        ) : null}
+        {build.errors.length > 0 && !amountAttempted ? (
+          <Text style={styles.fieldNote}>Enter an amount</Text>
         ) : null}
 
         <Pressable

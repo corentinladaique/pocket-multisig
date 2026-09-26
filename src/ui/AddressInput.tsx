@@ -78,33 +78,35 @@ export function AddressInput({
   return (
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        editable={!disabled}
-        onBlur={onBlur}
-        onChangeText={(next) => {
-          setError(null);
-          onChangeText(next);
-        }}
-        onFocus={onFocus}
-        placeholder={placeholder}
-        ref={inputRef}
-        style={[styles.input, error !== null && styles.inputError]}
-        testID={testID}
-        value={value}
-      />
-      <Pressable
-        accessibilityLabel={`Paste a Solana address into ${label}`}
-        accessibilityRole="button"
-        disabled={disabled}
-        onPress={() => {
-          void onPaste();
-        }}
-        style={[styles.paste, disabled && styles.pasteDisabled]}
-      >
-        <Text style={styles.pasteText}>Paste</Text>
-      </Pressable>
+      <View style={styles.row}>
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!disabled}
+          onBlur={onBlur}
+          onChangeText={(next) => {
+            setError(null);
+            onChangeText(next);
+          }}
+          onFocus={onFocus}
+          placeholder={placeholder}
+          ref={inputRef}
+          style={[styles.input, styles.rowInput, error !== null && styles.inputError]}
+          testID={testID}
+          value={value}
+        />
+        <Pressable
+          accessibilityLabel={`Paste a Solana address into ${label}`}
+          accessibilityRole="button"
+          disabled={disabled}
+          onPress={() => {
+            void onPaste();
+          }}
+          style={[styles.paste, disabled && styles.pasteDisabled]}
+        >
+          <Text style={styles.pasteText}>Paste</Text>
+        </Pressable>
+      </View>
       {error !== null ? <Text style={styles.error}>{error}</Text> : null}
       <Text style={styles.hint}>{ADDRESS_FIELD_HINT}</Text>
     </View>
@@ -141,5 +143,8 @@ const styles = StyleSheet.create({
   },
   pasteDisabled: { opacity: 0.5 },
   pasteText: { color: '#1a56db', fontSize: 14, fontWeight: '700' },
+  // Paste est dans la MEME rangee que le champ et reste visible clavier ouvert.
+  row: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 6, width: '100%' },
+  rowInput: { flex: 1, marginTop: 0 },
   wrapper: { marginTop: 12, width: '100%' },
 });
