@@ -16,7 +16,10 @@ import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
 import { modelFromInstructions } from '../solana/decodeTransactionMessage';
 import { connection } from '../solana/connection';
-import { buildProposalCreation } from '../squads/buildProposalCreation';
+import {
+  buildProposalCreation,
+  PROPOSAL_CREATION_EXPLAINERS,
+} from '../squads/buildProposalCreation';
 import {
   runProposalCreationPreflight,
   type ProposalCreationPreflightResult,
@@ -77,7 +80,9 @@ export function NewProposalScreen({
   address,
   members,
   onBack,
+  onCreatedVerified,
   onDone,
+  onOpenCreatedProposal,
   transactionIndex,
   vaultAddress,
 }: {
@@ -86,8 +91,16 @@ export function NewProposalScreen({
   /** Membres et rôles, lus par l'écran appelant (aucune lecture ici). */
   members: readonly { address: string; roles: readonly string[] }[];
   onBack: () => void;
+  /**
+   * Appelé UNE fois après une création VÉRIFIÉE (signature + confirmation +
+   * read-back) : le parent relit le multisig et la liste. Renvoie `true` si
+   * l'actualisation a réussi. Lecture seule, aucun wallet.
+   */
+  onCreatedVerified?: () => Promise<boolean>;
   /** Appelé après une création vérifiée, pour revenir à la liste. */
   onDone: () => void;
+  /** Ouvre la proposition créée (index on-chain relu par le parent). */
+  onOpenCreatedProposal?: (index: number) => void;
   transactionIndex: number;
   vaultAddress: string;
 }) {
@@ -121,6 +134,12 @@ export function NewProposalScreen({
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResult, setCreateResult] = useState<ProposalCreationSignSendResult | null>(null);
   const sendAttemptedRef = useRef(false);
+  /** Suivi de l'actualisation post-création (une seule, on-chain). */
+  const [postCreate, setPostCreate] = useState<'idle' | 'refreshing' | 'done' | 'failed'>('idle');
+  /** Section technique repliable, FERMÉE par défaut. */
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  /** Section explicative repliable, FERMÉE par défaut. */
+  const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
   const attemptOutcome =
     createResult === null
@@ -156,6 +175,16 @@ export function NewProposalScreen({
         transactionIndex,
       }),
     [address, creator, destination, lamports, memo, transactionIndex],
+  );
+
+  // Explications « comment ça marche » : information pure (aucune validation),
+  // regroupée dans une section repliable. Les AUTRES avertissements restent
+  // visibles en clair à proximité du formulaire.
+  const explainers = build.warnings.filter((warning) =>
+    (PROPOSAL_CREATION_EXPLAINERS as readonly string[]).includes(warning),
+  );
+  const otherWarnings = build.warnings.filter(
+    (warning) => !(PROPOSAL_CREATION_EXPLAINERS as readonly string[]).includes(warning),
   );
 
   // Toute modification de la saisie invalide le pipeline déjà calculé : on ne
@@ -343,6 +372,13 @@ export function NewProposalScreen({
           }`,
         );
       }
+      if (result.verified) {
+        // Création VÉRIFIÉE : UNE SEULE actualisation explicite du multisig et
+        // de la liste. La chaîne reste la source de vérité, aucun wallet.
+        setPostCreate('refreshing');
+        const refreshed = onCreatedVerified === undefined ? true : await onCreatedVerified();
+        setPostCreate(refreshed ? 'done' : 'failed');
+      }
     } catch (caught: unknown) {
       setCreateError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -367,8 +403,8 @@ export function NewProposalScreen({
       'Create this proposal?',
       [
         `Transfer ${formatSol(build.request?.lamports ?? 0)} to ${destination}`,
-        `Next index: ${build.transactionIndexNext} · ${members.length} member(s)`,
-        `Estimated cost to you: ${
+        `${members.length} member(s)`,
+        `Estimated creation cost: ${
           simulation.estimatedCreatorBalanceDelta === null
             ? 'not measurable'
             : formatSolAmount(Math.abs(simulation.estimatedCreatorBalanceDelta))
@@ -457,7 +493,7 @@ export function NewProposalScreen({
             autoCorrect={false}
             keyboardType="decimal-pad"
             onChangeText={setSolText}
-            placeholder="0.02"
+            placeholder="e.g. 0.02"
             placeholderTextColor="#9ca3af"
             style={styles.input}
             value={solText}
@@ -472,17 +508,20 @@ export function NewProposalScreen({
 
           {/* Max : relit le solde confirme puis fige un montant exact. Le buffer
               est EXPLICITE et facultatif : aucune reserve cachee n'est appliquee. */}
-          <Text style={styles.fieldLabel}>Optional explicit buffer (SOL)</Text>
+          <Text style={styles.fieldLabel}>Optional safety buffer (SOL)</Text>
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="decimal-pad"
             onChangeText={setBufferText}
-            placeholder="0"
+            placeholder="e.g. 0.001"
             placeholderTextColor="#9ca3af"
             style={styles.input}
             value={bufferText}
           />
+          <Text style={styles.fieldNote}>
+            Amount kept in the Main vault when using Max.
+          </Text>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Fill the maximum transferable amount"
@@ -516,7 +555,7 @@ export function NewProposalScreen({
                     {formatSol(maxPlan.amountLamports ?? 0)} SOL
                   </Text>
                   <Text style={styles.fieldNote}>
-                    Explicit buffer: {formatSolAmount(maxPlan.bufferLamports)}
+                    Safety buffer: {formatSolAmount(maxPlan.bufferLamports)}
                   </Text>
                   <Text style={styles.fieldNote}>Estimated remaining balance</Text>
                   <Text selectable style={styles.monoValue}>
@@ -565,8 +604,14 @@ export function NewProposalScreen({
               ))}
           </View>
         ) : null}
-        {build.errors.length > 0 && !amountAttempted ? (
-          <Text style={styles.fieldNote}>Enter an amount</Text>
+        {/* Une seule indication de montant manquant, près du champ. Les autres
+            raisons de blocage restent visibles si elles existent. */}
+        {build.errors.length > 0 &&
+        !amountAttempted &&
+        build.errors.some((error) => !/lamports/i.test(error)) ? (
+          <Text style={styles.fieldNote}>
+            {build.errors.filter((error) => !/lamports/i.test(error))[0]}
+          </Text>
         ) : null}
 
         <Pressable
@@ -581,12 +626,11 @@ export function NewProposalScreen({
           {pipeline.status === 'working' ? (
             <ActivityIndicator color="#ffffff" />
           ) : (
-            <Text style={styles.buttonText}>Check locally and simulate</Text>
+            <Text style={styles.buttonText}>Review proposal</Text>
           )}
         </Pressable>
         <Text style={styles.fieldNote}>
-          Reads the vault balance, runs the local preflight, then simulates. No signature, no
-          send.
+          Checks the vault balance and simulates the transaction. Nothing is signed or sent.
         </Text>
 
         {pipeline.status === 'error' ? (
@@ -605,31 +649,105 @@ export function NewProposalScreen({
               Proposal amount: {formatSolAmount(build.request?.lamports ?? 0)}
             </Text>
             <Text style={styles.fieldValue}>
-              Estimated cost to you:{' '}
+              Estimated creation cost:{' '}
               {simulation.estimatedCreatorBalanceDelta === null
                 ? 'not measurable'
                 : formatSolAmount(Math.abs(simulation.estimatedCreatorBalanceDelta))}
             </Text>
-            <Text style={styles.fieldLabel}>Technical details</Text>
-            <Text style={styles.monoValue}>Next index: {build.transactionIndexNext}</Text>
-            <Text selectable style={styles.monoValue}>Transaction PDA: {build.transactionPda}</Text>
-            <Text selectable style={styles.monoValue}>Proposal PDA: {build.proposalPda}</Text>
-            <Text style={styles.monoValue}>
-              Estimated cost (lamports): {simulation.estimatedCreatorBalanceDelta ?? 'not measurable'}
+            <Text style={styles.fieldNote}>
+              The transfer will occur only after the proposal is approved and executed.
             </Text>
-            <Text style={styles.monoValue}>
-              Compute units: {simulation.unitsConsumed ?? 'unknown'}
-            </Text>
+
+            {/* Section technique FACULTATIVE, fermée par défaut : aucun CTA, et
+                elle ne modifie ni le build, ni la simulation, ni la transaction. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Toggle advanced diagnostics"
+              accessibilityState={{ expanded: advancedOpen }}
+              onPress={() => setAdvancedOpen((previous) => !previous)}
+              style={[styles.button, styles.secondary]}
+            >
+              <Text style={styles.secondaryText}>
+                {advancedOpen ? 'Hide advanced diagnostics' : 'Advanced diagnostics'}
+              </Text>
+            </Pressable>
+
+            {advancedOpen ? (
+              <View style={styles.block}>
+                <Text style={styles.fieldNote}>Transaction index</Text>
+                <Text style={styles.monoValue}>{build.transactionIndexNext}</Text>
+                <Text style={styles.fieldNote}>
+                  Internal sequence number used by the multisig.
+                </Text>
+
+                <Text style={styles.fieldNote}>Transaction PDA</Text>
+                <Text selectable style={styles.monoValue}>{build.transactionPda}</Text>
+                <Text style={styles.fieldNote}>Proposal PDA</Text>
+                <Text selectable style={styles.monoValue}>{build.proposalPda}</Text>
+                <Text style={styles.fieldNote}>
+                  Program-derived account addresses used internally by Squads.
+                </Text>
+
+                <Text style={styles.fieldNote}>Compute units</Text>
+                <Text style={styles.monoValue}>{simulation.unitsConsumed ?? 'unknown'}</Text>
+                <Text style={styles.fieldNote}>
+                  Compute units measure the processing resources used by the simulated
+                  transaction.
+                </Text>
+
+                {simulation.logs.length > 0 ? (
+                  <>
+                    <Text style={styles.fieldNote}>Simulation logs ({simulation.logs.length})</Text>
+                    {simulation.logs.slice(0, 12).map((log) => (
+                      <Text key={log} style={styles.monoValue}>
+                        {log}
+                      </Text>
+                    ))}
+                  </>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         ) : null}
 
-        <View style={styles.noticeBox}>
-          {build.warnings.map((warning) => (
-            <Text key={warning} style={styles.warningText}>
-              · {warning}
-            </Text>
-          ))}
-        </View>
+        {otherWarnings.length > 0 ? (
+          <View style={styles.noticeBox}>
+            {otherWarnings.map((warning) => (
+              <Text key={warning} style={styles.warningText}>
+                · {warning}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+
+        {/* Section explicative FACULTATIVE, fermée par défaut : information pure,
+            sans effet sur les validations ni sur la transaction. */}
+        {explainers.length > 0 ? (
+          <>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Toggle how proposal creation works"
+              accessibilityState={{ expanded: howItWorksOpen }}
+              onPress={() => setHowItWorksOpen((previous) => !previous)}
+              style={[styles.button, styles.secondary]}
+            >
+              <Text style={styles.secondaryText}>
+                {howItWorksOpen
+                  ? 'Hide how proposal creation works'
+                  : 'How proposal creation works'}
+              </Text>
+            </Pressable>
+            {howItWorksOpen ? (
+              <View style={styles.noticeBox}>
+                {explainers.map((warning) => (
+                  <Text key={warning} style={styles.warningText}>
+                    · {warning}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : null}
 
         {pipeline.status === 'ready' ? (
           <Pressable
@@ -724,13 +842,50 @@ export function NewProposalScreen({
                 </Text>
               </>
             ) : null}
+            {attemptOutcome !== null && attemptOutcome.tone === 'success' ? (
+              <>
+                <Text style={styles.fieldNote}>
+                  {postCreate === 'refreshing'
+                    ? 'Refreshing proposals…'
+                    : postCreate === 'failed'
+                      ? 'Proposal created, but the proposal list could not be refreshed.'
+                      : 'The proposal list was refreshed from the chain.'}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open the created proposal"
+                  disabled={
+                    createResult.readBack === null ||
+                    createResult.readBack.transactionIndex === null
+                  }
+                  onPress={() => {
+                    const createdIndex = createResult.readBack?.transactionIndex ?? null;
+                    if (createdIndex !== null) {
+                      onOpenCreatedProposal?.(createdIndex);
+                    }
+                  }}
+                  style={[
+                    styles.button,
+                    styles.secondary,
+                    (createResult.readBack === null ||
+                      createResult.readBack.transactionIndex === null) &&
+                      styles.disabled,
+                  ]}
+                >
+                  <Text style={styles.secondaryText}>Open proposal</Text>
+                </Pressable>
+              </>
+            ) : null}
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Back to proposals list"
+              accessibilityLabel="Go to proposals list"
+              disabled={postCreate === 'refreshing'}
               onPress={onDone}
-              style={[styles.button, styles.secondary]}
+              style={[styles.button, styles.secondary, postCreate === 'refreshing' && styles.disabled]}
             >
-              <Text style={styles.secondaryText}>Back to proposals</Text>
+              <Text style={styles.secondaryText}>
+                {postCreate === 'refreshing' ? 'Refreshing proposals…' : 'Go to Proposals'}
+              </Text>
             </Pressable>
           </View>
         ) : null}

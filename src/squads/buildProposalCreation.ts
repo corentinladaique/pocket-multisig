@@ -76,17 +76,24 @@ function toPublicKey(value: string): PublicKey | null {
 }
 
 /**
+ * Explications « comment fonctionne la création » : information pure, aucune
+ * validation, aucun effet sur la transaction. Extraites ici pour que l'écran
+ * puisse les regrouper dans une section repliable sans dupliquer les chaînes.
+ */
+export const PROPOSAL_CREATION_EXPLAINERS = [
+  'A VaultTransaction account and a Proposal account are both created: their rent is paid by the creator.',
+  'The transferred amount is enforced when the transaction is executed, not when the proposal is created.',
+  'ProposalCreate may record the creator as the first approver: verify the approval count on-chain after the first creation.',
+] as const;
+
+/**
  * Construit les deux instructions de creation d'une proposition de transfert.
  * Aucune exception : toute entree invalide produit une erreur nommee et un
  * resultat non pret, sans instruction partielle.
  */
 export function buildProposalCreation(input: ProposalCreationInput): ProposalCreationBuildResult {
   const errors: string[] = [];
-  const warnings: string[] = [
-    'A VaultTransaction account and a Proposal account are both created: their rent is paid by the creator.',
-    'The transferred amount is enforced when the transaction is executed, not when the proposal is created.',
-    'ProposalCreate may record the creator as the first approver: verify the approval count on-chain after the first creation.',
-  ];
+  const warnings: string[] = [...PROPOSAL_CREATION_EXPLAINERS];
 
   const multisigPda = toPublicKey(input.multisigPda);
   if (multisigPda === null) {

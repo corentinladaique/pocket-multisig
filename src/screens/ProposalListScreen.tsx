@@ -37,6 +37,9 @@ export function ProposalListScreen({
   decodedModelFor,
   onBack,
   onOpenProposal,
+  onRefresh,
+  refreshNonce = 0,
+  refreshing = false,
   staleTransactionIndex,
   threshold,
   transactionIndex,
@@ -49,6 +52,15 @@ export function ProposalListScreen({
   onBack: () => void;
   /** Ouvre le détail d'une proposition (lecture seule). */
   onOpenProposal?: (proposal: ProposalView) => void;
+  /**
+   * Actualisation RÉELLE demandée au parent : il relit le compte Multisig
+   * (transactionIndex courant) puis les propositions. Lecture seule, aucun wallet.
+   */
+  onRefresh?: () => Promise<boolean>;
+  /** Jeton d'actualisation forcée (relance la lecture même sans nouvel index). */
+  refreshNonce?: number;
+  /** Vrai pendant que le parent relit le multisig. */
+  refreshing?: boolean;
   staleTransactionIndex: number;
   threshold: number;
   transactionIndex: number;
@@ -60,7 +72,21 @@ export function ProposalListScreen({
   const walletAddress = account === undefined ? null : account.address.toString();
   const walletCanApprove = walletAddress !== null && votingMembers.includes(walletAddress);
 
-  const proposals = useProposals(address, transactionIndex, staleTransactionIndex);
+  const proposals = useProposals(address, transactionIndex, staleTransactionIndex, refreshNonce);
+  const busy = refreshing || proposals.status === 'loading';
+
+  /**
+   * Refresh : le parent RELIT le compte Multisig (index courant) puis la liste.
+   * Aucun wallet, aucune signature, aucun envoi. Si aucun parent n'est branché,
+   * on relit au moins la liste avec l'index déjà connu.
+   */
+  const onPressRefresh = () => {
+    if (onRefresh === undefined) {
+      proposals.retry();
+      return;
+    }
+    void onRefresh();
+  };
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -88,10 +114,10 @@ export function ProposalListScreen({
           here.
         </Text>
 
-        {proposals.status === 'loading' ? (
+        {busy ? (
           <View style={styles.centerBlock}>
             <ActivityIndicator color="#1a56db" />
-            <Text style={styles.hint}>Reading proposals…</Text>
+            <Text style={styles.hint}>Refreshing proposals…</Text>
           </View>
         ) : null}
 
@@ -99,14 +125,20 @@ export function ProposalListScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Refresh proposals from the chain"
-          disabled={proposals.status === 'loading'}
-          onPress={proposals.retry}
-          style={[styles.button, styles.secondary, proposals.status === 'loading' && styles.disabled]}
+          disabled={busy}
+          onPress={onPressRefresh}
+          style={[styles.button, styles.secondary, busy && styles.disabled]}
         >
-          <Text style={styles.secondaryText}>
-            {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh'}
-          </Text>
+          <Text style={styles.secondaryText}>{busy ? 'Refreshing…' : 'Refresh'}</Text>
         </Pressable>
+
+        {proposals.stale && proposals.list !== null ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>
+              Showing the last successfully read list. Refresh failed: {proposals.error ?? 'unknown error'}
+            </Text>
+          </View>
+        ) : null}
 
         {proposals.status === 'error' ? (
           <View style={styles.errorBox}>

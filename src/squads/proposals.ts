@@ -151,6 +151,38 @@ export async function loadProposals(
   return { proposals, unreadable, rpcCalls: 1 };
 }
 
+/**
+ * Relit UNE proposition par son index et construit sa vue, en lecture seule.
+ * Un seul `getAccountInfo` ciblé, désérialisation par le SDK officiel.
+ * Renvoie `null` si le compte n'existe pas (aucune valeur inventée).
+ */
+export async function loadSingleProposalView(
+  connection_: Connection,
+  multisigPda: PublicKey,
+  index: number,
+): Promise<ProposalView | null> {
+  const [proposalAddress] = multisig.getProposalPda({
+    multisigPda,
+    transactionIndex: BigInt(index),
+  });
+  const [transactionAddress] = multisig.getTransactionPda({
+    multisigPda,
+    index: BigInt(index),
+  });
+
+  const info = await connection_.getAccountInfo(proposalAddress, 'confirmed');
+  if (info === null) return null;
+
+  const [proposal] = multisig.accounts.Proposal.fromAccountInfo(info);
+  return {
+    approvedAddresses: proposal.approved.map((entry) => entry.toBase58()),
+    approvals: proposal.approved.length,
+    index,
+    status: proposal.status.__kind,
+    vaultTransactionAddress: transactionAddress.toBase58(),
+  };
+}
+
 export interface OperationSummary {
   action: string;
   amount: string;
@@ -303,33 +335,49 @@ export interface ProposalsState {
   list: ProposalList | null;
   retry: () => void;
   status: ProposalsStatus;
+  /**
+   * Vrai si le DERNIER chargement a échoué alors qu'une liste précédente existe :
+   * la liste est conservée, jamais supprimée en silence.
+   */
+  stale: boolean;
 }
 
 /**
  * État de lecture des propositions du multisig courant. Se réinitialise
  * automatiquement quand le multisig est déchargé (bouton Clear).
+ *
+ * @param refreshNonce jeton d'actualisation EXPLICITE : incrémenté par
+ *   l'appelant pour forcer une relecture on-chain même quand l'index du
+ *   multisig n'a pas changé (ex. Refresh, ou retour après création).
  */
 export function useProposals(
   multisigAddress: string | null,
   transactionIndex: number,
   staleTransactionIndex: number,
+  refreshNonce = 0,
 ): ProposalsState {
   const [status, setStatus] = useState<ProposalsStatus>('idle');
   const [list, setList] = useState<ProposalList | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
 
   const run = useCallback(async () => {
     if (multisigAddress === null) {
       setStatus('idle');
       setList(null);
       setError(null);
+      setStale(false);
       return;
     }
     setStatus('loading');
     setError(null);
     try {
       const multisigPda = new PublicKey(multisigAddress);
-      setList(await loadProposals(connection, multisigPda, transactionIndex, staleTransactionIndex));
+      const fresh = await loadProposals(connection, multisigPda, transactionIndex, staleTransactionIndex);
+      // Remplacement par les données on-chain ACTUELLES : la chaîne est la
+      // seule source de vérité, aucune proposition n'est inventée localement.
+      setList(fresh);
+      setStale(false);
       setStatus('loaded');
     } catch (caught: unknown) {
       setError(
@@ -338,8 +386,11 @@ export function useProposals(
         }`,
       );
       setStatus('error');
+      // Jamais de suppression silencieuse : la liste précédente reste visible
+      // et est marquée périmée.
+      setStale(true);
     }
-  }, [multisigAddress, transactionIndex, staleTransactionIndex]);
+  }, [multisigAddress, transactionIndex, staleTransactionIndex, refreshNonce]);
 
   useEffect(() => {
     void run();
@@ -349,5 +400,5 @@ export function useProposals(
     void run();
   }, [run]);
 
-  return { error, list, retry, status };
+  return { error, list, retry, stale, status };
 }

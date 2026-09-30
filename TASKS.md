@@ -561,3 +561,11 @@ une section « Technical details » (jamais dans une décision utilisateur) :
 Migré dans le hotfix des montants : `src/screens/NewProposalScreen.tsx`
 (saisie et lecture en **SOL** ; lamports confinés à « Technical details »).
 `src/screens/MultisigDetailsScreen.tsx` : solde affiché en SOL (`balanceView.sol`).
+
+### Backlog — saisie du champ Amount (non implémenté ici)
+
+- Saisie « . » : normalisation VISUELLE en « 0. » (jamais de réécriture d'une
+  valeur déjà valide).
+- Ne jamais modifier une valeur déjà valide pendant la frappe.
+- Conversion exacte toujours limitée à 9 décimales (1 SOL = 1e9 lamports).
+- Le placeholder (« e.g. 1.5 ») ne doit JAMAIS devenir la valeur transactionnelle.

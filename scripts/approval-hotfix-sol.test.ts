@@ -204,15 +204,16 @@ const ALLOWLIST = readFileSync('src/squads/instructionAllowlist.ts', 'utf8');
     assert.equal(SOL_AMOUNT_MESSAGES.invalid, 'Enter a valid SOL amount.');
   });
 
-  await check('20. aucun lamport visible hors Technical details', () => {
+  await check('20. aucun lamport visible hors section repliable', () => {
     // Saisie et lecture utilisateur en SOL.
     assert.ok(PROPOSAL.includes('Amount (SOL)'));
     assert.ok(!PROPOSAL.includes('Amount (lamports)'));
     assert.ok(!PROPOSAL.includes('bufferLamports} lamports'));
     assert.ok(!PROPOSAL.includes('} lamports`'));
-    // Les lamports restent, mais sous la section technique.
-    assert.ok(PROPOSAL.includes('>Technical details<'));
-    assert.ok(PROPOSAL.includes('Estimated cost (lamports):'));
+    assert.ok(!PROPOSAL.includes('lamports):'), 'plus aucun lamport affiché');
+    // La section technique est désormais repliable (« Advanced diagnostics »).
+    assert.ok(PROPOSAL.includes("'Advanced diagnostics'"));
+    assert.ok(PROPOSAL.includes("useState(false);"), 'section fermée par défaut');
     // Les messages d'erreur d'unicite en lamports sont remplaces par du SOL.
     assert.ok(PROPOSAL.includes('SOL_AMOUNT_MESSAGES[parsedSol.reason]'));
     assert.ok(PROPOSAL.includes('.filter((error) => !/lamports/i.test(error))'));

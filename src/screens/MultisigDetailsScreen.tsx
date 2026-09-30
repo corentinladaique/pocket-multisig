@@ -19,7 +19,7 @@ import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import type { ReviewGuardContext } from '../wallet/useWalletGuard';
 import { connection } from '../solana/connection';
 import { loadMultisig, MultisigLookupError, type MultisigView } from '../squads/multisig';
-import type { ProposalView } from '../squads/proposals';
+import { loadSingleProposalView, type ProposalView } from '../squads/proposals';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { ProposalListScreen } from './ProposalListScreen';
@@ -93,6 +93,47 @@ export function MultisigDetailsScreen({
       }
     })();
   }, [address]);
+
+  // Actualisation EXPLICITE (bouton Refresh, ou après une création vérifiée) :
+  // relit le compte Multisig (donc le transactionIndex courant) puis incrémente
+  // un jeton qui force la relecture des propositions. Lecture seule : aucun
+  // wallet, aucune signature, aucun envoi.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const reloadFromChain = useCallback(async (): Promise<boolean> => {
+    setRefreshing(true);
+    try {
+      const key = new PublicKey(address);
+      const fresh = await loadMultisig(connection, key);
+      setState({ status: 'loaded', view: fresh });
+      setRefreshNonce((previous) => previous + 1);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setRefreshing(false);
+    }
+  }, [address]);
+
+  /**
+   * Ouvre la proposition tout juste créée : relecture on-chain CIBLÉE de la
+   * Proposal (aucune donnée locale inventée). Lecture seule, aucun wallet.
+   */
+  const openCreatedProposal = useCallback(
+    (index: number) => {
+      void (async () => {
+        try {
+          const fresh = await loadSingleProposalView(connection, new PublicKey(address), index);
+          if (fresh === null) return;
+          setNewProposalOpen(false);
+          setOpenProposal(fresh);
+        } catch {
+          // Relecture impossible : on reste sur l'écran courant, sans inventer.
+        }
+      })();
+    },
+    [address],
+  );
 
   const view = state.status === 'loaded' ? state.view : null;
   const vaultAddress = view?.vaultAddress ?? null;
@@ -170,10 +211,12 @@ export function MultisigDetailsScreen({
         address={view.address}
         members={view.members}
         onBack={() => setNewProposalOpen(false)}
+        onCreatedVerified={reloadFromChain}
         onDone={() => {
           setNewProposalOpen(false);
           setProposalsOpen(true);
         }}
+        onOpenCreatedProposal={openCreatedProposal}
         transactionIndex={view.transactionIndex}
         vaultAddress={view.vaultAddress}
       />
@@ -232,6 +275,9 @@ export function MultisigDetailsScreen({
         decodedModelFor={decodedModelFor}
         onBack={() => setProposalsOpen(false)}
         onOpenProposal={(proposal) => setOpenProposal(proposal)}
+        onRefresh={reloadFromChain}
+        refreshNonce={refreshNonce}
+        refreshing={refreshing}
         staleTransactionIndex={view.staleTransactionIndex}
         threshold={view.threshold}
         transactionIndex={view.transactionIndex}
