@@ -41,6 +41,13 @@ import {
   classifyApprovalOutcome,
   walletHasApproved,
 } from '../squads/approvalOutcome';
+import {
+  PROPOSAL_ACTION_LABELS,
+  approvalProgress,
+  deriveProposalActionState,
+  deriveProposalExecuteState,
+  executionNotAvailableDetail,
+} from '../squads/proposalActionState';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
@@ -265,6 +272,10 @@ export function ProposalDetailsScreen({
   // Relecture seule « Check approval again ».
   const [checkingApproval, setCheckingApproval] = useState(false);
   const [approvalCheckReport, setApprovalCheckReport] = useState<string | null>(null);
+  // Diagnostic technique d'une tentative ANTERIEURE : jamais prioritaire sur
+  // l'etat courant, uniquement dans « Troubleshooting details ».
+  const [approvalDiagnostics, setApprovalDiagnostics] = useState<string[]>([]);
+  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
 
   // Verite on-chain si elle a ete relue, sinon donnee fournie par l'appelant.
   const effectiveApprovedAddresses = onchainApproval?.approvedAddresses ?? proposal.approvedAddresses;
@@ -325,6 +336,35 @@ export function ProposalDetailsScreen({
   const approvalActions = approvalState === null ? null : approvalOutcomeActions(approvalState);
   const approvalLabel =
     approvalState === null ? 'Approval recorded on-chain' : APPROVAL_OUTCOME_LABELS[approvalState];
+
+  // --- États principaux EXCLUSIFS (présentation pure) -------------------
+  // « Exécutée » : statut on-chain terminal, ou exécution vérifiée.
+  const executed =
+    effectiveProposalStatus === 'Executed' || executionResult?.verified === true;
+  // Une signature existe mais l'approbation n'est pas encore vérifiée.
+  const signaturePendingVerification =
+    approvalResult !== null && approvalResult.signature !== null && approvalResult.verified !== true;
+  // Nouvelle tentative sans signature (échec avant envoi) : seul cas où le CTA reste.
+  const approvalRetry =
+    approvalResult !== null &&
+    approvalResult.signature === null &&
+    (approvalActions?.allowPrepareAgain ?? false);
+  // Progression : EXCLUSIVEMENT issue des approbations relues on-chain.
+  const progress = approvalProgress({
+    approvedCount: effectiveApprovedAddresses.length,
+    threshold,
+  });
+  const actionState = deriveProposalActionState({
+    executed,
+    signaturePendingVerification,
+    thresholdReached: progress.reached,
+    walletAlreadyApproved,
+  });
+  const executeState = deriveProposalExecuteState({
+    executed,
+    thresholdReached: progress.reached,
+    walletHasExecute,
+  });
 
   const executionOutcome =
     executionResult === null
@@ -521,12 +561,17 @@ export function ProposalDetailsScreen({
             ? 'Approval confirmed, proposal verification pending.'
             : 'Approval signed, confirmation pending.',
       );
+      if (verified) {
+        // Etat courant REUSSI : l'ancienne erreur disparait du bloc principal.
+        // L'historique technique reste consultable dans Troubleshooting details.
+        setApprovalError(null);
+      }
     } catch (caught: unknown) {
-      setApprovalCheckReport(
-        isTemporaryNetworkFailure(caught)
-          ? 'Verification temporarily unavailable: check again later.'
-          : 'Verification failed — this action sent nothing.',
-      );
+      const detail = isTemporaryNetworkFailure(caught)
+        ? 'Verification temporarily unavailable: check again later.'
+        : 'Verification failed — this action sent nothing.';
+      setApprovalCheckReport(detail);
+      setApprovalDiagnostics((previous) => [...previous, detail]);
     } finally {
       setCheckingApproval(false);
     }
@@ -573,10 +618,14 @@ export function ProposalDetailsScreen({
         void refreshProposalFromChain();
       }
       if (!result.verified) {
-        setApprovalError(describeOperationFailure(result));
+        const failure = describeOperationFailure(result);
+        setApprovalError(failure);
+        setApprovalDiagnostics((previous) => [...previous, failure]);
       }
     } catch (caught: unknown) {
-      setApprovalError(caught instanceof Error ? caught.message : String(caught));
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setApprovalError(detail);
+      setApprovalDiagnostics((previous) => [...previous, detail]);
     } finally {
       // Aucune signature obtenue : rien n'a ete produit, un nouvel essai reste
       // possible. Sinon, plus aucune tentative automatique.
@@ -815,56 +864,54 @@ export function ProposalDetailsScreen({
             </>
           ) : null}
 
-          <Pressable
+          {/* --- Statut du wallet : INFORMATION, jamais un bouton. --- */}
+          {actionState !== 'executed' && walletAlreadyApproved ? (
+            <View
+              accessibilityLabel="Approved by you"
+              accessibilityRole="text"
+              accessible
+              style={styles.successBox}
+            >
+              <Text style={styles.successText}>{PROPOSAL_ACTION_LABELS.approvedByYou}</Text>
+              <Text style={styles.fieldNote}>{PROPOSAL_ACTION_LABELS.approvedByYouDetail}</Text>
+            </View>
+          ) : null}
+
+          {/* --- CTA Approve : uniquement quand une approbation est possible. --- */}
+          {actionState === 'approval-available' || approvalRetry ? (
+            <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Approve this proposal"
-              accessibilityState={{
-                busy: approving,
-                disabled: !canConfirm || approving || walletAlreadyApproved || (approvalResult !== null && !(approvalActions?.allowPrepareAgain ?? false)),
-              }}
-              disabled={!canConfirm || approving || walletAlreadyApproved || (approvalResult !== null && !(approvalActions?.allowPrepareAgain ?? false))}
+              accessibilityLabel={
+                approvalRetry ? 'Prepare the approval again' : 'Approve this proposal'
+              }
+              accessibilityState={{ busy: approving, disabled: !canConfirm || approving }}
+              disabled={!canConfirm || approving}
               onPress={onApprove}
-              style={[
-                styles.button,
-                (!canConfirm || approving || walletAlreadyApproved || (approvalResult !== null && !(approvalActions?.allowPrepareAgain ?? false))) &&
-                  styles.disabled,
-              ]}
+              style={[styles.button, (!canConfirm || approving) && styles.disabled]}
             >
               {approving ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.buttonText}>
-                  {walletAlreadyApproved
-                    ? 'Already approved'
-                    : approvalResult !== null && (approvalActions?.allowPrepareAgain ?? false)
-                      ? 'Prepare again'
-                      : 'Approve'}
-                </Text>
+                <Text style={styles.buttonText}>{approvalRetry ? 'Prepare again' : 'Approve'}</Text>
               )}
             </Pressable>
+          ) : null}
 
-            {walletAlreadyApproved ? (
-              <Text style={styles.fieldNote}>
-                Already approved: this wallet is recorded as an approver on-chain. No new
-                approval can be sent.
-              </Text>
-            ) : null}
-
-            {!canConfirm ? (
-              <Text style={styles.fieldNote}>
-                {decoding || model === null
-                  ? // Pas refus terminal : le contexte se construit localement
-                    // (multisig + proposition + modèle + wallet + vault PDA).
-                    'Checking approval permissions…'
-                  : effectiveGuardContext === null
-                    ? 'Checking approval permissions…'
-                    : guard.status !== 'allowed'
-                      ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
-                      : allowlist !== null && allowlist.status !== 'allowed'
-                        ? `Instruction allowlist: ${allowlist.status}.`
-                        : 'Approval is not available for this proposal in its current state.'}
-              </Text>
-            ) : null}
+          {actionState === 'approval-available' && !canConfirm ? (
+            <Text style={styles.fieldNote}>
+              {decoding || model === null
+                ? // Pas refus terminal : le contexte se construit localement
+                  // (multisig + proposition + modèle + wallet + vault PDA).
+                  'Checking approval permissions…'
+                : effectiveGuardContext === null
+                  ? 'Checking approval permissions…'
+                  : guard.status !== 'allowed'
+                    ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
+                    : allowlist !== null && allowlist.status !== 'allowed'
+                      ? `Instruction allowlist: ${allowlist.status}.`
+                      : 'Approval is not available for this proposal in its current state.'}
+            </Text>
+          ) : null}
 
             {approving ? (
               <Text style={styles.fieldNote}>
@@ -872,13 +919,13 @@ export function ProposalDetailsScreen({
               </Text>
             ) : null}
 
-            {approvalError !== null ? (
+            {approvalError !== null && actionState !== 'executed' ? (
               <View style={styles.errorBox}>
                 <Text style={styles.errorText}>{approvalError}</Text>
               </View>
             ) : null}
 
-            {approvalResult !== null ? (
+            {approvalResult !== null && actionState !== 'executed' ? (
               <View
                 style={
                   approvalOutcome !== null && approvalOutcome.tone === 'success'
@@ -937,43 +984,98 @@ export function ProposalDetailsScreen({
               </View>
             ) : null}
 
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Execute this proposal"
-              accessibilityState={{
-                busy: executing,
-                disabled: !canExecute || insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false)),
-              }}
-              disabled={!canExecute || insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))}
-              onPress={onExecute}
-              style={[
-                styles.button,
-                styles.executeButton,
-                (!canExecute || insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))) &&
-                  styles.disabled,
-              ]}
-            >
-              {executing ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.buttonText}>Execute</Text>
-              )}
-            </Pressable>
-
-            {!canExecute ? (
+          {/* --- Progression des approbations : source on-chain uniquement. --- */}
+          {actionState !== 'executed' ? (
+            <View style={styles.noticeBox}>
+              <Text style={styles.fieldValue}>{progress.collectedLabel}</Text>
               <Text style={styles.fieldNote}>
-                {proposal.status !== 'Approved'
-                  ? `Execution requires an Approved proposal (current status: ${proposal.status}).`
-                  : !thresholdReached
-                    ? `Execution requires ${threshold} approval(s); ${proposal.approvedAddresses.length} recorded.`
-                    : 'Your wallet is not a member with the Execute permission.'}
+                {progress.waitingLabel ?? PROPOSAL_ACTION_LABELS.thresholdReached}
               </Text>
-            ) : (
+            </View>
+          ) : null}
+
+          {/* --- Execute : uniquement quand il est pertinent. --- */}
+          {executeState === 'available' ? (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Execute this proposal"
+                accessibilityState={{
+                  busy: executing,
+                  disabled: insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false)),
+                }}
+                disabled={
+                  insufficientBalance ||
+                  executing ||
+                  (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))
+                }
+                onPress={onExecute}
+                style={[
+                  styles.button,
+                  styles.executeButton,
+                  (insufficientBalance ||
+                    executing ||
+                    (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))) &&
+                    styles.disabled,
+                ]}
+              >
+                {executing ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <Text style={styles.buttonText}>{PROPOSAL_ACTION_LABELS.executeCta}</Text>
+                )}
+              </Pressable>
               <Text style={styles.fieldNote}>
                 Executing submits the stored transaction to the vault. It is irreversible and
                 requires a double confirmation.
               </Text>
-            )}
+            </>
+          ) : executeState === 'unavailable-threshold' ? (
+            <View style={styles.noticeBox}>
+              <Text style={styles.fieldValue}>
+                {PROPOSAL_ACTION_LABELS.executeUnavailableTitle}
+              </Text>
+              <Text style={styles.fieldNote}>{executionNotAvailableDetail(progress.remaining)}</Text>
+            </View>
+          ) : executeState === 'no-permission' ? (
+            <View style={styles.noticeBox}>
+              <Text style={styles.fieldValue}>
+                {PROPOSAL_ACTION_LABELS.executeNoPermissionTitle}
+              </Text>
+              <Text style={styles.fieldNote}>
+                {PROPOSAL_ACTION_LABELS.executeNoPermissionDetail}
+              </Text>
+            </View>
+          ) : (
+            /* Etat terminal : transaction executee, aucun CTA. */
+            <View style={styles.successBox}>
+              <Text style={styles.successText}>{PROPOSAL_ACTION_LABELS.executed}</Text>
+              {executionResult?.signature != null ? (
+                <Text selectable style={styles.monoValue}>
+                  Signature: {executionResult.signature}
+                </Text>
+              ) : null}
+              {summary !== null ? (
+                <>
+                  <Text style={styles.fieldNote}>Destination</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {fullDestination ?? summary.destination}
+                  </Text>
+                  <Text style={styles.fieldNote}>Amount</Text>
+                  <Text style={styles.fieldValue}>{summary.amount}</Text>
+                </>
+              ) : null}
+              {model !== null && model.source.known ? (
+                <>
+                  <Text style={styles.fieldNote}>Main vault source</Text>
+                  <Text selectable style={styles.monoValue}>
+                    {model.source.value}
+                  </Text>
+                </>
+              ) : null}
+              <Text style={styles.fieldNote}>On-chain status: {effectiveProposalStatus}</Text>
+            </View>
+          )}
 
             {executing ? (
               <Text style={styles.fieldNote}>Waiting for the wallet…</Text>
@@ -985,7 +1087,7 @@ export function ProposalDetailsScreen({
               </View>
             ) : null}
 
-            {executionResult !== null ? (
+            {executionResult !== null && executeState !== 'executed' ? (
               <View
                 style={
                   executionOutcome !== null && executionOutcome.tone === 'success'
@@ -1091,6 +1193,46 @@ export function ProposalDetailsScreen({
             </Text>
           ) : null}
         </View>
+
+        {/* TROUBLESHOOTING DETAILS — diagnostic d'une tentative ANTERIEURE,
+            replie par defaut, jamais prioritaire sur l'etat courant. */}
+        {approvalDiagnostics.length > 0 ||
+        (approvalResult?.validationErrors.length ?? 0) > 0 ||
+        executionError !== null ? (
+          <View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Troubleshooting details"
+              accessibilityState={{ expanded: troubleshootingOpen }}
+              onPress={() => setTroubleshootingOpen((open) => !open)}
+              style={[styles.button, styles.secondary]}
+            >
+              <Text style={styles.secondaryText}>
+                {troubleshootingOpen ? 'Hide troubleshooting details' : 'Troubleshooting details'}
+              </Text>
+            </Pressable>
+            {troubleshootingOpen ? (
+              <View style={styles.noticeBox}>
+                <Text style={styles.fieldNote}>Diagnostics from an earlier attempt.</Text>
+                {approvalDiagnostics.map((message, index) => (
+                  <Text key={`approval-detail-${index}`} selectable style={styles.fieldNote}>
+                    {message}
+                  </Text>
+                ))}
+                {(approvalResult?.validationErrors ?? []).map((message, index) => (
+                  <Text key={`approval-validation-${index}`} selectable style={styles.fieldNote}>
+                    {message}
+                  </Text>
+                ))}
+                {executionError !== null ? (
+                  <Text selectable style={styles.fieldNote}>
+                    {executionError}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"
@@ -1199,6 +1341,14 @@ const styles = StyleSheet.create({
     color: '#065f46',
     fontSize: 13,
     fontWeight: '800',
+  },
+  noticeBox: {
+    backgroundColor: '#eef2ff',
+    borderColor: '#c7d2fe',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+    padding: 12,
   },
   button: {
     alignItems: 'center',

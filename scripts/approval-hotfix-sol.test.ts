@@ -119,7 +119,10 @@ const ALLOWLIST = readFileSync('src/squads/instructionAllowlist.ts', 'utf8');
   // ---- D. anti-double-approbation --------------------------------------
   await check('7/8. double tap : une seule tentative, bouton desactive pendant', () => {
     assert.ok(DETAILS.includes('if (model === null || allowlist === null || approvalAttemptedRef.current) return;'));
-    assert.ok(DETAILS.includes('!canConfirm || approving || walletAlreadyApproved'), 'bouton desactive pendant approbation');
+    // Le CTA n'existe que pour la famille « approbation disponible » (ou retry),
+    // et reste desactive pendant une tentative.
+    assert.ok(DETAILS.includes("actionState === 'approval-available' || approvalRetry"), 'CTA conditionnel');
+    assert.ok(DETAILS.includes('disabled={!canConfirm || approving}'), 'desactive pendant approbation');
   });
 
   await check('9. wallet deja approbateur : aucune construction lancee', () => {
@@ -131,7 +134,9 @@ const ALLOWLIST = readFileSync('src/squads/instructionAllowlist.ts', 'utf8');
     assert.ok(DETAILS.includes('const walletAlreadyApproved = walletHasApproved(effectiveApprovedAddresses, walletAddress);'));
     assert.ok(DETAILS.includes('refreshProposalFromChain'));
     assert.ok(DETAILS.includes('Proposal.fromAccountInfo'));
-    assert.ok(DETAILS.includes('>Already approved<') || DETAILS.includes("'Already approved'"));
+    // « Already approved » est desormais un STATUT (« ✓ Approved by you »),
+    // plus un bouton gris desactive.
+    assert.ok(DETAILS.includes('PROPOSAL_ACTION_LABELS.approvedByYou'));
     // La source est on-chain : jamais un simple etat memoire local seul.
     assert.ok(DETAILS.includes('onchainApproval?.approvedAddresses ?? proposal.approvedAddresses'));
     assert.equal(walletHasApproved(['A', 'B'], 'B'), true);

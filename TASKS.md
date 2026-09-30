@@ -569,3 +569,14 @@ Migré dans le hotfix des montants : `src/screens/NewProposalScreen.tsx`
 - Ne jamais modifier une valeur déjà valide pendant la frappe.
 - Conversion exacte toujours limitée à 9 décimales (1 SOL = 1e9 lamports).
 - Le placeholder (« e.g. 1.5 ») ne doit JAMAIS devenir la valeur transactionnelle.
+
+### Backlog — confirmation explicite du threshold 1 of 2
+
+- Pour deux membres, 2 of 2 est le défaut recommandé et affiché
+  (« Recommended: 2 of 2 » / « Both members must approve sensitive actions. »).
+- Choisir 1 of 2 affiche « Low security configuration » + le détail, sans
+  blocage automatique (le moteur Squads accepte threshold 1).
+- À IMPLÉMENTER (hors de ce hotfix, pour ne pas créer un parcours fragile) :
+  une confirmation MODALE dédiée « Use 1 of 2 anyway » avant de pouvoir créer
+  le vault. Aujourd'hui, l'avertissement est affiché et la configuration reste
+  créable ; aucun threshold on-chain n'est modifié silencieusement.

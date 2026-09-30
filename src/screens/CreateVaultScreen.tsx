@@ -18,6 +18,16 @@ import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { connection } from '../solana/connection';
 import { buildMultisigCreationTransaction, type MultisigTransactionBuildResult } from '../vault/buildMultisigCreation';
 import { buildMultisigCreationPlan } from '../vault/multisigCreationPlan';
+import {
+  LOW_SECURITY_THRESHOLD_CONFIRM,
+  LOW_SECURITY_THRESHOLD_DETAIL,
+  LOW_SECURITY_THRESHOLD_LABEL,
+  TWO_MEMBER_RECOMMENDATION,
+  TWO_MEMBER_RECOMMENDATION_DETAIL,
+  TWO_MEMBER_RECOMMENDED_THRESHOLD,
+  lowSecurityThresholdWarning,
+  twoMemberRecommendation,
+} from '../vault/thresholdRecommendation';
 import { runMultisigCreationPreflight } from '../vault/multisigCreationPreflight';
 import {
   simulateMultisigCreation,
@@ -123,6 +133,10 @@ export function CreateVaultScreen({
   const [setupType, setSetupType] = useState<SetupType | null>(null);
   const [members, setMembers] = useState<VaultMemberDraft[]>([]);
   const [threshold, setThreshold] = useState(1);
+  // L'utilisateur a-t-il choisi le threshold explicitement ? Si non, deux
+  // membres obtiennent le defaut recommande (2 of 2) sans jamais ecraser un
+  // choix explicite (y compris 1 of 2).
+  const [thresholdTouched, setThresholdTouched] = useState(false);
 
   const [pendingAddress, setPendingAddress] = useState('');
   const [pendingLabel, setPendingLabel] = useState('');
@@ -296,6 +310,18 @@ export function CreateVaultScreen({
   // Plan technique : purement local (aucun RPC, aucune API Squads executee).
   const plan = useMemo(() => buildMultisigCreationPlan(request), [request]);
 
+  // Pour exactement deux membres, 2 of 2 est le defaut RECOMMANDE — sauf choix
+  // explicite de l'utilisateur, qui n'est jamais ecrase.
+  useEffect(() => {
+    if (
+      !thresholdTouched &&
+      members.length === TWO_MEMBER_RECOMMENDED_THRESHOLD &&
+      threshold !== TWO_MEMBER_RECOMMENDED_THRESHOLD
+    ) {
+      setThreshold(TWO_MEMBER_RECOMMENDED_THRESHOLD);
+    }
+  }, [members.length, threshold, thresholdTouched]);
+
   // Valeurs attendues on-chain, préparées AVANT signature : utilisées à
   // l'identique par le read-back initial ET par « Check transaction again ».
   const creationExpectation = useMemo<MultisigCreationExpectation>(
@@ -372,6 +398,8 @@ export function CreateVaultScreen({
   const chooseSetup = useCallback((type: SetupType, presetThreshold: number) => {
     setSetupType(type);
     setThreshold(presetThreshold);
+    // Choix explicite de l'utilisateur : le defaut recommande ne l'ecrase jamais.
+    setThresholdTouched(true);
   }, []);
 
   const addConnectedWallet = useCallback(() => {
@@ -1176,7 +1204,10 @@ export function CreateVaultScreen({
                     accessibilityRole="button"
                     accessibilityState={{ selected: threshold === value }}
                     key={value}
-                    onPress={() => setThreshold(value)}
+                    onPress={() => {
+                      setThreshold(value);
+                      setThresholdTouched(true);
+                    }}
                     style={[styles.kindChip, threshold === value && styles.kindChipSelected]}
                   >
                     <Text style={styles.kindChipText}>{value}</Text>
@@ -1187,6 +1218,22 @@ export function CreateVaultScreen({
             <Text style={styles.fieldValue}>
               {threshold} of {members.length} approvals required.
             </Text>
+            {twoMemberRecommendation(members.length) !== null ? (
+              <>
+                <Text style={styles.fieldValue}>{TWO_MEMBER_RECOMMENDATION}</Text>
+                <Text style={styles.hint}>{TWO_MEMBER_RECOMMENDATION_DETAIL}</Text>
+              </>
+            ) : null}
+            {lowSecurityThresholdWarning(members.length, threshold) !== null ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{LOW_SECURITY_THRESHOLD_LABEL}</Text>
+                <Text style={styles.hint}>{LOW_SECURITY_THRESHOLD_DETAIL}</Text>
+                <Text style={styles.hint}>
+                  To continue with this setting, confirm explicitly: "
+                  {LOW_SECURITY_THRESHOLD_CONFIRM}".
+                </Text>
+              </View>
+            ) : null}
             <Text style={styles.hint}>
               Example: 2 of 3 means any two signers can approve, so one lost signer is
               survivable. 2 of 2 is stricter: both signers are always needed.
