@@ -1,12 +1,15 @@
-// Écran de revue de transaction — LECTURE SEULE.
-// Ce composant n'appelle AUCUNE fonction d'écriture : ni approve, ni execute,
-// ni signTransaction, ni signAndSendTransaction, ni aucune fonction RPC.
-// Il affiche un modèle déjà construit (voir src/types/transactionReview.ts).
-import { useCallback, useEffect, useState } from 'react';
+// VUE TECHNIQUE FACULTATIVE — READ ONLY.
+// Affiche uniquement des détails de transaction décodés : programme, comptes,
+// source, destination, montant, lamports et avertissements. Aucune
+// autorisation wallet, aucune signature, aucun envoi de transaction : la seule
+// action de cet écran est Back (retour vers ProposalDetailsScreen).
+// L'approbation d'une proposition se fait EXCLUSIVEMENT depuis
+// ProposalDetailsScreen (signAndSendProposalApproval).
+// Lecture seule sur modèle déjà construit (voir src/types/transactionReview.ts).
+import { useCallback, useEffect } from 'react';
 import { BackHandler, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { PublicKey, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { PublicKey } from '@solana/web3.js';
 import * as multisig from '@sqds/multisig';
-import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
 import {
   isAlreadyApprovedVerdict,
@@ -14,8 +17,7 @@ import {
 } from '../wallet/useWalletGuard';
 import { checkReviewAllowlist } from '../squads/instructionAllowlist';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
-import { planProposalApproval, type ApprovalPlan } from '../squads/proposalApproval';
-import { connection } from '../solana/connection';
+import { REVIEW_SCREEN_CAPABILITIES } from './reviewScreenCapabilities';
 import { TransactionTechnicalDetails } from './TransactionTechnicalDetails';
 import type { GuardVerdict, ReviewGuardContext } from '../wallet/useWalletGuard';
 
@@ -78,17 +80,13 @@ export function TransactionReviewScreen({
   onBack,
   guardContext = null,
 }: TransactionReviewScreenProps) {
-  // Aucune confirmation n'est possible dans cette mission, y compris pour un
-  // décodage complet : le branchement on-chain n'existe pas encore (T11/T12).
+  // Avertissements affichés quand le décodage est incomplet ou porte des notes.
   const needsWarning = model.decodeStatus !== 'decoded' || model.notes.length > 0;
 
+  // Guard et allowlist restent évalués, mais UNIQUEMENT pour afficher un état
+  // informatif : aucune action d'écriture n'est branchée sur cet écran.
   const guard = useWalletGuard(guardContext);
-  const { signAndSendTransactions } = useMobileWallet();
   const allowlist = checkReviewAllowlist(model);
-
-  // T11a : condition locale stricte. Aucune donnée réseau n'est relue ici, et
-  // aucune fonction d'écriture n'est branchée : le bouton final de la seconde
-  // confirmation reste désactivé dans cette mission.
   const canConfirm = computeCanConfirm(model, guard.status, allowlist.status);
 
   // Cas utilisateur positif : le wallet connecté a DÉJÀ approuvé. Le verdict
@@ -130,10 +128,10 @@ export function TransactionReviewScreen({
       ? `${approvalsConfirmed} of ${guardThreshold} approvals confirmed`
       : fieldText(model.action);
   const decisionState = proposalApproved
-    ? 'Ready to execute'
+    ? 'Ready to execute (from Proposal Details)'
     : alreadyApproved
       ? 'Waiting for 1 more approval'
-      : 'Execution is not implemented yet';
+      : 'Read-only technical view';
 
   // PDA de la proposition : derivation locale par le SDK, aucun appel RPC.
   const proposalAddress = (() => {
@@ -147,21 +145,6 @@ export function TransactionReviewScreen({
       return null;
     }
   })();
-
-  // T11c : étape « ready to approve ». Le bouton final est branché sur la
-  // PRÉPARATION uniquement — aucune ouverture du wallet, aucune signature,
-  // aucun envoi. L'appel MWA reste hors de portée de cette mission.
-  const [plan, setPlan] = useState<ApprovalPlan | null>(null);
-  const [signature, setSignature] = useState<string | null>(null);
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  // Une seule tentative d'envoi autorisée pour toute la session d'écran.
-  const [sendAttempted, setSendAttempted] = useState(false);
-  const [planning, setPlanning] = useState(false);
-
-  // Seconde confirmation locale (T11a) : aucun envoi, le bouton final reste
-  // désactivé. Cet état n'ouvre aucun chemin d'écriture.
-  const [confirmStep, setConfirmStep] = useState(false);
 
   const handleBack = useCallback(() => {
     onBack();
@@ -177,250 +160,7 @@ export function TransactionReviewScreen({
     return () => subscription.remove();
   }, [handleBack]);
 
-  const handleCancelConfirm = useCallback(() => {
-    setConfirmStep(false);
-  }, []);
-
-  const handleRequestApproval = useCallback(async () => {
-    if (guardContext === null || guardContext.multisig === null) return;
-    if (guardContext.walletAddress === null) return;
-    setPlanning(true);
-    try {
-      const result = await planProposalApproval({
-        connection,
-        multisigPda: new PublicKey(guardContext.multisig.address),
-        transactionIndex: model.proposalIndex,
-        walletAddress: guardContext.walletAddress,
-        preconditions: {
-          guardStatus: guard.status,
-          allowlistStatus: allowlist.status,
-          guardReasons: guard.reasons,
-        },
-      });
-      setPlan(result);
-    } finally {
-      setPlanning(false);
-    }
-  }, [allowlist.status, guard.reasons, guard.status, guardContext, model.proposalIndex]);
-
-  const handleCancelPlan = useCallback(() => {
-    setPlan(null);
-  }, []);
-
-  /**
-   * T11d : UNE SEULE tentative d'envoi. Aucun retry, aucune reconstruction
-   * après un retour de signature. `vaultTransactionExecute` n'est jamais
-   * atteignable depuis ce composant.
-   */
-  const handleSendApproval = useCallback(async () => {
-    if (plan === null || plan.status !== 'ready') return;
-    if (sendAttempted || sending) return;
-    if (guardContext === null || guardContext.walletAddress === null) return;
-    setSendAttempted(true);
-    setSending(true);
-    setSendError(null);
-    try {
-      const latest = await connection.getLatestBlockhash('confirmed');
-      const message = new TransactionMessage({
-        payerKey: new PublicKey(guardContext.walletAddress),
-        recentBlockhash: latest.blockhash,
-        instructions: [plan.instruction],
-      }).compileToV0Message([]);
-      const transaction = new VersionedTransaction(message);
-      const minContextSlot = await connection.getSlot('confirmed');
-      // Unique demande MWA : le wallet signe ET envoie.
-      const returned = await signAndSendTransactions(transaction, minContextSlot);
-      setSignature(returned);
-    } catch (caught: unknown) {
-      setSendError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSending(false);
-    }
-  }, [connection, guardContext, plan, sendAttempted, sending, signAndSendTransactions]);
-
-
-
-  if (plan !== null) {
-    // Étape « ready to approve » : résumé public uniquement. Aucun appel
-    // wallet, aucune signature, aucun envoi — l'appel MWA est délibérément
-    // laissé hors de ce composant.
-    const threshold = guardContext?.multisig?.threshold ?? 0;
-    // Le bouton final n'est actif qu'après TOUS les contrôles, et une seule fois.
-    const canSend = plan.status === 'ready' && !sendAttempted && !sending;
-    return (
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={styles.badge}>DEVNET</Text>
-        <Text style={styles.title}>Ready to approve</Text>
-        <Text style={styles.previewBanner}>Prepared only — no signature requested</Text>
-
-        {plan.status === 'refused' ? (
-          <View style={styles.card}>
-            <Text style={styles.fieldLabel}>Refused</Text>
-            {plan.reasons.map((reason) => (
-              <Text key={reason} style={styles.warnText}>
-                • {reason}
-              </Text>
-            ))}
-          </View>
-        ) : (
-          <View style={styles.card}>
-            <Text style={styles.fieldLabel}>Network</Text>
-            <Text style={styles.fieldValue}>Devnet</Text>
-
-            <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-            <Text selectable style={styles.fieldValue}>
-              {model.multisigAddress}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Proposal</Text>
-            <Text style={styles.fieldValue}>#{model.proposalIndex}</Text>
-
-            <Text style={styles.fieldLabel}>Proposal PDA</Text>
-            <Text selectable style={styles.fieldValue}>
-              {plan.proposalAddress}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Member wallet</Text>
-            <Text selectable style={styles.fieldValue}>
-              {model.signerWallet}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Proposal status</Text>
-            <Text style={styles.fieldValue}>{plan.proposalStatus}</Text>
-
-            <Text style={styles.fieldLabel}>Approvals</Text>
-            <Text style={styles.fieldValue}>
-              {plan.approvedAddresses.length} / {threshold}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Program</Text>
-            <Text selectable style={styles.fieldValue}>
-              {plan.instruction.programId.toBase58()}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Execution</Text>
-            <Text style={styles.fieldValue}>No automatic execution.</Text>
-
-            {signature !== null ? (
-              <>
-                <Text style={styles.fieldLabel}>Signature</Text>
-                <Text selectable style={styles.fieldValue}>
-                  {signature}
-                </Text>
-              </>
-            ) : null}
-          </View>
-        )}
-
-        {sendError !== null ? (
-          <Text style={styles.warnText}>Send failed: {sendError}</Text>
-        ) : null}
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !canSend }}
-          disabled={!canSend}
-          onPress={() => {
-            void handleSendApproval();
-          }}
-          style={[styles.button, canSend ? null : styles.disabled]}
-        >
-          <Text style={styles.buttonText}>
-            {sending ? 'Waiting for wallet…' : 'Approve now'}
-          </Text>
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Cancel approval plan"
-          onPress={handleCancelPlan}
-          style={[styles.button, styles.secondary]}
-        >
-          <Text style={styles.secondaryText}>Cancel</Text>
-        </Pressable>
-      </ScrollView>
-    );
-  }
-
-  if (confirmStep) {
-    // Seconde confirmation, strictement locale : rappel du contenu réel, puis
-    // Cancel ou un bouton final DÉSACTIVÉ. Aucun appel réseau, aucune signature.
-    return (
-      <ScrollView
-        contentContainerStyle={styles.container}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Text style={styles.badge}>DEVNET</Text>
-        <Text style={styles.title}>Confirm approval</Text>
-        <Text style={styles.previewBanner}>Second confirmation — no send in this build</Text>
-
-        <View style={styles.card}>
-          <Text style={styles.fieldLabel}>Network</Text>
-          <Text style={styles.fieldValue}>Devnet</Text>
-
-          <Text style={styles.fieldLabel}>Proposal</Text>
-          <Text style={styles.fieldValue}>#{model.proposalIndex}</Text>
-
-          <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-          <Text selectable style={styles.fieldValue}>
-            {model.multisigAddress}
-          </Text>
-
-          <Text style={styles.fieldLabel}>Vault address</Text>
-          <Text selectable style={styles.fieldValue}>
-            {model.vaultAddress}
-          </Text>
-
-          <Text style={styles.fieldLabel}>Connected wallet</Text>
-          <Text selectable style={styles.fieldValue}>
-            {model.signerWallet}
-          </Text>
-
-          <Text style={styles.fieldLabel}>Action</Text>
-          <Text style={styles.fieldValue}>{fieldText(model.action)}</Text>
-
-          <Text style={styles.fieldLabel}>Destination</Text>
-          <Text selectable style={styles.fieldValue}>
-            {fieldText(model.destination)}
-          </Text>
-
-          <Text style={styles.fieldLabel}>Amount</Text>
-          <Text style={styles.fieldValue}>{amountText(model.amount)}</Text>
-
-          <Text style={styles.fieldLabel}>Approvals already recorded</Text>
-          <Text style={styles.fieldValue}>0</Text>
-
-          <Text style={styles.fieldLabel}>Execution</Text>
-          <Text style={styles.fieldValue}>No automatic execution.</Text>
-        </View>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: !canConfirm || planning }}
-          disabled={!canConfirm || planning}
-          onPress={() => {
-            // Prépare l'approbation : aucune ouverture du wallet, aucune
-            // signature, aucun envoi. Uniquement un résumé public.
-            void handleRequestApproval();
-          }}
-          style={[styles.button, canConfirm ? null : styles.disabled]}
-        >
-          <Text style={styles.buttonText}>
-            {planning ? 'Preparing…' : 'Approve proposal'}
-          </Text>
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Cancel approval"
-          onPress={handleCancelConfirm}
-          style={[styles.button, styles.secondary]}
-        >
-          <Text style={styles.secondaryText}>Cancel</Text>
-        </Pressable>
-      </ScrollView>
-    );
-  }
+  // (Aucun état ni handler de signature : cet écran n'envoie rien.)
 
   return (
     <ScrollView
@@ -428,7 +168,14 @@ export function TransactionReviewScreen({
       keyboardShouldPersistTaps="handled"
     >
       <Text style={styles.badge}>DEVNET</Text>
-      <Text style={styles.title}>Transaction review</Text>
+      <Text style={styles.title}>Technical transaction details</Text>
+      <Text style={styles.subtitle}>
+        Review the decoded transaction details. Approval is performed from Proposal
+        Details.
+        {REVIEW_SCREEN_CAPABILITIES.readOnly
+          ? ' No wallet action is available on this screen.'
+          : ''}
+      </Text>
 
       <Text style={[styles.previewBanner, model.isPreview ? null : styles.onchainBanner]}>
         {model.isPreview
@@ -474,6 +221,14 @@ export function TransactionReviewScreen({
         {approvalsConfirmed} of {guardThreshold} confirmed
       </Text>
 
+      {/* 5bis. Lecture seule : aucun CTA ici, on informe seulement. */}
+      <Text style={styles.fieldLabel}>Approval</Text>
+      <Text style={styles.fieldNote}>
+        {canConfirm
+          ? 'Guard and allowlist are satisfied. Approval is performed from Proposal Details.'
+          : 'Approval is not available for this proposal in its current state.'}
+      </Text>
+
       {/* 6. Avertissement ou prochaine etape */}
       {needsWarning || (guard.status === 'blocked' && !showUserState) ? (
         <View style={styles.warnBox}>
@@ -507,10 +262,6 @@ export function TransactionReviewScreen({
           ))}
         </View>
       ) : null}
-      <Text style={styles.secondaryText}>
-        Execution is not implemented yet — no Execute button is active in this build.
-      </Text>
-
       {/* 7. Details techniques, replies par defaut */}
       <TransactionTechnicalDetails
         model={model}
@@ -521,20 +272,7 @@ export function TransactionReviewScreen({
 
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ disabled: !canConfirm }}
-        disabled={!canConfirm}
-        onPress={() => {
-          // Ouvre uniquement la seconde confirmation locale : aucun envoi ici.
-          setConfirmStep(true);
-        }}
-        style={[styles.button, canConfirm ? null : styles.disabled]}
-      >
-        <Text style={styles.buttonText}>Review and confirm</Text>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Back to main screen"
+        accessibilityLabel="Back to proposal details"
         onPress={handleBack}
         style={[styles.button, styles.secondary]}
       >
@@ -571,7 +309,13 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '700',
+    marginBottom: 4,
+  },
+  subtitle: {
+    color: '#6b7280',
+    fontSize: 13,
     marginBottom: 12,
+    textAlign: 'center',
   },
   previewBanner: {
     backgroundColor: '#fff7ed',
@@ -642,24 +386,6 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '800',
   },
-  card: {
-    alignSelf: 'stretch',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 14,
-  },
-  summaryLabel: {
-    color: '#6b7280',
-    fontSize: 11,
-    textTransform: 'uppercase',
-  },
-  summaryValue: {
-    color: '#101317',
-    fontSize: 18,
-    fontWeight: '600',
-    marginTop: 2,
-  },
   decode: {
     color: '#047857',
     fontSize: 12,
@@ -694,6 +420,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
+  fieldNote: {
+    color: '#6b7280',
+    fontSize: 12,
+    marginTop: 4,
+  },
   button: {
     alignItems: 'center',
     backgroundColor: '#1a56db',
@@ -703,15 +434,6 @@ const styles = StyleSheet.create({
     minHeight: 48,
     paddingHorizontal: 24,
     width: '100%',
-  },
-  disabled: {
-    backgroundColor: '#9ca3af',
-    opacity: 0.7,
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
   },
   secondary: {
     backgroundColor: '#f3f4f6',
