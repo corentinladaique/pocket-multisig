@@ -49,6 +49,18 @@ import {
   deriveVaultVisibleState,
   VAULT_VISIBLE_LABELS,
 } from '../wallet/vaultCreationState';
+import { lamportsToSolDisplay } from '../wallet/vaultBalance';
+import {
+  DEVNET_SOL_DISCLAIMER,
+  formatPriceUpdatedAt,
+  formatUsdEstimate,
+  USD_ESTIMATE_UNAVAILABLE,
+  type SolPrice,
+} from '../wallet/fiatEstimate';
+import {
+  decomposeCreationCost,
+  type CreationCostBreakdown,
+} from '../vault/multisigCreationCost';
 import * as multisig from '@sqds/multisig';
 import { PublicKey } from '@solana/web3.js';
 import {
@@ -123,6 +135,15 @@ export function CreateVaultScreen({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResult, setCreateResult] = useState<MultisigCreationSignSendResult | null>(null);
+  // Cout estime de creation, issu EXCLUSIVEMENT de la simulation locale deja
+  // calculee (aucune lecture RPC ajoutee). Unites internes en lamports ; jamais
+  // affichees a l'utilisateur. La decomposition rent/frais n'est renseignee que
+  // si elle est fiable (voir decomposeCreationCost).
+  const [creationCost, setCreationCost] = useState<CreationCostBreakdown | null>(null);
+  // Prix SOL/USD : AUCUNE source fiable branchee pour l'instant (pas de package,
+  // pas de secret, pas de valeur codee en dur). L'interface est prete : il suffit
+  // de renseigner ce prix plus tard, sans toucher au reste.
+  const solPrice = null as SolPrice | null;
   // Verrou de tentative : jamais deux envois en parallele, jamais deux envois
   // apres une signature obtenue.
   const sendAttemptedRef = useRef(false);
@@ -225,6 +246,21 @@ export function CreateVaultScreen({
     mwaReport !== null ||
     signingStateLabel !== null ||
     checkEvidence !== null;
+
+  // --- Affichage du cout : TOUJOURS en SOL (jamais de lamports a l'ecran). ---
+  const costTotalSol = creationCost === null ? null : lamportsToSolDisplay(creationCost.totalLamports);
+  const costRentSol =
+    creationCost === null || creationCost.rentLamports === null
+      ? null
+      : lamportsToSolDisplay(creationCost.rentLamports);
+  const costFeeSol =
+    creationCost === null || creationCost.feeLamports === null
+      ? null
+      : lamportsToSolDisplay(creationCost.feeLamports);
+  const costBreakdownAvailable = costRentSol !== null && costFeeSol !== null;
+  const usdEstimate =
+    creationCost === null ? null : formatUsdEstimate({ lamports: creationCost.totalLamports, price: solPrice });
+  const priceUpdatedAt = solPrice === null ? null : formatPriceUpdatedAt(solPrice.fetchedAt);
 
   const memberCounter = useRef(0);
 
@@ -720,6 +756,7 @@ export function CreateVaultScreen({
     setCheckEvidence(null);
     setCheckReport(null);
     setCheckError(null);
+    setCreationCost(null);
     void (async () => {
       try {
         const prepared = await prepareCreation(creator);
@@ -727,12 +764,21 @@ export function CreateVaultScreen({
           prepared.simulation.creatorBalanceDelta === null
             ? null
             : Math.abs(prepared.simulation.creatorBalanceDelta);
+        // Decomposition NON inventee : le rent vient des lamports reellement
+        // alloues au compte multisig simule ; les frais reseau sont le reste,
+        // payes par le wallet createur (fee payer).
+        setCreationCost(
+          decomposeCreationCost({
+            rentLamports: prepared.simulation.multisigRentLamports,
+            totalLamports: charged,
+          }),
+        );
         setCreating(false);
         Alert.alert(
           'Create this multisig on Devnet?',
           [
             `Threshold: ${plan.threshold} of ${plan.members.length} members`,
-            `Estimated cost: ${charged === null ? 'unknown' : `${charged} lamports`} (rent + network fee)`,
+            `Estimated cost: ${charged === null ? 'unknown' : lamportsToSolDisplay(charged)} (rent + network fee)`,
             `Payer wallet: ${creator}`,
             '',
             'You sign ONCE as creator. The other members are not asked to approve.',
@@ -1154,225 +1200,275 @@ export function CreateVaultScreen({
           <View style={styles.block}>
             <Text style={styles.blockTitle}>Review</Text>
 
-            <Text style={styles.fieldLabel}>Vault name *</Text>
-            <Text style={styles.fieldValue}>
-              {vaultName.trim().length > 0 ? vaultName.trim() : 'Vault name required'}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Members ({members.length})</Text>
-            {members.map((member) => (
-              <View key={member.id} style={styles.reviewMember}>
-                <Text style={styles.memberLabel}>
-                  {member.label}
-                </Text>
-                <Text selectable style={styles.fieldValue}>{member.publicKey}</Text>
-              </View>
-            ))}
-
-            <Text style={styles.fieldLabel}>Threshold</Text>
-            <Text style={styles.fieldValue}>
-              {threshold} of {members.length}
-            </Text>
-
-            <Text style={styles.fieldLabel}>Planned permissions</Text>
-            <Text style={styles.fieldValue}>
-              Permissions will be configured during creation.
-            </Text>
-
-            <Text style={styles.fieldLabel}>Network</Text>
-            <Text style={styles.fieldValue}>Devnet</Text>
-
-            {/* Objet local derive (aucun RPC, aucune signature) : meme source de
-                verite que la future demande de creation Devnet. */}
-            <Text style={styles.fieldLabel}>Creation summary</Text>
-            <View style={styles.summaryBox}>
-              <Text style={styles.fieldValue}>Members: {request.memberCount}</Text>
+            {!createdAndVerified ? (
+              <>
+              <Text style={styles.fieldLabel}>Vault name *</Text>
               <Text style={styles.fieldValue}>
-                Threshold: {request.threshold} of {request.memberCount}
+                {vaultName.trim().length > 0 ? vaultName.trim() : 'Vault name required'}
               </Text>
-              <Text style={styles.fieldValue}>Network: Devnet</Text>
-              <Text style={request.readyForCreation ? styles.statusReady : styles.warningText}>
-                State: {request.readyForCreation ? 'Ready' : 'Not Ready'}
+
+              <Text style={styles.fieldLabel}>Members ({members.length})</Text>
+              {members.map((member) => (
+                <View key={member.id} style={styles.reviewMember}>
+                  <Text style={styles.memberLabel}>
+                    {member.label}
+                  </Text>
+                  <Text selectable style={styles.fieldValue}>{member.publicKey}</Text>
+                </View>
+              ))}
+
+              <Text style={styles.fieldLabel}>Threshold</Text>
+              <Text style={styles.fieldValue}>
+                {threshold} of {members.length}
               </Text>
-            </View>
 
-            <Text style={styles.fieldLabel}>Status</Text>
-            <Text style={ready ? styles.statusReady : styles.warningText}>
-              {ready ? 'Ready to create' : 'Not ready yet — see below'}
-            </Text>
-
-            {/* Erreurs bloquantes et avertissements rappeles ici : la revue doit
-                rester lisible sans revenir a l'etape Security check. */}
-            {draft.validationErrors.length > 0 ? (
-              <View style={styles.errorBox}>
-                {draft.validationErrors.map((message) => (
-                  <Text key={message} style={styles.errorText}>{message}</Text>
-                ))}
-              </View>
-            ) : null}
-
-            {draft.validationWarnings.length > 0 ? (
-              <View style={styles.noticeBox}>
-                {draft.validationWarnings.map((message) => (
-                  <Text key={message} style={styles.warningText}>{message}</Text>
-                ))}
-              </View>
-            ) : null}
-
-            {/* ETAT A — pret avant creation : verdict de preparation
-                (createReadiness) + recapitulatif du vault deja affiche
-                ci-dessus. Aucune section de diagnostic vide. */}
-            <View style={styles.noticeBox}>
-              <Text style={canCreate ? styles.statusReady : styles.warningText}>
-                {createReadiness.userMessage}
+              <Text style={styles.fieldLabel}>Planned permissions</Text>
+              <Text style={styles.fieldValue}>
+                Permissions will be configured during creation.
               </Text>
-              {!canCreate ? (
-                <Text style={styles.warningText}>{createReadiness.recommendedAction}</Text>
-              ) : null}
-              {!canCreate ? (
-                <Text style={styles.warningText}>{createBlockedReason.message}</Text>
-              ) : null}
-              {!canCreate ? (
-                <Text style={styles.warningText}>{createBlockedReason.action}</Text>
-              ) : null}
-            </View>
 
-            {/* CTA PRINCIPAL UNIQUE : meme handler que le CTA de l'ancien ecran
-                de transaction. Le libelle bascule sur « Prepare again » seulement
-                lorsque la machine d'etat autorise une nouvelle tentative. */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityState={{ busy: creating, disabled: !canCreate || creating }}
-              disabled={!canCreate || creating}
-              onPress={onCreateOnDevnet}
-              style={[styles.button, (!canCreate || creating) && styles.disabled]}
-            >
-              {creating ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.buttonText}>
-                  {needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'}
+              <Text style={styles.fieldLabel}>Network</Text>
+              <Text style={styles.fieldValue}>Devnet</Text>
+
+              {/* Objet local derive (aucun RPC, aucune signature) : meme source de
+                  verite que la future demande de creation Devnet. */}
+              <Text style={styles.fieldLabel}>Creation summary</Text>
+              <View style={styles.summaryBox}>
+                <Text style={styles.fieldValue}>Members: {request.memberCount}</Text>
+                <Text style={styles.fieldValue}>
+                  Threshold: {request.threshold} of {request.memberCount}
                 </Text>
-              )}
-            </Pressable>
-
-            <Text style={styles.hint}>
-              Nothing is sent on-chain before the final confirmation.
-            </Text>
-
-            {/* Envoi en cours, avant toute signature : etat explicite. */}
-            {vaultVisibleState === 'awaiting-wallet' ? (
-              <Text style={styles.hint}>{VAULT_VISIBLE_LABELS['awaiting-wallet']}</Text>
-            ) : null}
-
-            {/* ETAT B — echec AVANT signature : rien n'a ete envoye. Les details
-                techniques sont dans Troubleshooting details, pas ici. Le flux de
-                nouvelle tentative reste le CTA unique ci-dessus. */}
-            {nothingWasSent ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>Nothing was sent.</Text>
-                {createError !== null ? (
-                  <Text style={styles.errorText}>{createError}</Text>
-                ) : null}
-                {operationReport !== null ? (
-                  <Text style={styles.hint}>{operationReport.title}</Text>
-                ) : null}
-                <Text style={styles.hint}>
-                  {needsPrepareAgain
-                    ? 'Prepare again is available: no signature was obtained.'
-                    : 'A new attempt is not available right now.'}
+                <Text style={styles.fieldValue}>Network: Devnet</Text>
+                <Text style={request.readyForCreation ? styles.statusReady : styles.warningText}>
+                  State: {request.readyForCreation ? 'Ready' : 'Not Ready'}
                 </Text>
               </View>
-            ) : null}
 
-            {/* ETAT C — signature obtenue, PAS encore confirmee. Un seul libelle,
-                derive des preuves : jamais de contradiction avec le statut. */}
-            {vaultVisibleState === 'signed-pending-confirmation' ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>
-                  {VAULT_VISIBLE_LABELS['signed-pending-confirmation']}
-                </Text>
-                <Text selectable style={styles.fieldValue}>
-                  Signature: {createResult?.signature}
-                </Text>
-                <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
-                <Text style={styles.hint}>Vault verification: pending</Text>
-                {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ busy: checking, disabled: checking }}
-                  disabled={checking}
-                  onPress={() => {
-                    void onCheckTransactionAgain();
-                  }}
-                  style={[styles.button, styles.secondary]}
-                >
-                  {checking ? (
-                    <ActivityIndicator color="#101317" />
+              <Text style={styles.fieldLabel}>Status</Text>
+              <Text style={ready ? styles.statusReady : styles.warningText}>
+                {ready ? 'Ready to create' : 'Not ready yet — see below'}
+              </Text>
+
+              {/* Erreurs bloquantes et avertissements rappeles ici : la revue doit
+                  rester lisible sans revenir a l'etape Security check. */}
+              {draft.validationErrors.length > 0 ? (
+                <View style={styles.errorBox}>
+                  {draft.validationErrors.map((message) => (
+                    <Text key={message} style={styles.errorText}>{message}</Text>
+                  ))}
+                </View>
+              ) : null}
+
+              {draft.validationWarnings.length > 0 ? (
+                <View style={styles.noticeBox}>
+                  {draft.validationWarnings.map((message) => (
+                    <Text key={message} style={styles.warningText}>{message}</Text>
+                  ))}
+                </View>
+              ) : null}
+
+              {/* Cout estime : TOUJOURS en SOL (jamais de lamports a l'ecran).
+                  Total issu de la simulation reelle ; decomposition rent/frais
+                  uniquement quand les deux composantes sont disponibles. */}
+              {creationCost !== null && costTotalSol !== null && vaultVisibleState !== 'awaiting-wallet' ? (
+                <View style={styles.summaryBox}>
+                  <Text style={styles.fieldLabel}>Estimated creation cost</Text>
+                  <Text style={styles.fieldValue}>{costTotalSol}</Text>
+
+                  {costBreakdownAvailable ? (
+                    <>
+                      <Text style={styles.fieldLabel}>Includes</Text>
+                      <Text style={styles.fieldValue}>• Account creation / rent: {costRentSol}</Text>
+                      <Text style={styles.fieldValue}>• Network fee: {costFeeSol}</Text>
+                      <Text style={styles.hint}>Network fee paid by your connected wallet.</Text>
+                    </>
                   ) : (
-                    <Text style={styles.secondaryText}>Check transaction again</Text>
+                    <Text style={styles.hint}>Cost breakdown unavailable</Text>
                   )}
-                </Pressable>
-                {signatureVerdict?.retryAllowed !== true ? (
+
+                  <Text style={styles.hint}>Final cost may vary slightly before signing.</Text>
+
+                  {usdEstimate !== null ? (
+                    <>
+                      <Text style={styles.fieldValue}>{usdEstimate}</Text>
+                      {priceUpdatedAt !== null ? (
+                        <Text style={styles.hint}>
+                          Indicative mainnet SOL value — {priceUpdatedAt}
+                        </Text>
+                      ) : null}
+                    </>
+                  ) : (
+                    <Text style={styles.hint}>{USD_ESTIMATE_UNAVAILABLE}</Text>
+                  )}
+
+                  <Text style={styles.hint}>{DEVNET_SOL_DISCLAIMER}</Text>
+                </View>
+              ) : null}
+
+              {/* ETAT 1 — avant tentative : verdict de preparation
+                  (createReadiness) + recapitulatif deja affiche ci-dessus.
+                  Masque pendant la creation (ETAT 2) et apres succes. */}
+              {vaultVisibleState !== 'awaiting-wallet' ? (
+                <View style={styles.noticeBox}>
+                  <Text style={canCreate ? styles.statusReady : styles.warningText}>
+                    {createReadiness.userMessage}
+                  </Text>
+                  {!canCreate ? (
+                    <Text style={styles.warningText}>{createReadiness.recommendedAction}</Text>
+                  ) : null}
+                  {!canCreate ? (
+                    <Text style={styles.warningText}>{createBlockedReason.message}</Text>
+                  ) : null}
+                  {!canCreate ? (
+                    <Text style={styles.warningText}>{createBlockedReason.action}</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {/* ETAT 2 — creation en cours : progression uniquement. */}
+              {vaultVisibleState === 'awaiting-wallet' ? (
+                <Text style={styles.hint}>Preparing creation…</Text>
+              ) : null}
+
+              {/* CTA PRINCIPAL UNIQUE (ETAT 1 et ETAT 3) : meme handler que
+                  l'ancien ecran de transaction. Le libelle bascule sur « Prepare
+                  again » seulement si la machine d'etat autorise une nouvelle
+                  tentative. JAMAIS rendu pendant la creation (ETAT 2), des qu'une
+                  signature existe (ETAT 4) ou apres succes (ETAT 5). */}
+              {!signatureObtained && vaultVisibleState !== 'awaiting-wallet' ? (
+                <>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: creating, disabled: !canCreate || creating }}
+                    disabled={!canCreate || creating}
+                    onPress={onCreateOnDevnet}
+                    style={[styles.button, (!canCreate || creating) && styles.disabled]}
+                  >
+                    {creating ? (
+                      <ActivityIndicator color="#ffffff" />
+                    ) : (
+                      <Text style={styles.buttonText}>
+                        {needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'}
+                      </Text>
+                    )}
+                  </Pressable>
+
+                  <Text style={styles.hint}>
+                    Nothing is sent on-chain before the final confirmation.
+                  </Text>
+                </>
+              ) : null}
+
+              {/* ETAT B — echec AVANT signature : rien n'a ete envoye. Les details
+                  techniques sont dans Troubleshooting details, pas ici. Le flux de
+                  nouvelle tentative reste le CTA unique ci-dessus. */}
+              {nothingWasSent ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>Nothing was sent.</Text>
+                  {createError !== null ? (
+                    <Text style={styles.errorText}>{createError}</Text>
+                  ) : null}
+                  {operationReport !== null ? (
+                    <Text style={styles.hint}>{operationReport.title}</Text>
+                  ) : null}
+                  <Text style={styles.hint}>
+                    {needsPrepareAgain
+                      ? 'Prepare again is available: no signature was obtained.'
+                      : 'A new attempt is not available right now.'}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* ETAT C — signature obtenue, PAS encore confirmee. Un seul libelle,
+                  derive des preuves : jamais de contradiction avec le statut. */}
+              {vaultVisibleState === 'signed-pending-confirmation' ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorText}>
+                    {VAULT_VISIBLE_LABELS['signed-pending-confirmation']}
+                  </Text>
+                  <Text selectable style={styles.fieldValue}>
+                    Signature: {createResult?.signature}
+                  </Text>
+                  <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
+                  <Text style={styles.hint}>Vault verification: pending</Text>
+                  {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: checking, disabled: checking }}
+                    disabled={checking}
+                    onPress={() => {
+                      void onCheckTransactionAgain();
+                    }}
+                    style={[styles.button, styles.secondary]}
+                  >
+                    {checking ? (
+                      <ActivityIndicator color="#101317" />
+                    ) : (
+                      <Text style={styles.secondaryText}>Check transaction again</Text>
+                    )}
+                  </Pressable>
+                  {signatureVerdict?.retryAllowed !== true ? (
+                    <Text style={styles.hint}>
+                      A signature already exists: no second send is allowed until the transaction is
+                      proven absent, expired or failed.
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {/* ETAT D — transaction CONFIRMEE mais read-back pas encore disponible.
+                  Bloc principal NEUTRE : rien a renvoyer, la signature est valide. Le
+                  rouge est reserve a un echec definitivement prouve. */}
+              {vaultVisibleState === 'confirmed-pending-readback' ||
+              vaultVisibleState === 'confirmed-readback-temporarily-unavailable' ? (
+                <View style={styles.noticeBox}>
+                  <Text style={styles.infoHeading}>Transaction confirmed</Text>
+                  <Text style={styles.noticeText}>
+                    {vaultVisibleState === 'confirmed-readback-temporarily-unavailable'
+                      ? 'The vault details could not be loaded because the network connection was unavailable.'
+                      : 'The vault details are not readable yet.'}
+                  </Text>
+                  <Text style={styles.noticeText}>Nothing needs to be sent again.</Text>
+                  <Text selectable style={styles.fieldValue}>
+                    Signature: {createResult?.signature}
+                  </Text>
+                  <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
+                  <Text style={styles.hint}>Vault verification: pending</Text>
+                  {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ busy: checking, disabled: checking }}
+                    disabled={checking}
+                    onPress={() => {
+                      void onCheckTransactionAgain();
+                    }}
+                    style={[styles.button, styles.secondary]}
+                  >
+                    {checking ? (
+                      <ActivityIndicator color="#101317" />
+                    ) : (
+                      <Text style={styles.secondaryText}>Check transaction again</Text>
+                    )}
+                  </Pressable>
+                  {operationReport?.actions.allowReconnect === true ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Reconnect wallet"
+                      onPress={() => {
+                        void onReconnectWallet();
+                      }}
+                      style={[styles.button, styles.secondary]}
+                    >
+                      <Text style={styles.secondaryText}>Reconnect wallet</Text>
+                    </Pressable>
+                  ) : null}
                   <Text style={styles.hint}>
                     A signature already exists: no second send is allowed until the transaction is
                     proven absent, expired or failed.
                   </Text>
-                ) : null}
-              </View>
-            ) : null}
-
-            {/* ETAT D — transaction CONFIRMEE mais read-back pas encore disponible.
-                Bloc principal NEUTRE : rien a renvoyer, la signature est valide. Le
-                rouge est reserve a un echec definitivement prouve. */}
-            {vaultVisibleState === 'confirmed-pending-readback' ||
-            vaultVisibleState === 'confirmed-readback-temporarily-unavailable' ? (
-              <View style={styles.noticeBox}>
-                <Text style={styles.infoHeading}>Transaction confirmed</Text>
-                <Text style={styles.noticeText}>
-                  {vaultVisibleState === 'confirmed-readback-temporarily-unavailable'
-                    ? 'The vault details could not be loaded because the network connection was unavailable.'
-                    : 'The vault details are not readable yet.'}
-                </Text>
-                <Text style={styles.noticeText}>Nothing needs to be sent again.</Text>
-                <Text selectable style={styles.fieldValue}>
-                  Signature: {createResult?.signature}
-                </Text>
-                <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
-                <Text style={styles.hint}>Vault verification: pending</Text>
-                {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ busy: checking, disabled: checking }}
-                  disabled={checking}
-                  onPress={() => {
-                    void onCheckTransactionAgain();
-                  }}
-                  style={[styles.button, styles.secondary]}
-                >
-                  {checking ? (
-                    <ActivityIndicator color="#101317" />
-                  ) : (
-                    <Text style={styles.secondaryText}>Check transaction again</Text>
-                  )}
-                </Pressable>
-                {operationReport?.actions.allowReconnect === true ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Reconnect wallet"
-                    onPress={() => {
-                      void onReconnectWallet();
-                    }}
-                    style={[styles.button, styles.secondary]}
-                  >
-                    <Text style={styles.secondaryText}>Reconnect wallet</Text>
-                  </Pressable>
-                ) : null}
-                <Text style={styles.hint}>
-                  A signature already exists: no second send is allowed until the transaction is
-                  proven absent, expired or failed.
-                </Text>
-              </View>
+                </View>
+              ) : null}
+              </>
             ) : null}
 
             {/* ETAT D — succes : creation confirmee ET multisig relu/verifie. */}

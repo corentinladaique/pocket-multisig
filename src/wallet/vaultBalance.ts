@@ -23,13 +23,70 @@ export type VaultBalanceView = {
   hint: string;
 };
 
-/** 1 SOL = 1e9 lamports, formaté avec 9 décimales exactes. */
+/** 1 SOL = 1e9 lamports, en arithmetique ENTIERE (aucun flottant imprecis). */
+const LAMPORTS_PER_SOL_BIGINT = 1_000_000_000n;
+
+/** Convertit une entree lamports en bigint ; refuse un number non entier sur. */
+function toSafeLamportsBigInt(lamports: number | bigint): bigint {
+  if (typeof lamports === 'bigint') return lamports;
+  if (!Number.isSafeInteger(lamports)) {
+    throw new RangeError(
+      'lamportsToSolDisplay: a number must be a safe integer (no fraction, ' +
+        'finite, within Number.MAX_SAFE_INTEGER); use bigint for larger values.',
+    );
+  }
+  return BigInt(lamports);
+}
+
+/**
+ * Partie decimale construite sur 9 chiffres, en arithmetique ENTIERE.
+ * `trimTrailingZeros` retire les zeros finaux inutiles (jamais significatifs).
+ */
+function solStringFromLamports(value: bigint, trimTrailingZeros: boolean): string {
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const whole = absolute / LAMPORTS_PER_SOL_BIGINT;
+  let fraction = (absolute % LAMPORTS_PER_SOL_BIGINT).toString().padStart(9, '0');
+  if (trimTrailingZeros) fraction = fraction.replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${fraction.length > 0 ? `.${fraction}` : ''}`;
+}
+
+/**
+ * Formate des lamports en SOL pour l'utilisateur, suffixe « SOL » inclus.
+ *
+ * REGLES DE FORMATAGE :
+ * - 1 SOL = 1 000 000 000 lamports ; les lamports ENTIERS sont la verite ;
+ * - arithmetique ENTIERE (bigint) : jamais de division flottante, donc aucune
+ *   perte de precision, y compris au-dela de Number.MAX_SAFE_INTEGER ;
+ * - partie decimale construite sur 9 chiffres, zeros finaux INUTILES retires ;
+ * - jamais plus de 9 decimales.
+ *
+ * Cas : 1 -> "0.000000001 SOL" ; 1 000 000 -> "0.001 SOL" ;
+ * 1 666 080 -> "0.00166608 SOL" ; 1e9 -> "1 SOL" ; 1.5e9 -> "1.5 SOL".
+ *
+ * ENTREES ACCEPTEES :
+ * - `bigint` : toujours accepte (source de verite pour les grandes valeurs) ;
+ * - `number` : uniquement un ENTIER SUR (`Number.isSafeInteger`). Un number
+ *   fractionnaire, non fini, ou au-dela de `Number.MAX_SAFE_INTEGER` est REFUSE
+ *   (`RangeError`) plutot que d'afficher une valeur approximative.
+ *
+ * Aucune valeur transactionnelle n'est lue ni modifiee : cette fonction ne
+ * produit qu'une chaine d'affichage.
+ *
+ * Exemple : lamportsToSolDisplay(1_666_080) === '0.00166608 SOL'.
+ */
+export function lamportsToSolDisplay(lamports: number | bigint): string {
+  return `${solStringFromLamports(toSafeLamportsBigInt(lamports), true)} SOL`;
+}
+
+/**
+ * Variante historique SANS suffixe et SANS retrait des zeros finaux (9 decimales
+ * fixes) : conservee telle quelle pour les soldes deja affiches (Multisig
+ * Details, Proposal Details). La mission en cours ne modifie que le cout de
+ * creation (`lamportsToSolDisplay`).
+ */
 export function formatSol(lamports: number): string {
-  const negative = lamports < 0;
-  const absolute = Math.abs(Math.trunc(lamports));
-  const whole = Math.floor(absolute / LAMPORTS_PER_SOL);
-  const fraction = `${absolute - whole * LAMPORTS_PER_SOL}`.padStart(9, '0');
-  return `${negative ? '-' : ''}${whole}.${fraction}`;
+  return solStringFromLamports(toSafeLamportsBigInt(lamports), false);
 }
 
 export function describeVaultBalance(input: {

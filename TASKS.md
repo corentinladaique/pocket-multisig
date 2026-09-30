@@ -538,3 +538,25 @@ Règles UX :
 - Cette migration exigera une **installation de package** et un
   **rebuild natif** : elle doit faire l'objet d'une autorisation explicite.
 - Aucun package ne doit être installé dans la mission en cours.
+
+### Cost display and fiat estimation
+
+- Les coûts visibles par l'utilisateur doivent être en **SOL**, jamais en lamports.
+- Les **lamports restent l'unité interne exacte** (construction, simulation, vérification).
+- Conversion **SOL/USD indicative** future uniquement.
+- **Source de prix externe** requise (aucune valeur on-chain, aucun secret, aucun package).
+- **Horodatage** du prix requis à l'affichage.
+- **Échec gracieux** requis : prix indisponible ⇒ SOL seul, afficher « USD estimate unavailable. », jamais bloquer une création.
+- **Sans impact** sur la construction de la transaction.
+- Le SOL **Devnet n'a aucune valeur monétaire réelle** : avertissement obligatoire affiché.
+- Le dollar affiché n'est **qu'une comparaison avec le marché Mainnet**, jamais la valeur réelle des fonds, un débit, une garantie de prix ni un conseil financier.
+
+### Backlog — autres affichages de lamports (migration SOL différée)
+
+Ces emplacements affichent encore des lamports ; à migrer vers `lamportsToSolDisplay`
+dans une passe ultérieure cohérente (hors périmètre du hotfix Create Vault) :
+
+- `src/screens/NewProposalScreen.tsx` : libellé « Amount (lamports) », `= ${formatSol(...)}`, et « … lamports » dans l'alerte de confirmation.
+- `src/screens/TransactionReviewScreen.tsx` : `${formatLamportsExact(...)} (… lamports)`.
+- `src/screens/TransactionTechnicalDetails.tsx` : même patron `(… lamports)`.
+- `src/screens/MultisigDetailsScreen.tsx` : solde affiché en SOL (`balanceView.sol`) ; `VaultBalanceView.lamports` conservé pour un futur Technical details SOL-only.

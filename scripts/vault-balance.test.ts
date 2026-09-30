@@ -134,21 +134,37 @@ check('7. source differente : divergence visible, rien d invente', () => {
 
 check('8. Home et Inbox : meme contexte construit localement, sans refresh', () => {
   const source = readFileSync('src/screens/ProposalDetailsScreen.tsx', 'utf8');
-  assert.ok(source.includes('const effectiveGuardContext = guardContext ?? selfGuardContext'));
+  // Meme garde et meme modele quel que soit le chemin (Home ou Inbox) : aucune
+  // relecture supplementaire n'est imposee pour afficher l'ecran.
+  assert.ok(source.includes('const model = selfModel ?? decodedModel'));
+  assert.ok(source.includes('const effectiveGuardContext = selfGuardContext ?? guardContext'));
+  assert.ok(source.includes('useWalletGuard(effectiveGuardContext ?? null)'));
   assert.ok(source.includes('Checking approval permissions…'));
+  // Le decodage se declenche a l ouverture, sans dependre du modele fourni.
   assert.ok(
-    source.includes('if (decodedModel === null) void runDecode();'),
+    source.includes('void runDecode();'),
     'le decodage se declenche a l ouverture, quel que soit le chemin',
   );
 });
 
 check('9. le solde est relu avant toute execution', () => {
   const source = readFileSync('src/screens/ProposalDetailsScreen.tsx', 'utf8');
+  // Protection FONCTIONNELLE (jamais un simple commentaire francais) : la
+  // relecture du solde vit DANS le chemin d'execution, avant tout envoi.
   assert.ok(
-    source.includes('Contrôle pré-exécution'),
-    'la relecture pre-execution doit etre explicite dans le code',
+    source.includes('const freshLamports = await readVaultBalance();'),
+    'la relecture pre-execution doit exister',
   );
-  assert.ok(source.includes('Insufficient vault balance'));
+  const runExecution = source.slice(
+    source.indexOf('const runExecution ='),
+    source.indexOf('const onExecute ='),
+  );
+  assert.ok(runExecution.length > 0, 'le chemin runExecution doit exister');
+  assert.ok(
+    runExecution.indexOf('readVaultBalance') < runExecution.indexOf('signAndSendProposalExecution'),
+    'le solde doit etre relu AVANT toute signature/envoi',
+  );
+  assert.ok(runExecution.includes('Insufficient vault balance'));
   assert.ok(
     source.includes('disabled={!canExecute || insufficientBalance'),
     'Execute doit etre bloque si le solde est insuffisant',
