@@ -551,12 +551,13 @@ Règles UX :
 - Le SOL **Devnet n'a aucune valeur monétaire réelle** : avertissement obligatoire affiché.
 - Le dollar affiché n'est **qu'une comparaison avec le marché Mainnet**, jamais la valeur réelle des fonds, un débit, une garantie de prix ni un conseil financier.
 
-### Backlog — autres affichages de lamports (migration SOL différée)
+### Backlog — autres affichages de lamports
 
-Ces emplacements affichent encore des lamports ; à migrer vers `lamportsToSolDisplay`
-dans une passe ultérieure cohérente (hors périmètre du hotfix Create Vault) :
+Les emplacements suivants affichent encore des lamports, mais UNIQUEMENT dans
+une section « Technical details » (jamais dans une décision utilisateur) :
+`src/screens/TransactionReviewScreen.tsx` et
+`src/screens/TransactionTechnicalDetails.tsx` (`(… lamports)`).
 
-- `src/screens/NewProposalScreen.tsx` : libellé « Amount (lamports) », `= ${formatSol(...)}`, et « … lamports » dans l'alerte de confirmation.
-- `src/screens/TransactionReviewScreen.tsx` : `${formatLamportsExact(...)} (… lamports)`.
-- `src/screens/TransactionTechnicalDetails.tsx` : même patron `(… lamports)`.
-- `src/screens/MultisigDetailsScreen.tsx` : solde affiché en SOL (`balanceView.sol`) ; `VaultBalanceView.lamports` conservé pour un futur Technical details SOL-only.
+Migré dans le hotfix des montants : `src/screens/NewProposalScreen.tsx`
+(saisie et lecture en **SOL** ; lamports confinés à « Technical details »).
+`src/screens/MultisigDetailsScreen.tsx` : solde affiché en SOL (`balanceView.sol`).

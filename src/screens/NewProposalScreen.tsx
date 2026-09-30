@@ -42,6 +42,12 @@ import {
   type MaxSnapshot,
   type MaxTransferPlan,
 } from '../vault/maxTransfer';
+import {
+  formatSolAmount,
+  lamportsToSolText,
+  parseSolToLamports,
+  SOL_AMOUNT_MESSAGES,
+} from '../vault/solAmount';
 
 /**
  * Creation d'une proposition de transfert SOL, de bout en bout.
@@ -89,8 +95,9 @@ export function NewProposalScreen({
   const creator = account === undefined ? '' : account.address.toString();
 
   const [destination, setDestination] = useState('');
-  const [lamportsText, setLamportsText] = useState('');
-  /** Buffer EXPLICITE choisi par l'utilisateur : jamais une réserve cachée. */
+  /** Montant saisi par l'utilisateur en SOL (jamais en lamports). */
+  const [solText, setSolText] = useState('');
+  /** Buffer EXPLICITE choisi par l'utilisateur, en SOL : jamais une réserve cachée. */
   const [bufferText, setBufferText] = useState('');
   const [maxPlan, setMaxPlan] = useState<MaxTransferPlan | null>(null);
   /**
@@ -132,8 +139,11 @@ export function NewProposalScreen({
           verified: createResult.verified,
         });
 
-  // Saisie entiere uniquement : tout le reste devient NaN et le builder refuse.
-  const lamports = /^\d+$/.test(lamportsText.trim()) ? Number(lamportsText.trim()) : Number.NaN;
+  // Saisie en SOL, convertie EXACTEMENT en lamports (arithmetique entiere,
+  // 9 decimales max). Toute forme invalide produit NaN : le builder refuse et
+  // l'ecran affiche un message en SOL explicite.
+  const parsedSol = parseSolToLamports(solText);
+  const lamports = parsedSol.ok ? parsedSol.lamports : Number.NaN;
 
   const build = useMemo(
     () =>
@@ -167,7 +177,9 @@ export function NewProposalScreen({
 
   // Le résumé Max n'est visible que si la saisie correspond encore exactement à
   // l'instantané du calcul : montant, destination, buffer et solde de référence.
-  const maxBufferLamports = /^\d+$/.test(bufferText.trim()) ? Number(bufferText.trim()) : 0;
+  const parsedMaxBuffer = bufferText.trim().length === 0 ? null : parseSolToLamports(bufferText);
+  const maxBufferLamports =
+    parsedMaxBuffer !== null && parsedMaxBuffer.ok ? parsedMaxBuffer.lamports : 0;
   const maxSummaryVisible =
     maxPlan !== null &&
     maxPlan.ready &&
@@ -195,7 +207,9 @@ export function NewProposalScreen({
     } catch {
       freshLamports = null;
     }
-    const bufferLamports = /^\d+$/.test(bufferText.trim()) ? Number(bufferText.trim()) : 0;
+    // Le buffer saisi est en SOL : il est converti exactement en lamports.
+    const parsedBuffer = bufferText.trim().length === 0 ? null : parseSolToLamports(bufferText);
+    const bufferLamports = parsedBuffer !== null && parsedBuffer.ok ? parsedBuffer.lamports : 0;
     const plan = computeMaxTransfer({
       explicitBufferLamports: bufferLamports,
       // Faits du chemin de code : ce formulaire ne construit qu'un transfert SOL
@@ -207,7 +221,8 @@ export function NewProposalScreen({
     setMaxPlan(plan);
     if (plan.amountLamports !== null && freshLamports !== null) {
       // Montant figé maintenant : il ne suivra jamais un solde futur.
-      setLamportsText(String(plan.amountLamports));
+      // La valeur reste un nombre ENTIER de lamports ; seul l'affichage est en SOL.
+      setSolText(lamportsToSolText(plan.amountLamports));
       // Instantané : le résumé disparaîtra dès que la saisie changera.
       setMaxSnapshot(maxSnapshotFrom(plan, destination, freshLamports));
       setPipeline({ status: 'idle' });
@@ -354,8 +369,10 @@ export function NewProposalScreen({
         `Transfer ${formatSol(build.request?.lamports ?? 0)} to ${destination}`,
         `Next index: ${build.transactionIndexNext} · ${members.length} member(s)`,
         `Estimated cost to you: ${
-          simulation.estimatedCreatorBalanceDelta ?? 'not measurable'
-        } lamports`,
+          simulation.estimatedCreatorBalanceDelta === null
+            ? 'not measurable'
+            : formatSolAmount(Math.abs(simulation.estimatedCreatorBalanceDelta))
+        }`,
         'You will sign ONE transaction creating two accounts on devnet.',
       ].join('\n'),
       [
@@ -434,30 +451,32 @@ export function NewProposalScreen({
             value={destination}
           />
 
-          <Text style={styles.fieldLabel}>Amount (lamports)</Text>
+          <Text style={styles.fieldLabel}>Amount (SOL)</Text>
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
-            keyboardType="number-pad"
-            onChangeText={setLamportsText}
-            placeholder="1000000"
+            keyboardType="decimal-pad"
+            onChangeText={setSolText}
+            placeholder="0.02"
             placeholderTextColor="#9ca3af"
             style={styles.input}
-            value={lamportsText}
+            value={solText}
           />
           <Text style={styles.fieldNote}>
             {Number.isFinite(lamports) && lamports > 0
-              ? `= ${formatSol(lamports)}`
-              : 'Integer number of lamports, greater than 0.'}
+              ? `Proposal amount: ${formatSolAmount(lamports)}`
+              : parsedSol.ok
+                ? 'Enter an amount to continue.'
+                : SOL_AMOUNT_MESSAGES[parsedSol.reason]}
           </Text>
 
           {/* Max : relit le solde confirme puis fige un montant exact. Le buffer
               est EXPLICITE et facultatif : aucune reserve cachee n'est appliquee. */}
-          <Text style={styles.fieldLabel}>Optional explicit buffer (lamports)</Text>
+          <Text style={styles.fieldLabel}>Optional explicit buffer (SOL)</Text>
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
-            keyboardType="number-pad"
+            keyboardType="decimal-pad"
             onChangeText={setBufferText}
             placeholder="0"
             placeholderTextColor="#9ca3af"
@@ -497,7 +516,7 @@ export function NewProposalScreen({
                     {formatSol(maxPlan.amountLamports ?? 0)} SOL
                   </Text>
                   <Text style={styles.fieldNote}>
-                    Explicit buffer: {maxPlan.bufferLamports} lamports
+                    Explicit buffer: {formatSolAmount(maxPlan.bufferLamports)}
                   </Text>
                   <Text style={styles.fieldNote}>Estimated remaining balance</Text>
                   <Text selectable style={styles.monoValue}>
@@ -530,17 +549,20 @@ export function NewProposalScreen({
         </View>
 
         {/* Etats utilisateur : un montant vide n'est PAS une erreur avant toute
-            tentative explicite. Les details en lamports restent techniques. */}
+            tentative explicite. Les messages visibles sont en SOL ; les lamports
+            restent confinés à la section « Technical details ». */}
         {build.errors.length > 0 && amountAttempted ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorTitle}>
-              {lamports <= 0 ? 'Enter an amount to continue.' : 'Not ready'}
+              {parsedSol.ok ? 'Not ready' : SOL_AMOUNT_MESSAGES[parsedSol.reason]}
             </Text>
-            {build.errors.map((error) => (
-              <Text key={error} style={styles.errorText}>
-                · {error}
-              </Text>
-            ))}
+            {build.errors
+              .filter((error) => !/lamports/i.test(error))
+              .map((error) => (
+                <Text key={error} style={styles.errorText}>
+                  · {error}
+                </Text>
+              ))}
           </View>
         ) : null}
         {build.errors.length > 0 && !amountAttempted ? (
@@ -579,12 +601,21 @@ export function NewProposalScreen({
             <Text style={pipeline.status === 'ready' ? styles.successTitle : styles.warningText}>
               {pipeline.status === 'ready' ? 'Simulation succeeded' : 'Simulation did not pass'}
             </Text>
+            <Text style={styles.fieldValue}>
+              Proposal amount: {formatSolAmount(build.request?.lamports ?? 0)}
+            </Text>
+            <Text style={styles.fieldValue}>
+              Estimated cost to you:{' '}
+              {simulation.estimatedCreatorBalanceDelta === null
+                ? 'not measurable'
+                : formatSolAmount(Math.abs(simulation.estimatedCreatorBalanceDelta))}
+            </Text>
+            <Text style={styles.fieldLabel}>Technical details</Text>
             <Text style={styles.monoValue}>Next index: {build.transactionIndexNext}</Text>
             <Text selectable style={styles.monoValue}>Transaction PDA: {build.transactionPda}</Text>
             <Text selectable style={styles.monoValue}>Proposal PDA: {build.proposalPda}</Text>
             <Text style={styles.monoValue}>
-              Estimated cost to you: {simulation.estimatedCreatorBalanceDelta ?? 'not measurable'}{' '}
-              lamports
+              Estimated cost (lamports): {simulation.estimatedCreatorBalanceDelta ?? 'not measurable'}
             </Text>
             <Text style={styles.monoValue}>
               Compute units: {simulation.unitsConsumed ?? 'unknown'}
@@ -777,6 +808,7 @@ const styles = StyleSheet.create({
   },
   memoInput: { minHeight: 72, textAlignVertical: 'top' },
   fieldNote: { color: '#6b7280', fontSize: 12, marginTop: 6 },
+  fieldValue: { color: '#101317', fontSize: 16, fontWeight: '700', marginTop: 4 },
   errorBox: {
     alignSelf: 'stretch',
     backgroundColor: '#fef2f2',

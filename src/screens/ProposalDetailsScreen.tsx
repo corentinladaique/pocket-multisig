@@ -24,6 +24,7 @@ import {
   type ProposalExecutionSignSendResult,
 } from '../squads/signAndSendProposalExecution';
 import { connection } from '../solana/connection';
+import { confirmSignature } from '../solana/confirmSignature';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import { estimateRemainingBalance, formatSol, describeTransferSource } from '../wallet/vaultBalance';
 
@@ -34,6 +35,12 @@ import {
   summarizeOperation,
   type ProposalStatusKind,
 } from '../squads/proposals';
+import {
+  APPROVAL_OUTCOME_LABELS,
+  approvalOutcomeActions,
+  classifyApprovalOutcome,
+  walletHasApproved,
+} from '../squads/approvalOutcome';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
@@ -243,16 +250,33 @@ export function ProposalDetailsScreen({
 
   const guard = useWalletGuard(effectiveGuardContext ?? null);
   const allowlist = model === null ? null : checkReviewAllowlist(model);
-  const canConfirm =
-    model !== null &&
-    allowlist !== null &&
-    computeCanConfirm(model, guard.status, allowlist.status);
   const [approving, setApproving] = useState(false);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [approvalResult, setApprovalResult] = useState<ProposalApprovalSignSendResult | null>(null);
   // Une seule tentative : jamais deux envois en parallele, jamais de second
   // envoi apres une signature obtenue.
   const approvalAttemptedRef = useRef(false);
+  // Approbateurs RELUS on-chain : source unique du libelle « Already approved ».
+  // Jamais un etat memoire local seul — une reouverture repart de la chaine.
+  const [onchainApproval, setOnchainApproval] = useState<{
+    approvedAddresses: string[];
+    status: string;
+  } | null>(null);
+  // Relecture seule « Check approval again ».
+  const [checkingApproval, setCheckingApproval] = useState(false);
+  const [approvalCheckReport, setApprovalCheckReport] = useState<string | null>(null);
+
+  // Verite on-chain si elle a ete relue, sinon donnee fournie par l'appelant.
+  const effectiveApprovedAddresses = onchainApproval?.approvedAddresses ?? proposal.approvedAddresses;
+  const effectiveProposalStatus = onchainApproval?.status ?? proposal.status;
+  const walletAlreadyApproved = walletHasApproved(effectiveApprovedAddresses, walletAddress);
+
+  const canConfirm =
+    model !== null &&
+    allowlist !== null &&
+    !walletAlreadyApproved &&
+    effectiveProposalStatus === 'Active' &&
+    computeCanConfirm(model, guard.status, allowlist.status);
 
   // --- Execution : trois conditions lisibles, aucune invention.
   // Note : le guard de revue vérifie la permission `Vote` (il bloque donc à
@@ -264,9 +288,9 @@ export function ProposalDetailsScreen({
     members.some(
       (member) => member.address === walletAddress && member.roles.includes('Execute'),
     );
-  const thresholdReached = proposal.approvedAddresses.length >= threshold;
+  const thresholdReached = effectiveApprovedAddresses.length >= threshold;
   const canExecute =
-    proposal.status === 'Approved' && thresholdReached && walletHasExecute;
+    effectiveProposalStatus === 'Approved' && thresholdReached && walletHasExecute;
   const [executing, setExecuting] = useState(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [executionResult, setExecutionResult] = useState<ProposalExecutionSignSendResult | null>(
@@ -289,6 +313,19 @@ export function ProposalDetailsScreen({
           signature: approvalResult.signature,
           verified: approvalResult.verified,
         });
+  // Etat lisible de l'approbation (libelles exacts) + actions autorisees.
+  const approvalState =
+    approvalResult === null
+      ? null
+      : classifyApprovalOutcome({
+          confirmed: approvalResult.confirmed === true,
+          signature: approvalResult.signature,
+          verified: approvalResult.verified,
+        });
+  const approvalActions = approvalState === null ? null : approvalOutcomeActions(approvalState);
+  const approvalLabel =
+    approvalState === null ? 'Approval recorded on-chain' : APPROVAL_OUTCOME_LABELS[approvalState];
+
   const executionOutcome =
     executionResult === null
       ? null
@@ -414,16 +451,105 @@ export function ProposalDetailsScreen({
     );
   };
 
+  /**
+   * Relecture on-chain de la Proposal : approbateurs et statut RÉELS.
+   * Strictement en lecture seule : aucun wallet, aucune signature, aucun envoi.
+   */
+  const refreshProposalFromChain = async (): Promise<{
+    approvedAddresses: string[];
+    status: string;
+  } | null> => {
+    try {
+      const [proposalPdaKey] = multisig.getProposalPda({
+        multisigPda: new PublicKey(address),
+        transactionIndex: BigInt(index),
+      });
+      const info = await connection.getAccountInfo(proposalPdaKey, 'confirmed');
+      if (info === null) return null;
+      const [decoded] = multisig.accounts.Proposal.fromAccountInfo(info);
+      const fresh = {
+        approvedAddresses: decoded.approved.map((entry) => entry.toBase58()),
+        status: decoded.status.__kind,
+      };
+      setOnchainApproval(fresh);
+      return fresh;
+    } catch {
+      // Une lecture impossible ne fabrique aucun état : on garde le précédent.
+      return null;
+    }
+  };
+
+  /**
+   * « Check approval again » : LECTURES uniquement (statut de signature,
+   * confirmation, relecture de la Proposal). Jamais de reconstruction, jamais
+   * d'ouverture du wallet, jamais de signature, jamais de second envoi.
+   */
+  const onCheckApprovalAgain = async () => {
+    const signature = approvalResult?.signature ?? null;
+    if (signature === null || checkingApproval) return;
+    setCheckingApproval(true);
+    setApprovalCheckReport('Checking the approval…');
+    try {
+      const confirmation = await confirmSignature({ connection, signature });
+      const fresh = await refreshProposalFromChain();
+      const confirmed = confirmation.status === 'confirmed';
+      const verified =
+        confirmed && fresh !== null && walletHasApproved(fresh.approvedAddresses, walletAddress);
+      setApprovalResult((previous) =>
+        previous === null
+          ? previous
+          : {
+              ...previous,
+              confirmed,
+              confirmationStatus: confirmation.status,
+              readBack:
+                fresh === null
+                  ? previous.readBack
+                  : {
+                      address: proposalPda(address, index) ?? previous.readBack?.address ?? '',
+                      approvedAddresses: fresh.approvedAddresses,
+                      index,
+                      status: fresh.status,
+                    },
+              verified,
+            },
+      );
+      setApprovalCheckReport(
+        verified
+          ? 'Proposal approved and verified.'
+          : confirmed
+            ? 'Approval confirmed, proposal verification pending.'
+            : 'Approval signed, confirmation pending.',
+      );
+    } catch (caught: unknown) {
+      setApprovalCheckReport(
+        isTemporaryNetworkFailure(caught)
+          ? 'Verification temporarily unavailable: check again later.'
+          : 'Verification failed — this action sent nothing.',
+      );
+    } finally {
+      setCheckingApproval(false);
+    }
+  };
+
   const runApproval = async () => {
     if (model === null || allowlist === null || approvalAttemptedRef.current) return;
     if (walletAddress === null) {
       setApprovalError('No wallet connected: an approval must be signed by a member.');
       return;
     }
+    // Défense on-chain AVANT toute construction : un wallet déjà approbateur ne
+    // reconstruit rien (le module relit aussi la Proposal, mais on évite ici
+    // même d'ouvrir le wallet).
+    if (walletAlreadyApproved) {
+      setApprovalError('Already approved: this wallet already approved this proposal.');
+      return;
+    }
     approvalAttemptedRef.current = true;
     setApproving(true);
     setApprovalError(null);
     setApprovalResult(null);
+    setApprovalCheckReport(null);
     let signature: string | null = null;
     try {
       const result = await signAndSendProposalApproval({
@@ -441,6 +567,11 @@ export function ProposalDetailsScreen({
       });
       signature = result.signature;
       setApprovalResult(result);
+      // Une signature existe : on relit la Proposal pour afficher l'état RÉEL
+      // (dont « Already approved »). Lecture seule, aucun wallet.
+      if (signature !== null) {
+        void refreshProposalFromChain();
+      }
       if (!result.verified) {
         setApprovalError(describeOperationFailure(result));
       }
@@ -689,13 +820,13 @@ export function ProposalDetailsScreen({
               accessibilityLabel="Approve this proposal"
               accessibilityState={{
                 busy: approving,
-                disabled: !canConfirm || approving || (approvalResult !== null && !(approvalOutcome?.allowNewAttempt ?? false)),
+                disabled: !canConfirm || approving || walletAlreadyApproved || (approvalResult !== null && !(approvalActions?.allowPrepareAgain ?? false)),
               }}
-              disabled={!canConfirm || approving || (approvalResult !== null && !(approvalOutcome?.allowNewAttempt ?? false))}
+              disabled={!canConfirm || approving || walletAlreadyApproved || (approvalResult !== null && !(approvalActions?.allowPrepareAgain ?? false))}
               onPress={onApprove}
               style={[
                 styles.button,
-                (!canConfirm || approving || (approvalResult !== null && !(approvalOutcome?.allowNewAttempt ?? false))) &&
+                (!canConfirm || approving || walletAlreadyApproved || (approvalResult !== null && !(approvalActions?.allowPrepareAgain ?? false))) &&
                   styles.disabled,
               ]}
             >
@@ -703,12 +834,21 @@ export function ProposalDetailsScreen({
                 <ActivityIndicator color="#ffffff" />
               ) : (
                 <Text style={styles.buttonText}>
-                  {approvalResult !== null && (approvalOutcome?.allowNewAttempt ?? false)
-                    ? 'Prepare again'
-                    : 'Approve'}
+                  {walletAlreadyApproved
+                    ? 'Already approved'
+                    : approvalResult !== null && (approvalActions?.allowPrepareAgain ?? false)
+                      ? 'Prepare again'
+                      : 'Approve'}
                 </Text>
               )}
             </Pressable>
+
+            {walletAlreadyApproved ? (
+              <Text style={styles.fieldNote}>
+                Already approved: this wallet is recorded as an approver on-chain. No new
+                approval can be sent.
+              </Text>
+            ) : null}
 
             {!canConfirm ? (
               <Text style={styles.fieldNote}>
@@ -754,7 +894,7 @@ export function ProposalDetailsScreen({
                   }
                 >
                   {/* Sans signature, ce libellé est le SEUL autorisé : jamais « Sent ». */}
-                  {approvalOutcome?.label ?? 'Approval recorded on-chain'}
+                  {approvalLabel}
                 </Text>
                 {approvalResult.signature !== null ? (
                   <Text selectable style={styles.monoValue}>
@@ -774,6 +914,25 @@ export function ProposalDetailsScreen({
                       {approvalResult.readBack.address}
                     </Text>
                   </>
+                ) : null}
+                {approvalActions?.allowCheckAgain ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Check approval again"
+                    accessibilityState={{ busy: checkingApproval, disabled: checkingApproval }}
+                    disabled={checkingApproval}
+                    onPress={() => {
+                      void onCheckApprovalAgain();
+                    }}
+                    style={[styles.button, styles.secondary]}
+                  >
+                    <Text style={styles.secondaryText}>
+                      {checkingApproval ? 'Checking…' : 'Check approval again'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {approvalCheckReport !== null ? (
+                  <Text style={styles.fieldNote}>{approvalCheckReport}</Text>
                 ) : null}
               </View>
             ) : null}

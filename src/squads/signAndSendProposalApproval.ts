@@ -21,6 +21,12 @@ import {
   type MultisigCreationBlockhash,
   type SignAndSendTransactionsFn,
 } from '../vault/signAndSendMultisigCreation';
+import {
+  APPROVAL_PREPARATION_DEADLINE_MS,
+  APPROVAL_WALLET_DEADLINE_MS,
+  isOperationTimeout,
+  withDeadline,
+} from '../wallet/asyncDeadline';
 
 /**
  * Approbation d'une proposition Squads v4 : preparation, envoi, relecture.
@@ -134,13 +140,42 @@ export async function signAndSendProposalApproval(input: {
 
   // 1. Plan : le guard et la liste blanche sont deja verdictes, et
   //    `planProposalApproval` relit la proposition avant de construire.
-  const plan = await planProposalApproval({
-    connection: input.connection,
-    multisigPda,
-    preconditions: input.preconditions,
-    transactionIndex: input.transactionIndex,
-    walletAddress: input.memberAddress,
-  });
+  //    BORNE DANS LE TEMPS : une preparation qui traine (RPC public lent) ne doit
+  //    jamais laisser le spinner actif ; dans ce cas le wallet n'est PAS ouvert.
+  let plan: Awaited<ReturnType<typeof planProposalApproval>>;
+  try {
+    plan = await withDeadline(
+      planProposalApproval({
+        connection: input.connection,
+        multisigPda,
+        preconditions: input.preconditions,
+        transactionIndex: input.transactionIndex,
+        walletAddress: input.memberAddress,
+      }),
+      APPROVAL_PREPARATION_DEADLINE_MS,
+      'ApprovalPreparation',
+    );
+  } catch (caught: unknown) {
+    const timedOut = isOperationTimeout(caught);
+    return {
+      approvalsBefore: 0,
+      errorMessage: timedOut
+        ? 'Approval preparation expired. Nothing was sent.'
+        : caught instanceof Error
+          ? caught.message
+          : String(caught),
+      readBack: null,
+      signature: null,
+      signingState: 'signature-request-expired',
+      validationErrors: [
+        timedOut
+          ? 'PreparationExpired: the proposal could not be prepared in time; the wallet was never opened.'
+          : 'PreparationFailed: the proposal could not be read before signing.',
+      ],
+      validationWarnings: warnings,
+      verified: false,
+    };
+  }
 
   if (plan.status !== 'ready') {
     return {
@@ -169,7 +204,11 @@ export async function signAndSendProposalApproval(input: {
       transaction.recentBlockhash = input.blockhash.blockhash;
       transaction.lastValidBlockHeight = input.blockhash.lastValidBlockHeight;
     } else {
-      await applyFreshBlockhash(input.connection, transaction);
+      await withDeadline(
+        applyFreshBlockhash(input.connection, transaction),
+        APPROVAL_PREPARATION_DEADLINE_MS,
+        'Blockhash',
+      );
     }
   } catch (caught: unknown) {
     errors.push(
@@ -188,7 +227,11 @@ export async function signAndSendProposalApproval(input: {
 
   let minContextSlot: number;
   try {
-    minContextSlot = await input.connection.getSlot('confirmed');
+    minContextSlot = await withDeadline(
+      input.connection.getSlot('confirmed'),
+      APPROVAL_PREPARATION_DEADLINE_MS,
+      'Slot',
+    );
   } catch (caught: unknown) {
     errors.push(
       `SlotUnavailable: ${caught instanceof Error ? caught.message : String(caught)}`,
@@ -208,7 +251,11 @@ export async function signAndSendProposalApproval(input: {
   const bundle = blockhashBundleFromTransaction(transaction);
   let blockHeight: number | null = null;
   try {
-    blockHeight = await input.connection.getBlockHeight('confirmed');
+    blockHeight = await withDeadline(
+      input.connection.getBlockHeight('confirmed'),
+      APPROVAL_PREPARATION_DEADLINE_MS,
+      'BlockHeight',
+    );
   } catch (caught: unknown) {
     errors.push(
       `BlockHeightUnavailable: ${caught instanceof Error ? caught.message : String(caught)}`,
@@ -222,6 +269,9 @@ export async function signAndSendProposalApproval(input: {
     if (signingWindow !== null && !signingWindow.usable) {
       errors.push(`SignatureWindowNotUsable: ${signingWindow.reason}`);
     }
+    // Verdict rendu AVANT toute ouverture du wallet : rien n'a ete signe ni
+    // envoye. On le dit explicitement, sans jamais simuler un envoi.
+    errors.push('Approval preparation expired. Nothing was sent.');
     return {
       approvalsBefore,
       blockhash: bundle?.blockhash ?? null,
@@ -243,16 +293,29 @@ export async function signAndSendProposalApproval(input: {
   let errorCode: string | null = null;
   let confirmation: SignatureConfirmation | null = null;
   try {
-    const returned = await input.signAndSendTransactions(transaction, minContextSlot);
+    const returned = await withDeadline(
+      input.signAndSendTransactions(transaction, minContextSlot),
+      APPROVAL_WALLET_DEADLINE_MS,
+      'WalletSignature',
+    );
     signature = Array.isArray(returned) ? returned[0] ?? null : returned;
     if (signature === null || signature.length === 0) {
       errors.push('NoSignatureReturned: the wallet returned no transaction signature.');
     }
   } catch (caught: unknown) {
-    errorMessage = caught instanceof Error ? caught.message : String(caught);
+    const timedOut = isOperationTimeout(caught);
+    errorMessage = timedOut
+      ? 'The wallet did not return a signature in time. No signature was returned; nothing is counted as sent.'
+      : caught instanceof Error
+        ? caught.message
+        : String(caught);
     // Code MWA conservé séparément : le message seul ne permet pas de diagnostiquer.
     errorCode = describeMwaError(caught, 'signAndSendTransactions').code;
-    errors.push(`SendFailed: ${errorMessage}`);
+    errors.push(
+      timedOut
+        ? 'WalletTimeout: the wallet did not answer before the deadline; no signature was obtained.'
+        : `SendFailed: ${errorMessage}`,
+    );
   }
 
   if (signature === null) {
