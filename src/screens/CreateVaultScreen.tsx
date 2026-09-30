@@ -26,6 +26,7 @@ import {
 import {
   applyFreshBlockhash,
   signAndSendMultisigCreation,
+  type MultisigCreationReadBack,
   type MultisigCreationSignSendResult,
 } from '../vault/signAndSendMultisigCreation';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
@@ -44,6 +45,10 @@ import {
 import { confirmSignature } from '../solana/confirmSignature';
 import type { SignatureConfirmationStatus } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
+import {
+  deriveVaultVisibleState,
+  VAULT_VISIBLE_LABELS,
+} from '../wallet/vaultCreationState';
 import * as multisig from '@sqds/multisig';
 import { PublicKey } from '@solana/web3.js';
 import {
@@ -132,6 +137,13 @@ export function CreateVaultScreen({
     blockHeight: number | null;
     lastValidBlockHeight: number | null;
   } | null>(null);
+  // Adresse multisig ATTENDUE, derivee PENDANT la tentative signee et conservee
+  // jusqu'au verdict final. Check transaction again ne rederive jamais de cle et
+  // n'utilise que cette adresse.
+  const [expectedMultisigPda, setExpectedMultisigPda] = useState<string | null>(null);
+  // Erreur technique BRUTE du dernier recheck : reservee a Troubleshooting
+  // details, jamais concatenee dans le message utilisateur principal.
+  const [checkError, setCheckError] = useState<string | null>(null);
   // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
   const attemptOutcome =
     createResult === null
@@ -159,6 +171,25 @@ export function CreateVaultScreen({
   // deduction prudente (jamais « confirmed » sans preuve explicite).
   const signatureStatus: SignatureConfirmationStatus =
     checkEvidence?.status ?? (createResult?.confirmed === true ? 'confirmed' : 'pending');
+  // Confirmation : preuve la plus avancee disponible (jamais de regression).
+  const transactionConfirmed =
+    createResult?.confirmed === true || checkEvidence?.status === 'confirmed';
+  // Relecture impossible POUR UNE RAISON RESEAU (temporaire) : le read-back
+  // initial peut avoir echoue sur UnknownHostException avant confirmation.
+  const isTemporaryVerificationFailure =
+    isTemporaryNetworkFailure(checkError ?? '') ||
+    isTemporaryNetworkFailure(createResult?.errorMessage ?? '') ||
+    isTemporaryNetworkFailure((createResult?.validationErrors ?? []).join(' '));
+  // Etat visible UNIQUE, derive des preuves les plus avancees : confirmed ne
+  // redevient jamais « confirmation pending ».
+  const vaultVisibleState = deriveVaultVisibleState({
+    confirmed: transactionConfirmed,
+    creating,
+    hasAttempt: hasCreateResult,
+    networkFailure: isTemporaryVerificationFailure,
+    signatureObtained,
+    verified: createdAndVerified,
+  });
   // Verdict de preuve : seule source capable d'autoriser une nouvelle tentative
   // APRES une signature deja obtenue.
   const signatureVerdict = signedPending
@@ -168,10 +199,10 @@ export function CreateVaultScreen({
         status: signatureStatus,
       })
     : null;
-  // Adresse du vault principal (PDA index 0) derivee de l'adresse du multisig
-  // deja relue on-chain : aucune lecture reseau, aucune transaction.
+  // Adresse du vault principal (PDA index 0) derivee de l'adresse ATTENDUE de la
+  // tentative signee : aucune lecture reseau, aucune transaction.
   const mainVaultAddress = (() => {
-    const address = createResult?.readBack?.address ?? null;
+    const address = expectedMultisigPda ?? createResult?.readBack?.address ?? null;
     if (address === null) return null;
     try {
       const [vaultPda] = multisig.getVaultPda({ index: 0, multisigPda: new PublicKey(address) });
@@ -181,15 +212,18 @@ export function CreateVaultScreen({
     }
   })();
   // Diagnostics disponibles : la section repliable n'apparait que s'il existe au
-  // moins une information, jamais vide.
+  // moins une information technique, jamais vide.
   const mwaReport = operationReport?.mwa ?? null;
   const signingStateLabel =
     createResult?.signingState === undefined ? null : signingStateTitle(createResult.signingState);
+  const technicalErrors: string[] = [];
+  if (createResult?.errorMessage != null) technicalErrors.push(createResult.errorMessage);
+  for (const message of createResult?.validationErrors ?? []) technicalErrors.push(message);
+  if (checkError !== null && !technicalErrors.includes(checkError)) technicalErrors.push(checkError);
   const hasDiagnostics =
+    technicalErrors.length > 0 ||
     mwaReport !== null ||
     signingStateLabel !== null ||
-    createResult?.errorMessage != null ||
-    checkReport !== null ||
     checkEvidence !== null;
 
   const memberCounter = useRef(0);
@@ -402,6 +436,9 @@ export function CreateVaultScreen({
       const transaction = prepared.build.transaction;
       if (transaction === null || sendAttemptedRef.current) return;
       sendAttemptedRef.current = true;
+      // Adresse ATTENDUE de cette tentative signee : conservee jusqu'au verdict
+      // final, y compris si la relecture initiale echoue (reseau).
+      setExpectedMultisigPda(prepared.build.multisigPda);
       setCreating(true);
       setCreateError(null);
       let signature: string | null = null;
@@ -525,71 +562,151 @@ export function CreateVaultScreen({
   }, [connect]);
 
   /**
-   * Relecture seule après qu'une signature a existé : confirmation de la
-   * transaction puis comparaison du compte métier. Ne prépare rien, ne signe
-   * rien, n'envoie rien — c'est le seul geste autorisé tant que la
-   * transaction peut encore aboutir.
+   * Relecture SEULE apres qu'une signature a existe : confirmation de la
+   * transaction puis relecture du compte multisig ATTENDU (derive pendant la
+   * tentative signee). Ne prepare rien, ne signe rien, ne renvoie rien et
+   * n'ouvre aucun wallet : uniquement des lectures RPC.
    */
   const onCheckTransactionAgain = useCallback(async () => {
     const signature = createResult?.signature ?? null;
-    const address = createResult?.readBack?.address ?? null;
     if (signature === null) {
       setCheckReport('No signature exists: nothing was sent, nothing to check.');
       return;
     }
+    // Une seule relecture a la fois : ignore les taps simultanes.
+    if (checking) return;
     setChecking(true);
-    setCheckReport(null);
+    setCheckReport('Checking transaction…');
+    setCheckError(null);
+    // Adresse ATTENDUE de la tentative signee : jamais rederivee, jamais une
+    // nouvelle cle.
+    const expectedPda = expectedMultisigPda ?? createResult?.readBack?.address ?? null;
     try {
       const confirmation = await confirmSignature({ connection, signature });
       // Hauteur de bloc relue : c'est elle, avec lastValidBlockHeight, qui
-      // décide si une nouvelle tentative est permise après signature.
+      // decide si une nouvelle tentative est permise apres signature.
       let currentBlockHeight: number | null = null;
       try {
         currentBlockHeight = await connection.getBlockHeight('confirmed');
       } catch {
         currentBlockHeight = null;
       }
+      const confirmed = confirmation.status === 'confirmed';
       setCheckEvidence({
         blockHeight: currentBlockHeight,
         lastValidBlockHeight: createResult?.lastValidBlockHeight ?? null,
         status: confirmation.status,
       });
-      const lines = [`Confirmation: ${confirmation.status}`];
-      let readBackVerified = false;
-      if (address !== null) {
-        const info = await connection.getAccountInfo(new PublicKey(address), 'confirmed');
-        if (info === null) {
-          lines.push('Multisig account: not found yet');
-        } else {
-          const [decoded] = multisig.accounts.Multisig.fromAccountInfo(info);
-          const sameThreshold = decoded.threshold === plan.threshold;
-          const sameMemberCount = decoded.members.length === plan.members.length;
-          readBackVerified = sameThreshold && sameMemberCount;
-          lines.push(
-            `Multisig account: present, owner ${info.owner.toString()}, threshold ${
-              decoded.threshold
-            }, ${decoded.members.length} member(s)`,
-          );
-          if (!readBackVerified) {
-            lines.push('Read-back does not match the expected configuration.');
+
+      // Relecture du compte multisig ATTENDU (lecture seule). Les erreurs sont
+      // conservees pour Troubleshooting details, jamais concatenes au message
+      // utilisateur principal.
+      let readBack: MultisigCreationReadBack | null = null;
+      let readBackError: string | null = null;
+      if (confirmed && expectedPda !== null) {
+        try {
+          const info = await connection.getAccountInfo(new PublicKey(expectedPda), 'confirmed');
+          if (info === null) {
+            readBackError = 'ReadBackMissing: the multisig account is not readable yet.';
+          } else {
+            const [decoded] = multisig.accounts.Multisig.fromAccountInfo(info);
+            const sameThreshold = decoded.threshold === plan.threshold;
+            const sameMemberCount = decoded.members.length === plan.members.length;
+            if (sameThreshold && sameMemberCount) {
+              readBack = {
+                address: expectedPda,
+                configAuthority: decoded.configAuthority.toString(),
+                memberCount: decoded.members.length,
+                owner: info.owner.toString(),
+                rentCollector: decoded.rentCollector?.toString() ?? null,
+                threshold: decoded.threshold,
+              };
+            } else {
+              readBackError =
+                'ReadBackMismatch: the on-chain configuration does not match the expected one.';
+            }
           }
+        } catch (caught: unknown) {
+          readBackError = caught instanceof Error ? caught.message : String(caught);
         }
       }
-      setCheckReport(lines.join(' · '));
-      const evidence = {
-        confirmed: confirmation.status === 'confirmed',
-        readBackVerified,
-        signatureObtained: true,
-      };
+
+      if (readBack !== null) {
+        // Trois preuves reunies : signature, confirmation, read-back coherent.
+        // Aucun envoi, aucune signature : on ne fait que completer le resultat.
+        setCreateResult((previous) =>
+          previous === null
+            ? previous
+            : {
+                ...previous,
+                confirmed: true,
+                errorCode: null,
+                errorMessage: null,
+                readBack,
+                signingState: 'confirmed',
+                verified: true,
+              },
+        );
+        setCreateError(null);
+        setCheckReport('Vault created and verified.');
+        setOperationReport(
+          buildOperationReport({
+            evidence: { confirmed: true, readBackVerified: true, signatureObtained: true },
+            state: 'operation-created-and-verified',
+          }),
+        );
+        // Meme effet local que l'envoi initial : retrouver le vault plus tard.
+        const memberLabels: Record<string, string> = {};
+        for (const member of plan.members) {
+          if (member.label.length > 0) memberLabels[member.key] = member.label;
+        }
+        await registry.add({
+          address: readBack.address,
+          memberLabels,
+          source: 'created',
+          vaultName,
+        });
+        return;
+      }
+
+      if (confirmed) {
+        if (readBackError !== null) setCheckError(readBackError);
+        setCheckReport(
+          readBackError !== null && isTemporaryNetworkFailure(readBackError)
+            ? 'Transaction confirmed. Vault verification is temporarily unavailable.'
+            : 'Transaction confirmed. Vault details are not readable yet.',
+        );
+        setOperationReport(
+          buildOperationReport({
+            evidence: { confirmed: true, readBackVerified: false, signatureObtained: true },
+            state: 'transaction-confirmed-readback-failed',
+          }),
+        );
+        return;
+      }
+
+      // Pas encore confirmee : lecture seule, aucune preuve n'avance.
+      setCheckReport('Still not confirmed on-chain. Check transaction again later.');
       setOperationReport(
-        buildOperationReport({ evidence, state: classifyOperationResult(evidence) }),
+        buildOperationReport({
+          evidence: { confirmed: false, readBackVerified: false, signatureObtained: true },
+          state: 'signature-obtained-confirmation-pending',
+        }),
       );
     } catch (caught: unknown) {
-      setCheckReport(caught instanceof Error ? caught.message : String(caught));
+      // Erreur RPC/reseau : conservee pour Troubleshooting details, jamais
+      // concatenee dans le message principal. Signature et bouton conserves.
+      const detail = caught instanceof Error ? caught.message : String(caught);
+      setCheckError(detail);
+      setCheckReport(
+        isTemporaryNetworkFailure(detail)
+          ? 'Transaction confirmed. Vault verification is temporarily unavailable.'
+          : 'Transaction verification failed: see troubleshooting details.',
+      );
     } finally {
       setChecking(false);
     }
-  }, [connection, createResult, plan]);
+  }, [checking, connection, createResult, expectedMultisigPda, plan, registry, vaultName]);
 
   const onCreateOnDevnet = useCallback(() => {
     const creator = walletAddress;
@@ -597,6 +714,12 @@ export function CreateVaultScreen({
     setCreating(true);
     setCreateError(null);
     setCreateResult(null);
+    // Nouvelle tentative : aucun vestige de la precedente (adresse attendue,
+    // preuve relue, erreur technique du recheck).
+    setExpectedMultisigPda(null);
+    setCheckEvidence(null);
+    setCheckReport(null);
+    setCheckError(null);
     void (async () => {
       try {
         const prepared = await prepareCreation(creator);
@@ -1137,7 +1260,13 @@ export function CreateVaultScreen({
               Nothing is sent on-chain before the final confirmation.
             </Text>
 
-            {/* ETAT B — echec AVANT signature : rien n'a ete envoye. Le flux de
+            {/* Envoi en cours, avant toute signature : etat explicite. */}
+            {vaultVisibleState === 'awaiting-wallet' ? (
+              <Text style={styles.hint}>{VAULT_VISIBLE_LABELS['awaiting-wallet']}</Text>
+            ) : null}
+
+            {/* ETAT B — echec AVANT signature : rien n'a ete envoye. Les details
+                techniques sont dans Troubleshooting details, pas ici. Le flux de
                 nouvelle tentative reste le CTA unique ci-dessus. */}
             {nothingWasSent ? (
               <View style={styles.errorBox}>
@@ -1148,18 +1277,6 @@ export function CreateVaultScreen({
                 {operationReport !== null ? (
                   <Text style={styles.hint}>{operationReport.title}</Text>
                 ) : null}
-                {signingStateLabel !== null ? (
-                  <Text style={styles.hint}>Signing state: {signingStateLabel}</Text>
-                ) : null}
-                {mwaReport !== null ? (
-                  <>
-                    <Text style={styles.hint}>MWA step: {mwaReport.step}</Text>
-                    <Text style={styles.hint}>
-                      MWA code: {mwaReport.code ?? 'none returned'}
-                    </Text>
-                    <Text style={styles.hint}>Message: {mwaReport.message}</Text>
-                  </>
-                ) : null}
                 <Text style={styles.hint}>
                   {needsPrepareAgain
                     ? 'Prepare again is available: no signature was obtained.'
@@ -1168,33 +1285,19 @@ export function CreateVaultScreen({
               </View>
             ) : null}
 
-            {/* ETAT C / E — signature obtenue, non encore verifiee. L'action de
-                relecture ne fait que lire : jamais de reconstruction, de
-                signature, d'envoi, ni d'ouverture du wallet. */}
-            {signedPending ? (
+            {/* ETAT C — signature obtenue, PAS encore confirmee. Un seul libelle,
+                derive des preuves : jamais de contradiction avec le statut. */}
+            {vaultVisibleState === 'signed-pending-confirmation' ? (
               <View style={styles.errorBox}>
-                <Text style={styles.errorText}>Transaction signed, verification pending.</Text>
+                <Text style={styles.errorText}>
+                  {VAULT_VISIBLE_LABELS['signed-pending-confirmation']}
+                </Text>
                 <Text selectable style={styles.fieldValue}>
                   Signature: {createResult?.signature}
                 </Text>
-                <Text style={styles.hint}>Confirmation status: {signatureStatus}</Text>
-                {isTemporaryNetworkFailure(createResult?.errorMessage ?? '') ? (
-                  <Text style={styles.hint}>
-                    Temporary network error: the signature stays valid, nothing is rebuilt.
-                  </Text>
-                ) : null}
-                <Text style={styles.hint}>
-                  Read-back:{' '}
-                  {createResult?.readBack === null || createResult?.readBack === undefined
-                    ? 'read-back pending'
-                    : createResult.readBack.address}
-                </Text>
-                {createError !== null ? (
-                  <Text style={styles.errorText}>{createError}</Text>
-                ) : null}
-                {signatureVerdict !== null ? (
-                  <Text style={styles.hint}>Verdict: {signatureVerdict.reason}</Text>
-                ) : null}
+                <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
+                <Text style={styles.hint}>Vault verification: pending</Text>
+                {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ busy: checking, disabled: checking }}
@@ -1210,7 +1313,49 @@ export function CreateVaultScreen({
                     <Text style={styles.secondaryText}>Check transaction again</Text>
                   )}
                 </Pressable>
+                {signatureVerdict?.retryAllowed !== true ? (
+                  <Text style={styles.hint}>
+                    A signature already exists: no second send is allowed until the transaction is
+                    proven absent, expired or failed.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* ETAT D — transaction CONFIRMEE mais read-back pas encore disponible.
+                Bloc principal NEUTRE : rien a renvoyer, la signature est valide. Le
+                rouge est reserve a un echec definitivement prouve. */}
+            {vaultVisibleState === 'confirmed-pending-readback' ||
+            vaultVisibleState === 'confirmed-readback-temporarily-unavailable' ? (
+              <View style={styles.noticeBox}>
+                <Text style={styles.infoHeading}>Transaction confirmed</Text>
+                <Text style={styles.noticeText}>
+                  {vaultVisibleState === 'confirmed-readback-temporarily-unavailable'
+                    ? 'The vault details could not be loaded because the network connection was unavailable.'
+                    : 'The vault details are not readable yet.'}
+                </Text>
+                <Text style={styles.noticeText}>Nothing needs to be sent again.</Text>
+                <Text selectable style={styles.fieldValue}>
+                  Signature: {createResult?.signature}
+                </Text>
+                <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
+                <Text style={styles.hint}>Vault verification: pending</Text>
                 {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ busy: checking, disabled: checking }}
+                  disabled={checking}
+                  onPress={() => {
+                    void onCheckTransactionAgain();
+                  }}
+                  style={[styles.button, styles.secondary]}
+                >
+                  {checking ? (
+                    <ActivityIndicator color="#101317" />
+                  ) : (
+                    <Text style={styles.secondaryText}>Check transaction again</Text>
+                  )}
+                </Pressable>
                 {operationReport?.actions.allowReconnect === true ? (
                   <Pressable
                     accessibilityRole="button"
@@ -1223,12 +1368,10 @@ export function CreateVaultScreen({
                     <Text style={styles.secondaryText}>Reconnect wallet</Text>
                   </Pressable>
                 ) : null}
-                {signatureVerdict?.retryAllowed !== true ? (
-                  <Text style={styles.hint}>
-                    A signature already exists: no second send is allowed until the transaction is
-                    proven absent, expired or failed.
-                  </Text>
-                ) : null}
+                <Text style={styles.hint}>
+                  A signature already exists: no second send is allowed until the transaction is
+                  proven absent, expired or failed.
+                </Text>
               </View>
             ) : null}
 
@@ -1286,8 +1429,16 @@ export function CreateVaultScreen({
                 >
                   <Text style={styles.secondaryText}>Troubleshooting details</Text>
                 </Pressable>
+                {/* Ferme par defaut : les details techniques ne sont jamais
+                    imposes a l'utilisateur. Erreurs RPC completes, MWA, block
+                    heights. */}
                 {troubleshootingOpen ? (
                   <View style={styles.noticeBox}>
+                    {technicalErrors.map((message, index) => (
+                      <Text key={`detail-${index}`} selectable style={styles.hint}>
+                        {message}
+                      </Text>
+                    ))}
                     {mwaReport !== null ? (
                       <>
                         <Text style={styles.hint}>MWA step: {mwaReport.step}</Text>
@@ -1306,13 +1457,8 @@ export function CreateVaultScreen({
                         {checkEvidence.lastValidBlockHeight ?? 'unknown'}
                       </Text>
                     ) : null}
-                    {createResult?.errorMessage != null ? (
-                      <Text style={styles.hint}>
-                        Confirmation error: {createResult.errorMessage}
-                      </Text>
-                    ) : null}
                     {checkReport !== null ? (
-                      <Text style={styles.hint}>Read-back: {checkReport}</Text>
+                      <Text style={styles.hint}>Last recheck: {checkReport}</Text>
                     ) : null}
                   </View>
                 ) : null}
@@ -1584,6 +1730,12 @@ const styles = StyleSheet.create({
     color: '#312e81',
     fontSize: 13,
     marginTop: 4,
+  },
+  infoHeading: {
+    color: '#1e3a8a',
+    fontSize: 15,
+    fontWeight: '800',
+    marginBottom: 2,
   },
   errorBox: {
     backgroundColor: '#fef2f2',

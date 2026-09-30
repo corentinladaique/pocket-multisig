@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 
+import { VAULT_VISIBLE_LABELS } from '../src/wallet/vaultCreationState';
+
 /**
  * Step 5 · Review : parcours de creation unique (plus de Preview separee).
  * Tous les etats utiles sont rendus sur Step 5, avec un seul CTA de creation et
@@ -38,7 +40,14 @@ check('1. les deux ecrans Preview ont ete supprimes du disque', () => {
 check('2. Step 5 rend les quatre familles d etats', () => {
   assert.ok(step5.includes('Prepare and create on Devnet'), 'etat ready : CTA principal');
   assert.ok(step5.includes('Nothing was sent.'), 'etat echec avant signature');
-  assert.ok(step5.includes('Transaction signed, verification pending.'), 'etat signature en attente');
+  assert.ok(
+    step5.includes("VAULT_VISIBLE_LABELS['signed-pending-confirmation']"),
+    'etat signature en attente (libelle partage)',
+  );
+  assert.equal(
+    VAULT_VISIBLE_LABELS['signed-pending-confirmation'],
+    'Transaction signed, confirmation pending.',
+  );
   assert.ok(step5.includes('Vault created and verified.'), 'etat succes verifie');
 });
 
