@@ -15,6 +15,7 @@ export const VAULT_VISIBLE_STATES = [
   'signed-pending-confirmation',
   'confirmed-pending-readback',
   'confirmed-readback-temporarily-unavailable',
+  'confirmed-verification-mismatch',
   'verified',
 ] as const;
 
@@ -27,6 +28,8 @@ export const VAULT_VISIBLE_LABELS: Record<VaultVisibleState, string> = {
   'confirmed-pending-readback': 'Transaction confirmed, vault verification pending.',
   'confirmed-readback-temporarily-unavailable':
     'Transaction confirmed. Vault verification is temporarily unavailable.',
+  'confirmed-verification-mismatch':
+    'Transaction confirmed. The multisig account could not be verified against the configuration you reviewed.',
   verified: 'Vault created and verified.',
 };
 
@@ -42,10 +45,16 @@ export function deriveVaultVisibleState(input: {
   verified: boolean;
   /** Relecture impossible POUR UNE RAISON RESEAU (temporaire). */
   networkFailure: boolean;
+  /**
+   * Configure relue mais NON conforme (owner, threshold, membre, permissions…).
+   * Echec DETERMINISTE : distinct d'un simple manque de reseau.
+   */
+  verificationMismatch?: boolean;
 }): VaultVisibleState {
   if (input.verified) return 'verified';
   if (input.signatureObtained) {
     if (input.confirmed) {
+      if (input.verificationMismatch === true) return 'confirmed-verification-mismatch';
       return input.networkFailure
         ? 'confirmed-readback-temporarily-unavailable'
         : 'confirmed-pending-readback';

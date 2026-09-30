@@ -29,6 +29,11 @@ import {
   type MultisigCreationReadBack,
   type MultisigCreationSignSendResult,
 } from '../vault/signAndSendMultisigCreation';
+import {
+  decodeMultisigCreationReadBack,
+  validateMultisigCreationReadBack,
+  type MultisigCreationExpectation,
+} from '../vault/multisigCreationReadBack';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { AddressInput } from '../ui/AddressInput';
@@ -165,6 +170,9 @@ export function CreateVaultScreen({
   // Erreur technique BRUTE du dernier recheck : reservee a Troubleshooting
   // details, jamais concatenee dans le message utilisateur principal.
   const [checkError, setCheckError] = useState<string | null>(null);
+  // Configure relue mais NON conforme (owner/threshold/membre/permissions…) :
+  // echec DETERMINISTE, jamais presente comme une simple indisponibilite reseau.
+  const [verificationMismatch, setVerificationMismatch] = useState(false);
   // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
   const attemptOutcome =
     createResult === null
@@ -209,6 +217,7 @@ export function CreateVaultScreen({
     hasAttempt: hasCreateResult,
     networkFailure: isTemporaryVerificationFailure,
     signatureObtained,
+    verificationMismatch,
     verified: createdAndVerified,
   });
   // Verdict de preuve : seule source capable d'autoriser une nouvelle tentative
@@ -220,10 +229,12 @@ export function CreateVaultScreen({
         status: signatureStatus,
       })
     : null;
-  // Adresse du vault principal (PDA index 0) derivee de l'adresse ATTENDUE de la
-  // tentative signee : aucune lecture reseau, aucune transaction.
+  // Adresse du vault principal (PDA index 0) derivee UNIQUEMENT de l'adresse
+  // VERIFIEE (read-back conforme), index 0 : aucune addresse de navigation,
+  // aucune derivation avant verification.
   const mainVaultAddress = (() => {
-    const address = expectedMultisigPda ?? createResult?.readBack?.address ?? null;
+    if (!createdAndVerified) return null;
+    const address = createResult?.readBack?.address ?? null;
     if (address === null) return null;
     try {
       const [vaultPda] = multisig.getVaultPda({ index: 0, multisigPda: new PublicKey(address) });
@@ -284,6 +295,23 @@ export function CreateVaultScreen({
   const request = useMemo(() => buildVaultCreationRequest(draft), [draft]);
   // Plan technique : purement local (aucun RPC, aucune API Squads executee).
   const plan = useMemo(() => buildMultisigCreationPlan(request), [request]);
+
+  // Valeurs attendues on-chain, préparées AVANT signature : utilisées à
+  // l'identique par le read-back initial ET par « Check transaction again ».
+  const creationExpectation = useMemo<MultisigCreationExpectation>(
+    () => ({
+      configAuthority: plan.configAuthority,
+      memberCount: plan.members.length,
+      members: plan.members.map((member) => ({
+        key: member.key,
+        permissions: member.permissions,
+      })),
+      rentCollector: plan.rentCollector,
+      threshold: plan.threshold,
+      timeLock: plan.timeLock,
+    }),
+    [plan],
+  );
 
   const walletAddress = account === undefined ? null : account.address.toString();
   const walletAlreadyMember =
@@ -501,11 +529,7 @@ export function CreateVaultScreen({
           ephemeralCreateKey: prepared.build.ephemeralCreateKey,
           signAndSendTransactions,
           multisigPda: prepared.build.multisigPda,
-          expectation: {
-            threshold: plan.threshold,
-            memberCount: plan.members.length,
-            configAuthority: plan.configAuthority,
-          },
+          expectation: creationExpectation,
           blockhash,
         });
         signature = result.signature;
@@ -634,36 +658,39 @@ export function CreateVaultScreen({
         status: confirmation.status,
       });
 
-      // Relecture du compte multisig ATTENDU (lecture seule). Les erreurs sont
-      // conservees pour Troubleshooting details, jamais concatenes au message
-      // utilisateur principal.
+      // Relecture du compte multisig ATTENDU (lecture seule). Le verdict est
+      // rendu par la MEME fonction pure que le read-back initial : owner,
+      // configAuthority, threshold, membres, permissions, timeLock, rentCollector.
       let readBack: MultisigCreationReadBack | null = null;
       let readBackError: string | null = null;
+      let mismatchDeterministic = false;
       if (confirmed && expectedPda !== null) {
         try {
           const info = await connection.getAccountInfo(new PublicKey(expectedPda), 'confirmed');
           if (info === null) {
             readBackError = 'ReadBackMissing: the multisig account is not readable yet.';
           } else {
-            const [decoded] = multisig.accounts.Multisig.fromAccountInfo(info);
-            const sameThreshold = decoded.threshold === plan.threshold;
-            const sameMemberCount = decoded.members.length === plan.members.length;
-            if (sameThreshold && sameMemberCount) {
-              readBack = {
-                address: expectedPda,
-                configAuthority: decoded.configAuthority.toString(),
-                memberCount: decoded.members.length,
-                owner: info.owner.toString(),
-                rentCollector: decoded.rentCollector?.toString() ?? null,
-                threshold: decoded.threshold,
-              };
+            const decoded = decodeMultisigCreationReadBack(info, expectedPda);
+            const validation = validateMultisigCreationReadBack({
+              expectedAddress: expectedPda,
+              expectation: creationExpectation,
+              readBack: decoded,
+            });
+            if (validation.verified) {
+              readBack = validation.readBack;
             } else {
-              readBackError =
-                'ReadBackMismatch: the on-chain configuration does not match the expected one.';
+              readBackError = validation.errors.join(' ');
+              // Mismatch DETERMINISTE (owner/threshold/membre/permissions…) :
+              // jamais classe comme une simple panne reseau.
+              mismatchDeterministic = validation.errors.every(
+                (error) => !isTemporaryNetworkFailure(error),
+              );
             }
           }
         } catch (caught: unknown) {
-          readBackError = caught instanceof Error ? caught.message : String(caught);
+          const detail = caught instanceof Error ? caught.message : String(caught);
+          readBackError = `ReadBackDecodeFailed: ${detail}`;
+          mismatchDeterministic = !isTemporaryNetworkFailure(detail);
         }
       }
 
@@ -684,6 +711,8 @@ export function CreateVaultScreen({
               },
         );
         setCreateError(null);
+        setCheckError(null);
+        setVerificationMismatch(false);
         setCheckReport('Vault created and verified.');
         setOperationReport(
           buildOperationReport({
@@ -707,10 +736,13 @@ export function CreateVaultScreen({
 
       if (confirmed) {
         if (readBackError !== null) setCheckError(readBackError);
+        setVerificationMismatch(mismatchDeterministic);
         setCheckReport(
-          readBackError !== null && isTemporaryNetworkFailure(readBackError)
-            ? 'Transaction confirmed. Vault verification is temporarily unavailable.'
-            : 'Transaction confirmed. Vault details are not readable yet.',
+          mismatchDeterministic
+            ? 'Verification mismatch: the on-chain configuration does not match the configuration you reviewed.'
+            : readBackError !== null && isTemporaryNetworkFailure(readBackError)
+              ? 'Transaction confirmed. Vault verification is temporarily unavailable.'
+              : 'Transaction confirmed. Vault details are not readable yet.',
         );
         setOperationReport(
           buildOperationReport({
@@ -742,7 +774,7 @@ export function CreateVaultScreen({
     } finally {
       setChecking(false);
     }
-  }, [checking, connection, createResult, expectedMultisigPda, plan, registry, vaultName]);
+  }, [checking, connection, createResult, creationExpectation, expectedMultisigPda, plan, registry, vaultName]);
 
   const onCreateOnDevnet = useCallback(() => {
     const creator = walletAddress;
@@ -756,6 +788,7 @@ export function CreateVaultScreen({
     setCheckEvidence(null);
     setCheckReport(null);
     setCheckError(null);
+    setVerificationMismatch(false);
     setCreationCost(null);
     void (async () => {
       try {
@@ -1510,6 +1543,30 @@ export function CreateVaultScreen({
                 >
                   <Text style={styles.secondaryText}>Go to Inbox</Text>
                 </Pressable>
+              </View>
+            ) : null}
+
+            {/* ETAT E — transaction CONFIRMEE mais configuration NON conforme
+                (owner/threshold/membre/permissions…). Echec DETERMINISTE : aucun
+                second envoi, aucune ouverture de wallet, aucun Prepare again. */}
+            {vaultVisibleState === 'confirmed-verification-mismatch' ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>Transaction confirmed</Text>
+                <Text style={styles.errorText}>
+                  The multisig account could not be verified against the configuration you
+                  reviewed.
+                </Text>
+                <Text style={styles.errorText}>Nothing needs to be sent again.</Text>
+                <Text selectable style={styles.fieldValue}>
+                  Signature: {createResult?.signature}
+                </Text>
+                <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
+                <Text style={styles.hint}>Vault verification: failed</Text>
+                <Text style={styles.errorText}>Verification mismatch</Text>
+                <Text style={styles.hint}>
+                  The exact differences are in Troubleshooting details. No second send is allowed
+                  while a confirmed signature exists.
+                </Text>
               </View>
             ) : null}
 

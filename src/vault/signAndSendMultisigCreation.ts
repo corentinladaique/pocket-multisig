@@ -1,7 +1,12 @@
 import { Keypair, PublicKey, type Connection, type Transaction } from '@solana/web3.js';
-import * as multisig from '@sqds/multisig';
 
 import { describeMwaError } from '../wallet/mwaDiagnostics';
+import {
+  decodeMultisigCreationReadBack,
+  validateMultisigCreationReadBack,
+  type MultisigCreationExpectation,
+  type MultisigCreationReadBack,
+} from './multisigCreationReadBack';
 import type { SignatureConfirmationStatus } from '../wallet/operationState';
 import { confirmSignature, type SignatureConfirmation } from '../solana/confirmSignature';
 import {
@@ -32,12 +37,12 @@ export type SignAndSendTransactionsFn = (
   minContextSlot: number,
 ) => Promise<string | string[]>;
 
-export type MultisigCreationExpectation = {
-  threshold: number;
-  memberCount: number;
-  /** `null` = configuration figee (Pubkey::default() on-chain). */
-  configAuthority: string | null;
-};
+// Les invariants du read-back sont définis UNE SEULE FOIS dans un module pur,
+// partagé avec « Check transaction again » : initial verification == recheck.
+export type {
+  MultisigCreationExpectation,
+  MultisigCreationReadBack,
+} from './multisigCreationReadBack';
 
 /** Blockhash explicitement applique a la transaction avant simulation/envoi. */
 export type MultisigCreationBlockhash = {
@@ -63,15 +68,6 @@ export async function applyFreshBlockhash(
   transaction.lastValidBlockHeight = latest.lastValidBlockHeight;
   return { blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight };
 }
-
-export type MultisigCreationReadBack = {
-  address: string;
-  owner: string;
-  threshold: number;
-  memberCount: number;
-  configAuthority: string;
-  rentCollector: string | null;
-};
 
 export type MultisigCreationSignSendResult = {
   /** Signature de la transaction envoyee, `null` si aucun envoi n'a abouti. */
@@ -106,11 +102,6 @@ function toPublicKey(value: string): PublicKey | null {
   } catch {
     return null;
   }
-}
-
-function sameAddress(decoded: PublicKey, expected: string): boolean {
-  const expectedKey = toPublicKey(expected);
-  return expectedKey !== null && decoded.equals(expectedKey);
 }
 
 /**
@@ -281,26 +272,21 @@ export async function signAndSendMultisigCreation(input: {
   }
 
   // 4. Relecture on-chain : ce qui a REELLEMENT ete cree, pas ce qu'on suppose.
+  //    Le verdict utilise la MEME fonction pure que « Check transaction again ».
   let readBack: MultisigCreationReadBack | null = null;
+  let readBackDecodeFailed = false;
   for (let attempt = 1; attempt <= READ_BACK_ATTEMPTS; attempt += 1) {
     try {
       const accountInfo = await input.connection.getAccountInfo(multisigPda, 'confirmed');
       if (accountInfo !== null) {
-        const decoded = multisig.accounts.Multisig.fromAccountInfo(accountInfo)[0];
-        readBack = {
-          address: multisigPda.toString(),
-          owner: accountInfo.owner.toString(),
-          threshold: decoded.threshold,
-          memberCount: decoded.members.length,
-          configAuthority: decoded.configAuthority.toString(),
-          rentCollector: decoded.rentCollector?.toString() ?? null,
-        };
+        readBack = decodeMultisigCreationReadBack(accountInfo, multisigPda.toString());
         break;
       }
     } catch (caught: unknown) {
       errors.push(
-        `ReadBackFailed: ${caught instanceof Error ? caught.message : String(caught)}`,
+        `ReadBackDecodeFailed: ${caught instanceof Error ? caught.message : String(caught)}`,
       );
+      readBackDecodeFailed = true;
       break;
     }
     if (attempt < READ_BACK_ATTEMPTS) {
@@ -310,7 +296,7 @@ export async function signAndSendMultisigCreation(input: {
     }
   }
 
-  // Preuve n°2 : la transaction est-elle confirmée ? Sans elle, aucun succès.
+  // Preuve n°2 : la transaction est-elle confirmee ? Sans elle, aucun succes.
   try {
     confirmation = await confirmSignature({ connection: input.connection, signature });
   } catch (caught: unknown) {
@@ -320,35 +306,18 @@ export async function signAndSendMultisigCreation(input: {
   }
 
   if (readBack === null) {
-    errors.push('ReadBackMissing: the multisig account is not readable yet.');
+    if (!readBackDecodeFailed) {
+      errors.push('ReadBackMissing: the multisig account is not readable yet.');
+    }
   } else {
-    if (readBack.owner !== multisig.PROGRAM_ID.toString()) {
-      errors.push(
-        `OwnerMismatch: owner is ${readBack.owner}, expected ${multisig.PROGRAM_ID.toString()}.`,
-      );
-    }
-    if (readBack.threshold !== input.expectation.threshold) {
-      errors.push(
-        `ThresholdMismatch: on-chain ${readBack.threshold}, expected ${input.expectation.threshold}.`,
-      );
-    }
-    if (readBack.memberCount !== input.expectation.memberCount) {
-      errors.push(
-        `MemberCountMismatch: on-chain ${readBack.memberCount}, expected ${input.expectation.memberCount}.`,
-      );
-    }
-    const expectedAuthority = input.expectation.configAuthority;
-    const authorityMatches =
-      expectedAuthority === null
-        ? readBack.configAuthority === PublicKey.default.toString()
-        : sameAddress(new PublicKey(readBack.configAuthority), expectedAuthority);
-    if (!authorityMatches) {
-      errors.push(
-        `ConfigAuthorityMismatch: on-chain ${readBack.configAuthority}, expected ${
-          expectedAuthority ?? PublicKey.default.toString()
-        }.`,
-      );
-    }
+    // Invariants partages (owner, configAuthority, threshold, membres,
+    // permissions, timeLock, rentCollector, adresse attendue).
+    const validation = validateMultisigCreationReadBack({
+      expectedAddress: multisigPda.toString(),
+      expectation: input.expectation,
+      readBack,
+    });
+    errors.push(...validation.errors);
   }
 
   return {

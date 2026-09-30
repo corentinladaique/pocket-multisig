@@ -127,10 +127,11 @@ check('7/8/9. recheck confirme + compte lisible : verified, adresses affichees',
     }),
     'verified',
   );
-  // Le handler construit un read-back complet et bascule verified.
-  assert.ok(CHECK.includes('readBack = {'));
-  assert.ok(CHECK.includes('address: expectedPda'));
-  assert.ok(CHECK.includes('verified: true'));
+  // Le handler delegue le verdict a la MEME fonction pure que le read-back initial.
+  assert.ok(CHECK.includes('validateMultisigCreationReadBack'), 'validation commune');
+  assert.ok(CHECK.includes('decodeMultisigCreationReadBack'), 'decodage commun');
+  assert.ok(CHECK.includes('expectedAddress: expectedPda'), 'adresse attendue conservee');
+  assert.ok(CHECK.includes('verified: true'), 'bascule verified seulement si conforme');
   assert.ok(SUCCESS_BLOCK.includes('Multisig configuration address'));
   assert.ok(SUCCESS_BLOCK.includes('Main vault address'));
   assert.ok(SUCCESS_BLOCK.includes('mainVaultAddress'));
