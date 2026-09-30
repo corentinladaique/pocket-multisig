@@ -144,10 +144,25 @@ check('5/6/7. Max : toute modification invalide le resume et l avertissement', (
   );
 });
 
-check('8. safe area : bandeau Devnet sous l inset superieur', () => {
-  assert.ok(LIST.includes('StatusBar.currentHeight'), 'la hauteur de barre doit etre utilisee');
-  assert.ok(LIST.includes('<View style={styles.safeTop} />'), 'un espace doit proteger le haut');
-  assert.ok(LIST.indexOf('safeTop') < LIST.indexOf('contentContainerStyle'));
+check('8. safe area : bandeau Devnet protege par la source partagee', () => {
+  // La Safe Area est desormais une source unique partagee (SAFE_TOP_PADDING) :
+  // plus de calcul local de la barre de statut ni de spacer safeTop propre.
+  assert.ok(
+    LIST.includes("from '../ui/safeAreaPadding'") && LIST.includes('SAFE_TOP_PADDING'),
+    'ProposalListScreen doit utiliser le helper partage',
+  );
+  assert.ok(
+    !LIST.includes('StatusBar.currentHeight'),
+    'plus de calcul local de la hauteur de barre',
+  );
+  assert.ok(!LIST.includes('safeTop'), 'plus de spacer safeTop local');
+  // Une seule source de padding superieur : le token apparait une fois dans
+  // l'import et une seule fois applique au conteneur (pas de double inset).
+  assert.equal(
+    LIST.split('SAFE_TOP_PADDING').length - 1,
+    2,
+    'SAFE_TOP_PADDING doit etre importe une fois et applique une seule fois',
+  );
 });
 
 check('9. CTA Review proposal avant les details techniques', () => {

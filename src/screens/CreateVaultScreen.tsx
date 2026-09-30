@@ -37,16 +37,15 @@ import {
   classifyOperationFailure,
   classifyOperationResult,
   describeAttemptOutcome,
+  evaluateSignatureEvidence,
   isTemporaryNetworkFailure,
   type OperationReport,
 } from '../wallet/operationState';
 import { confirmSignature } from '../solana/confirmSignature';
 import type { SignatureConfirmationStatus } from '../wallet/operationState';
-import { describeWalletIdentity } from '../wallet/mwaDiagnostics';
+import { signingStateTitle } from '../wallet/signingWindow';
 import * as multisig from '@sqds/multisig';
 import { PublicKey } from '@solana/web3.js';
-import { VaultPreviewScreen } from './VaultPreviewScreen';
-import { VaultTransactionPreviewScreen } from './VaultTransactionPreviewScreen';
 import {
   buildVaultCreationRequest,
   createEmptyDraft,
@@ -80,7 +79,17 @@ type MeasurableInput = TextInput & {
   ) => void;
 };
 
-export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
+export function CreateVaultScreen({
+  onCancel,
+  onGoToInbox,
+  onOpenVault,
+}: {
+  onCancel: () => void;
+  /** Sortie vers l'inbox des multisigs connus (apres succes). */
+  onGoToInbox: () => void;
+  /** Ouvre le vault cree, a partir de son adresse deja verifiee on-chain. */
+  onOpenVault: (vault: { address: string; vaultName: string }) => void;
+}) {
   const { account, connect, signAndSendTransactions } = useMobileWallet();
   // Registre local des multisigs connus (stockage seul, aucun RPC).
   const registry = useMultisigRegistry();
@@ -99,19 +108,16 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
 
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  // Preview de transaction (lecture seule) : etage supplementaire du flux
-  // Review -> Preview -> Transaction Preview -> Back.
-  const [transactionPreviewOpen, setTransactionPreviewOpen] = useState(false);
 
-  // Preview de creation (lecture seule) : Review -> Preview -> Back.
-  const [previewOpen, setPreviewOpen] = useState(false);
+  // Section repliable des diagnostics sur Step 5 : ouverte uniquement par un
+  // tap explicite, jamais une etape obligatoire du parcours.
+  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
 
   // --- Creation reelle (devnet) : etat du flux d'envoi. Aucune execution
   // automatique : tout part d'un tap, puis d'une confirmation explicite.
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResult, setCreateResult] = useState<MultisigCreationSignSendResult | null>(null);
-  const [simulatedCost, setSimulatedCost] = useState<number | null>(null);
   // Verrou de tentative : jamais deux envois en parallele, jamais deux envois
   // apres une signature obtenue.
   const sendAttemptedRef = useRef(false);
@@ -139,6 +145,53 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
           verified: createResult.verified,
         });
 
+  // --- Etats utiles portes sur Step 5 (ex-ecran de transaction) : tout est
+  // derive de l'etat existant, aucun nouvel envoi ni reconstruction.
+  const hasCreateResult = createResult !== null;
+  const signatureObtained = createResult !== null && createResult.signature !== null;
+  const createdAndVerified = createResult?.verified === true;
+  const nothingWasSent = hasCreateResult && !signatureObtained;
+  const signedPending = hasCreateResult && signatureObtained && !createdAndVerified;
+  // « Prepare again » n'apparait que si la machine d'etat autorise une nouvelle
+  // tentative : jamais apres une signature non revoquee.
+  const needsPrepareAgain = hasCreateResult && attemptOutcome?.allowNewAttempt === true;
+  // Statut de confirmation affichable : preuve relue si presente, sinon
+  // deduction prudente (jamais « confirmed » sans preuve explicite).
+  const signatureStatus: SignatureConfirmationStatus =
+    checkEvidence?.status ?? (createResult?.confirmed === true ? 'confirmed' : 'pending');
+  // Verdict de preuve : seule source capable d'autoriser une nouvelle tentative
+  // APRES une signature deja obtenue.
+  const signatureVerdict = signedPending
+    ? evaluateSignatureEvidence({
+        blockHeight: checkEvidence?.blockHeight ?? null,
+        lastValidBlockHeight: createResult?.lastValidBlockHeight ?? null,
+        status: signatureStatus,
+      })
+    : null;
+  // Adresse du vault principal (PDA index 0) derivee de l'adresse du multisig
+  // deja relue on-chain : aucune lecture reseau, aucune transaction.
+  const mainVaultAddress = (() => {
+    const address = createResult?.readBack?.address ?? null;
+    if (address === null) return null;
+    try {
+      const [vaultPda] = multisig.getVaultPda({ index: 0, multisigPda: new PublicKey(address) });
+      return vaultPda.toBase58();
+    } catch {
+      return null;
+    }
+  })();
+  // Diagnostics disponibles : la section repliable n'apparait que s'il existe au
+  // moins une information, jamais vide.
+  const mwaReport = operationReport?.mwa ?? null;
+  const signingStateLabel =
+    createResult?.signingState === undefined ? null : signingStateTitle(createResult.signingState);
+  const hasDiagnostics =
+    mwaReport !== null ||
+    signingStateLabel !== null ||
+    createResult?.errorMessage != null ||
+    checkReport !== null ||
+    checkEvidence !== null;
+
   const memberCounter = useRef(0);
 
   // Suppression d'un signer : realigne le threshold sur le nombre de membres
@@ -163,16 +216,6 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   const plan = useMemo(() => buildMultisigCreationPlan(request), [request]);
 
   const walletAddress = account === undefined ? null : account.address.toString();
-  // Label réellement fourni par le wallet lors de l'autorisation : affiché tel
-  // quel dans les diagnostics, jamais complété par une valeur inventée.
-  const walletLabel =
-    account === undefined
-      ? null
-      : describeWalletIdentity({
-          address: account.address.toString(),
-          icon: account.icon,
-          label: account.label,
-        }).label;
   const walletAlreadyMember =
     walletAddress !== null && members.some((member) => member.publicKey === walletAddress);
 
@@ -561,7 +604,6 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
           prepared.simulation.creatorBalanceDelta === null
             ? null
             : Math.abs(prepared.simulation.creatorBalanceDelta);
-        setSimulatedCost(charged);
         setCreating(false);
         Alert.alert(
           'Create this multisig on Devnet?',
@@ -616,10 +658,13 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
   }, []);
 
   useEffect(() => {
-    // La preview gere elle-meme le retour vers Review : on ne double pas le
-    // listener tant qu'elle est affichee.
-    if (previewOpen) return;
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Apres un succes verifie : le retour systeme sort vers l'inbox, jamais
+      // vers le wizard (aucun second envoi possible).
+      if (createdAndVerified) {
+        onGoToInbox();
+        return true;
+      }
       if (step > 1) {
         setStep((previous) => Math.max(previous - 1, 1));
         return true;
@@ -628,7 +673,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
       return true;
     });
     return () => subscription.remove();
-  }, [previewOpen, requestDiscard, step]);
+  }, [createdAndVerified, onGoToInbox, requestDiscard, step]);
 
   const requiredMembers = minMembersFor(setupType ?? 'custom');
 
@@ -645,15 +690,14 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             ? draft.validationErrors.length === 0
             : true;
 
-  // Preview de transaction : ecran lecture seule, sans construction Squads.
-  /** Meme condition que le CTA de Preview : partagee avec Step 5 (Review). */
+  /** Meme condition que le CTA de Step 5 : verdict unique de preparation. */
   const canCreate =
     walletAddress !== null &&
     plan.readyForInstructionBuild &&
     (createResult === null || attemptOutcome?.allowNewAttempt === true) &&
     !creating;
 
-  /** Raison utilisateur affichee a cote du CTA (jamais « not available yet »). */
+  /** Raison utilisateur affichee a cote du CTA (jamais un libelle mort). */
   const createBlockedReason =
     walletAddress === null
       ? { action: 'Connect your wallet', message: 'Connect the wallet that will create this multisig.' }
@@ -668,94 +712,58 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
                 message: creating ? 'Preparing creation…' : 'Ready to create on Devnet.',
               };
   /**
-     * Verdict de preparation : la MEME condition que le bouton, avec une raison
-     * utilisateur. Aucune validation n'est assouplie.
-     */
-  if (transactionPreviewOpen) {
-    return (
-      <VaultTransactionPreviewScreen
-        createReadiness={(() => {
-        if (walletAddress === null) {
-          return {
-            ready: false,
-            reasonCode: 'no-creator-wallet',
-            recommendedAction: 'Connect your wallet',
-            userMessage: 'Connect your wallet to create this multisig.',
-          };
-        }
-        if (plan.validationErrors.length > 0) {
-          return {
-            ready: false,
-            reasonCode: 'invalid-draft',
-            recommendedAction: 'Fix the members and the threshold',
-            userMessage: 'Fix the validation errors above.',
-          };
-        }
-        if (!request.readyForCreation) {
-          return {
-            ready: false,
-            reasonCode: 'draft-incomplete',
-            recommendedAction: 'Add members and set the threshold',
-            userMessage: 'Complete the member configuration.',
-          };
-        }
-        if (request.vaultName.trim().length === 0) {
-          return {
-            ready: false,
-            reasonCode: 'missing-vault-name',
-            recommendedAction: 'Back to vault setup',
-            userMessage: 'Enter a vault name to create this multisig.',
-          };
-        }
-        if (!plan.readyForInstructionBuild) {
-          return {
-            ready: false,
-            reasonCode: 'plan-not-ready',
-            recommendedAction: 'Run the checks again',
-            userMessage: 'Run the readiness checks before creating.',
-          };
-        }
-        return {
-          ready: true,
-          reasonCode: 'ready',
-          recommendedAction: 'Create on Devnet',
-          userMessage: 'Ready to create on Devnet.',
-        };
-      })()}
-      canCreate={canCreate}
-        checkReport={checkReport}
-        checking={checking}
-        createError={createError}
-        createResult={createResult}
-        creating={creating}
-        onBack={() => setTransactionPreviewOpen(false)}
-        onCheckTransactionAgain={() => {
-          void onCheckTransactionAgain();
-        }}
-        onCreateOnDevnet={onCreateOnDevnet}
-        onReconnectWallet={() => {
-          void onReconnectWallet();
-        }}
-        operationReport={operationReport}
-        payer={walletAddress}
-        request={request}
-        simulatedCostLamports={simulatedCost}
-        walletLabel={walletLabel}
-      />
-    );
-  }
-
-  // Preview de creation : ecran lecture seule derive de la demande locale.
-  // Aucun appel reseau, aucune signature, aucune creation.
-  if (previewOpen) {
-    return (
-      <VaultPreviewScreen
-        onBack={() => setPreviewOpen(false)}
-        onOpenTransactionPreview={() => setTransactionPreviewOpen(true)}
-        request={request}
-      />
-    );
-  }
+   * Verdict de preparation : la MEME condition que le bouton, avec une raison
+   * utilisateur. Aucune validation n'est assouplie. Partage entre Step 5 et
+   * l'ecran technique facultatif.
+   */
+  const createReadiness = (() => {
+    if (walletAddress === null) {
+      return {
+        ready: false,
+        reasonCode: 'no-creator-wallet',
+        recommendedAction: 'Connect your wallet',
+        userMessage: 'Connect your wallet to create this multisig.',
+      };
+    }
+    if (plan.validationErrors.length > 0) {
+      return {
+        ready: false,
+        reasonCode: 'invalid-draft',
+        recommendedAction: 'Fix the members and the threshold',
+        userMessage: 'Fix the validation errors above.',
+      };
+    }
+    if (!request.readyForCreation) {
+      return {
+        ready: false,
+        reasonCode: 'draft-incomplete',
+        recommendedAction: 'Add members and set the threshold',
+        userMessage: 'Complete the member configuration.',
+      };
+    }
+    if (request.vaultName.trim().length === 0) {
+      return {
+        ready: false,
+        reasonCode: 'missing-vault-name',
+        recommendedAction: 'Back to vault setup',
+        userMessage: 'Enter a vault name to create this multisig.',
+      };
+    }
+    if (!plan.readyForInstructionBuild) {
+      return {
+        ready: false,
+        reasonCode: 'plan-not-ready',
+        recommendedAction: 'Run the checks again',
+        userMessage: 'Run the readiness checks before creating.',
+      };
+    }
+    return {
+      ready: true,
+      reasonCode: 'ready',
+      recommendedAction: 'Create on Devnet',
+      userMessage: 'Ready to create on Devnet.',
+    };
+  })();
 
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
@@ -776,7 +784,7 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
             onPress={requestDiscard}
             style={styles.headerCancel}
           >
-            <Text style={styles.retryText}>Cancel and back to inbox</Text>
+            <Text style={styles.retryText}>Discard vault setup</Text>
           </Pressable>
         </View>
 
@@ -1088,22 +1096,16 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
               </View>
             ) : null}
 
-            {/* Action secondaire : la vue technique reste FACULTATIVE et n'est plus
-              une etape obligatoire du parcours. */}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Technical transaction details"
-              onPress={() => setPreviewOpen(true)}
-              style={[styles.button, styles.secondary]}
-            >
-              <Text style={styles.secondaryText}>Technical transaction details</Text>
-            </Pressable>
-
-            {/* Raison utilisateur lorsque la creation n'est pas possible. */}
+            {/* ETAT A — pret avant creation : verdict de preparation
+                (createReadiness) + recapitulatif du vault deja affiche
+                ci-dessus. Aucune section de diagnostic vide. */}
             <View style={styles.noticeBox}>
-              <Text style={styles.warningText}>
-                {canCreate ? 'Ready to create on Devnet.' : 'Not ready to create'}
+              <Text style={canCreate ? styles.statusReady : styles.warningText}>
+                {createReadiness.userMessage}
               </Text>
+              {!canCreate ? (
+                <Text style={styles.warningText}>{createReadiness.recommendedAction}</Text>
+              ) : null}
               {!canCreate ? (
                 <Text style={styles.warningText}>{createBlockedReason.message}</Text>
               ) : null}
@@ -1112,8 +1114,9 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
               ) : null}
             </View>
 
-            {/* CTA PRINCIPAL : meme handler et meme condition que le bouton de
-                Transaction Preview. Aucune action sans tap explicite. */}
+            {/* CTA PRINCIPAL UNIQUE : meme handler que le CTA de l'ancien ecran
+                de transaction. Le libelle bascule sur « Prepare again » seulement
+                lorsque la machine d'etat autorise une nouvelle tentative. */}
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ busy: creating, disabled: !canCreate || creating }}
@@ -1124,18 +1127,202 @@ export function CreateVaultScreen({ onCancel }: { onCancel: () => void }) {
               {creating ? (
                 <ActivityIndicator color="#ffffff" />
               ) : (
-                <Text style={styles.buttonText}>Prepare and create on Devnet</Text>
+                <Text style={styles.buttonText}>
+                  {needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'}
+                </Text>
               )}
             </Pressable>
 
             <Text style={styles.hint}>
               Nothing is sent on-chain before the final confirmation.
             </Text>
+
+            {/* ETAT B — echec AVANT signature : rien n'a ete envoye. Le flux de
+                nouvelle tentative reste le CTA unique ci-dessus. */}
+            {nothingWasSent ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>Nothing was sent.</Text>
+                {createError !== null ? (
+                  <Text style={styles.errorText}>{createError}</Text>
+                ) : null}
+                {operationReport !== null ? (
+                  <Text style={styles.hint}>{operationReport.title}</Text>
+                ) : null}
+                {signingStateLabel !== null ? (
+                  <Text style={styles.hint}>Signing state: {signingStateLabel}</Text>
+                ) : null}
+                {mwaReport !== null ? (
+                  <>
+                    <Text style={styles.hint}>MWA step: {mwaReport.step}</Text>
+                    <Text style={styles.hint}>
+                      MWA code: {mwaReport.code ?? 'none returned'}
+                    </Text>
+                    <Text style={styles.hint}>Message: {mwaReport.message}</Text>
+                  </>
+                ) : null}
+                <Text style={styles.hint}>
+                  {needsPrepareAgain
+                    ? 'Prepare again is available: no signature was obtained.'
+                    : 'A new attempt is not available right now.'}
+                </Text>
+              </View>
+            ) : null}
+
+            {/* ETAT C / E — signature obtenue, non encore verifiee. L'action de
+                relecture ne fait que lire : jamais de reconstruction, de
+                signature, d'envoi, ni d'ouverture du wallet. */}
+            {signedPending ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>Transaction signed, verification pending.</Text>
+                <Text selectable style={styles.fieldValue}>
+                  Signature: {createResult?.signature}
+                </Text>
+                <Text style={styles.hint}>Confirmation status: {signatureStatus}</Text>
+                {isTemporaryNetworkFailure(createResult?.errorMessage ?? '') ? (
+                  <Text style={styles.hint}>
+                    Temporary network error: the signature stays valid, nothing is rebuilt.
+                  </Text>
+                ) : null}
+                <Text style={styles.hint}>
+                  Read-back:{' '}
+                  {createResult?.readBack === null || createResult?.readBack === undefined
+                    ? 'read-back pending'
+                    : createResult.readBack.address}
+                </Text>
+                {createError !== null ? (
+                  <Text style={styles.errorText}>{createError}</Text>
+                ) : null}
+                {signatureVerdict !== null ? (
+                  <Text style={styles.hint}>Verdict: {signatureVerdict.reason}</Text>
+                ) : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ busy: checking, disabled: checking }}
+                  disabled={checking}
+                  onPress={() => {
+                    void onCheckTransactionAgain();
+                  }}
+                  style={[styles.button, styles.secondary]}
+                >
+                  {checking ? (
+                    <ActivityIndicator color="#101317" />
+                  ) : (
+                    <Text style={styles.secondaryText}>Check transaction again</Text>
+                  )}
+                </Pressable>
+                {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
+                {operationReport?.actions.allowReconnect === true ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Reconnect wallet"
+                    onPress={() => {
+                      void onReconnectWallet();
+                    }}
+                    style={[styles.button, styles.secondary]}
+                  >
+                    <Text style={styles.secondaryText}>Reconnect wallet</Text>
+                  </Pressable>
+                ) : null}
+                {signatureVerdict?.retryAllowed !== true ? (
+                  <Text style={styles.hint}>
+                    A signature already exists: no second send is allowed until the transaction is
+                    proven absent, expired or failed.
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {/* ETAT D — succes : creation confirmee ET multisig relu/verifie. */}
+            {createdAndVerified ? (
+              <View style={styles.successBox}>
+                <Text style={styles.successText}>Vault created and verified.</Text>
+                <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+                <Text selectable style={styles.fieldValue}>
+                  {createResult?.readBack?.address}
+                </Text>
+                <Text style={styles.fieldLabel}>Main vault address</Text>
+                <Text selectable style={styles.fieldValue}>
+                  {mainVaultAddress ?? 'unavailable'}
+                </Text>
+                <Text style={styles.fieldLabel}>Signature</Text>
+                <Text selectable style={styles.fieldValue}>{createResult?.signature}</Text>
+                <Text style={styles.fieldLabel}>Threshold</Text>
+                <Text style={styles.fieldValue}>
+                  {createResult?.readBack?.threshold} of {createResult?.readBack?.memberCount}
+                </Text>
+                <Text style={styles.fieldLabel}>Members</Text>
+                <Text style={styles.fieldValue}>{createResult?.readBack?.memberCount}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Open the created vault"
+                  onPress={() => {
+                    const address = createResult?.readBack?.address ?? null;
+                    if (address !== null) onOpenVault({ address, vaultName });
+                  }}
+                  style={[styles.button, styles.secondary]}
+                >
+                  <Text style={styles.secondaryText}>Open vault</Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Go to inbox"
+                  onPress={onGoToInbox}
+                  style={[styles.button, styles.secondary]}
+                >
+                  <Text style={styles.secondaryText}>Go to Inbox</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {/* TROUBLESHOOTING DETAILS — repliable, affiche uniquement si au
+                moins un diagnostic existe. Jamais une etape obligatoire. */}
+            {hasDiagnostics ? (
+              <View style={styles.block}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Troubleshooting details"
+                  onPress={() => setTroubleshootingOpen((open) => !open)}
+                  style={[styles.button, styles.secondary]}
+                >
+                  <Text style={styles.secondaryText}>Troubleshooting details</Text>
+                </Pressable>
+                {troubleshootingOpen ? (
+                  <View style={styles.noticeBox}>
+                    {mwaReport !== null ? (
+                      <>
+                        <Text style={styles.hint}>MWA step: {mwaReport.step}</Text>
+                        <Text style={styles.hint}>
+                          MWA code: {mwaReport.code ?? 'none returned'}
+                        </Text>
+                        <Text style={styles.hint}>MWA message: {mwaReport.message}</Text>
+                      </>
+                    ) : null}
+                    {signingStateLabel !== null ? (
+                      <Text style={styles.hint}>Signing state: {signingStateLabel}</Text>
+                    ) : null}
+                    {checkEvidence !== null ? (
+                      <Text style={styles.hint}>
+                        Blockhash: height {checkEvidence.blockHeight ?? 'unknown'} · last valid{' '}
+                        {checkEvidence.lastValidBlockHeight ?? 'unknown'}
+                      </Text>
+                    ) : null}
+                    {createResult?.errorMessage != null ? (
+                      <Text style={styles.hint}>
+                        Confirmation error: {createResult.errorMessage}
+                      </Text>
+                    ) : null}
+                    {checkReport !== null ? (
+                      <Text style={styles.hint}>Read-back: {checkReport}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </View>
         ) : null}
 
         <View style={styles.navRow}>
-          {step > 1 ? (
+          {step > 1 && !createdAndVerified ? (
             <Pressable
               accessibilityRole="button"
               onPress={goBack}
@@ -1410,6 +1597,19 @@ const styles = StyleSheet.create({
     color: '#991b1b',
     fontSize: 13,
     marginTop: 4,
+  },
+  successBox: {
+    backgroundColor: '#ecfdf5',
+    borderColor: '#a7f3d0',
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 16,
+    padding: 12,
+  },
+  successText: {
+    color: '#065f46',
+    fontSize: 13,
+    fontWeight: '800',
   },
   warningText: {
     color: '#92400e',

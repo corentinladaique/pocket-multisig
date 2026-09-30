@@ -36,7 +36,6 @@ const SCREENS = [
   'ProposalDetailsScreen',
   'MultisigDetailsScreen',
   'CreateVaultScreen',
-  'VaultTransactionPreviewScreen',
   'ProposalListScreen',
   'TransactionReviewScreen',
 ];

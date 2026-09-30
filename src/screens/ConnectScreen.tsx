@@ -623,9 +623,28 @@ export function ConnectScreen() {
     );
   }
 
-  // Assistant local de creation de vault : ecran dedie, sortie par Cancel.
+  // Assistant local de creation de vault : ecran dedie. Apres un succes verifie
+  // on sort vers l'inbox ou directement sur le vault cree.
   if (vaultCreationOpen) {
-    return <CreateVaultScreen onCancel={() => setVaultCreationOpen(false)} />;
+    return (
+      <CreateVaultScreen
+        onCancel={() => setVaultCreationOpen(false)}
+        onGoToInbox={() => {
+          setVaultCreationOpen(false);
+          setInboxOpen(true);
+        }}
+        onOpenVault={(vault) => {
+          setVaultCreationOpen(false);
+          setOpenEntry({
+            address: vault.address,
+            addedAt: new Date().toISOString(),
+            memberLabels: {},
+            source: 'created',
+            vaultName: vault.vaultName,
+          });
+        }}
+      />
+    );
   }
 
   // Android : la fenetre n'etant plus redimensionnee par l'IME en edge-to-edge,
@@ -716,16 +735,8 @@ export function ConnectScreen() {
         >
           <Text style={styles.secondaryText}>Learn about multisig</Text>
         </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Reset onboarding"
-          onPress={() => {
-            void onboarding.reset();
-          }}
-          style={styles.retry}
-        >
-          <Text style={styles.retryText}>Reset onboarding</Text>
-        </Pressable>
+        {/* Reset onboarding est retire de Home : il reviendra dans
+            Help & Security / Settings via le futur menu principal. */}
       </View>
 
       {phase === 'connecting' ? (
@@ -898,25 +909,8 @@ export function ConnectScreen() {
                 <Text style={styles.secondaryText}>Open multisig</Text>
               </Pressable>
 
-              {/* Apprentissage : reouverture et remise a zero, purement locales. */}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Learn about multisig"
-                onPress={onboarding.open}
-                style={[styles.button, styles.secondary, styles.sideButton]}
-              >
-                <Text style={styles.secondaryText}>Learn about multisig</Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Reset onboarding"
-                onPress={() => {
-                  void onboarding.reset();
-                }}
-                style={styles.retry}
-              >
-                <Text style={styles.retryText}>Reset onboarding</Text>
-              </Pressable>
+              {/* Apprentissage : la reouverture reste accessible AVANT connexion
+                  wallet (helpBox). Elle est retiree du dashboard charge. */}
               {onboarding.storageFailed ? (
                 <Text style={styles.hint}>
                   Your answers could not be saved on this device: the app keeps working with the

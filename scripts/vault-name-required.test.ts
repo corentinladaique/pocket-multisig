@@ -21,7 +21,6 @@ function check(name: string, run: () => void): void {
 }
 
 const CREATE = readFileSync('src/screens/CreateVaultScreen.tsx', 'utf8');
-const PREVIEW = readFileSync('src/screens/VaultTransactionPreviewScreen.tsx', 'utf8');
 const PLAN = readFileSync('src/vault/multisigCreationPlan.ts', 'utf8');
 
 /** Reproduit la condition reelle du bouton Continue a l'etape 1. */
@@ -77,12 +76,12 @@ check('7/8. nom vide : Review et Preview non ouvertes', () => {
   assert.ok(CREATE.includes("Alert.alert('Discard vault setup?'"), 'aucun chemin parallele');
 });
 
-check('9. protection Preview conservee (defense en profondeur)', () => {
+check('9. protection du nom conservee sur Step 5 (defense en profondeur)', () => {
   assert.ok(CREATE.includes("reasonCode: 'missing-vault-name'"));
   assert.ok(CREATE.includes('Enter a vault name to create this multisig.'));
   assert.ok(CREATE.includes("recommendedAction: 'Back to vault setup'"));
-  assert.ok(PREVIEW.includes('Vault name required'));
-  assert.ok(PREVIEW.includes('createReadiness.userMessage'));
+  assert.ok(CREATE.includes('Vault name required'));
+  assert.ok(CREATE.includes('createReadiness.userMessage'));
 });
 
 check('10. canCreate et readyForInstructionBuild inchanges', () => {
@@ -98,7 +97,6 @@ check('11. aucun nom genere automatiquement', () => {
   assert.ok(!/setVaultName\((?!'')/.test(CREATE), 'aucun setVaultName avec valeur par defaut');
   assert.ok(CREATE.includes("useState('')"), 'le nom demarre vide');
   assert.ok(!/Untitled vault/.test(CREATE), 'aucun faux fallback dans le parcours');
-  assert.ok(!/Untitled vault/.test(PREVIEW));
 });
 
 check('12. aucun wallet, signature ou transaction dans cette logique', () => {

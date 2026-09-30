@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 /**
- * Step 5 · Review : CTA de creation reel, sans passer par Transaction Preview.
- * Aucun wallet, aucun reseau. npx tsx scripts/create-vault-step5.test.ts
+ * Step 5 · Review : parcours de creation unique (plus de Preview separee).
+ * Tous les etats utiles sont rendus sur Step 5, avec un seul CTA de creation et
+ * un seul handler d'envoi. Aucun wallet, aucun reseau.
+ * npx tsx scripts/create-vault-step5.test.ts
  */
 
 let passed = 0;
@@ -21,7 +23,6 @@ function check(name: string, run: () => void): void {
 }
 
 const CREATE = readFileSync('src/screens/CreateVaultScreen.tsx', 'utf8');
-const PREVIEW = readFileSync('src/screens/VaultTransactionPreviewScreen.tsx', 'utf8');
 
 /** Bloc Step 5 (Review) : de la relecture du draft jusqu'au CTA. */
 const step5 = CREATE.slice(
@@ -29,82 +30,103 @@ const step5 = CREATE.slice(
   CREATE.indexOf('styles.navRow'),
 );
 
-check('1. le bouton mort "not available yet" a disparu', () => {
-  assert.ok(!CREATE.includes('not available yet'), 'chaîne supprimée du fichier');
-  assert.ok(!step5.includes('accessibilityState={{ disabled: true }}'), 'plus de bouton mort dans Step 5');
+check('1. les deux ecrans Preview ont ete supprimes du disque', () => {
+  assert.equal(existsSync('src/screens/VaultPreviewScreen.tsx'), false);
+  assert.equal(existsSync('src/screens/VaultTransactionPreviewScreen.tsx'), false);
 });
 
-check('2/3. Step 5 contient le vrai CTA branché sur onCreateOnDevnet', () => {
-  assert.ok(step5.includes('Prepare and create on Devnet'), 'libellé du CTA');
-  assert.ok(step5.includes('onPress={onCreateOnDevnet}'), 'handler reutilise');
+check('2. Step 5 rend les quatre familles d etats', () => {
+  assert.ok(step5.includes('Prepare and create on Devnet'), 'etat ready : CTA principal');
+  assert.ok(step5.includes('Nothing was sent.'), 'etat echec avant signature');
+  assert.ok(step5.includes('Transaction signed, verification pending.'), 'etat signature en attente');
+  assert.ok(step5.includes('Vault created and verified.'), 'etat succes verifie');
+});
+
+check('3. Prepare again et Check transaction again reutilisent les handlers existants', () => {
+  assert.ok(step5.includes("'Prepare again'"), 'libelle de reessai present');
   assert.ok(
-    CREATE.split('onPress={onCreateOnDevnet}').length - 1 === 1,
-    'un seul branchement direct (le second est passe en prop)',
+    step5.includes('needsPrepareAgain ?') && CREATE.includes('attemptOutcome?.allowNewAttempt === true'),
+    'Prepare again conditionne par la machine d etat, jamais par une signature',
   );
-  assert.ok(CREATE.includes('onCreateOnDevnet={onCreateOnDevnet}'), 'Preview garde le meme handler');
+  assert.ok(step5.includes('void onCheckTransactionAgain();'), 'relecture reutilise le handler');
 });
 
-check('4. Step 5 utilise la meme condition !canCreate || creating', () => {
-  assert.ok(step5.includes('disabled={!canCreate || creating}'));
-  assert.ok(PREVIEW.includes('disabled={!canCreate || creating}'));
-  assert.ok(step5.includes('accessibilityState={{ busy: creating, disabled: !canCreate || creating }}'));
-});
-
-check('5. Technical transaction details est une action secondaire', () => {
-  assert.ok(step5.includes('Technical transaction details'));
-  assert.ok(step5.includes("accessibilityLabel=\"Technical transaction details\""));
-  assert.ok(step5.includes('styles.secondary'), 'style secondaire');
-  assert.ok(!step5.includes('<Text style={styles.secondaryText}>Preview</Text>'), 'plus de bouton Preview generique');
-});
-
-check('6. les details techniques ne conditionnent pas la creation', () => {
-  // Aucun etat de visite n existe, et canCreate ne depend pas de previewOpen.
-  for (const flag of ['previewVisited', 'previewAcknowledged', 'transactionPreviewOpened', 'transactionPreviewAcknowledged']) {
-    assert.ok(!CREATE.includes(flag), `${flag} ne doit pas exister`);
-  }
-  const canCreateBlock = CREATE.slice(CREATE.indexOf('const canCreate ='), CREATE.indexOf('const canCreate =') + 260);
-  assert.ok(!/previewOpen|previewVisited/.test(canCreateBlock), 'canCreate independant des vues');
-  assert.ok(!/readyForCreation|vaultName/.test(step5.slice(step5.indexOf('disabled={!canCreate') , step5.indexOf('disabled={!canCreate') + 200)));
-});
-
-check('7/8. same handler, same canCreate dans Step 5 et Preview', () => {
-  assert.ok(CREATE.includes('const canCreate ='));
-  assert.ok(CREATE.includes('canCreate={canCreate}'), 'Preview recoit la meme valeur');
-  assert.ok(PREVIEW.includes('onCreateOnDevnet: () => void;'), 'prop inchangee cote Preview');
+check('4. un seul CTA de creation et un seul handler d envoi', () => {
+  assert.equal(
+    CREATE.split('onPress={onCreateOnDevnet}').length - 1,
+    1,
+    'un seul branchement direct sur le handler de creation',
+  );
+  assert.equal(CREATE.split('const onCreateOnDevnet').length - 1, 1, 'un seul handler d envoi');
+  assert.equal(
+    CREATE.split('Prepare and create on Devnet').length - 1,
+    1,
+    'un seul libelle Prepare and create on Devnet',
+  );
   assert.ok(!/const createOnDevnet2|onCreateOnDevnetSecond/.test(CREATE), 'aucun second handler');
 });
 
-check('9. nom manquant : CTA desactive et raison visible', () => {
-  assert.ok(CREATE.includes("message: 'Enter a vault name to continue.'"));
-  assert.ok(CREATE.includes("action: 'Back to vault setup'"));
-  assert.ok(step5.includes("'Not ready to create'"));
-  assert.ok(step5.includes('createBlockedReason.message'));
-  assert.ok(step5.includes('createBlockedReason.action'));
-  assert.ok(CREATE.includes("reasonCode: 'missing-vault-name'"), 'verdict Preview conserve');
+check('5. plus aucune route ni etat de Preview', () => {
+  assert.ok(!CREATE.includes('previewOpen'), 'aucun early return / etat Preview');
+  assert.ok(!CREATE.includes('transactionPreviewOpen'), 'aucun etat de transaction preview');
+  assert.ok(!CREATE.includes('VaultPreviewScreen'), 'aucun import du preview de creation');
+  assert.ok(!CREATE.includes('VaultTransactionPreviewScreen'), 'aucun import du preview de transaction');
+  assert.ok(!CREATE.includes('Technical transaction details'), 'plus d acces a l ancien ecran technique');
 });
 
-check('10/11. 2/2 et 2/3 : condition existante inchangee', () => {
-  assert.ok(
-    CREATE.includes('plan.readyForInstructionBuild &&') &&
-      CREATE.includes('(createResult === null || attemptOutcome?.allowNewAttempt === true) &&') &&
-      CREATE.includes('!creating'),
-    'conditions reelles conservees',
-  );
-  assert.ok(!/members\.length === 2|2 of 2|2-of-2/.test(CREATE.slice(CREATE.indexOf('const canCreate ='), CREATE.indexOf('const canCreate =') + 400)));
+check('6/7. canCreate, preflight et simulation conserves', () => {
+  assert.equal(CREATE.split('const canCreate =').length - 1, 1);
+  for (const token of [
+    'multisigCreationPreflight',
+    'simulateMultisigCreation',
+    'prepareCreation',
+    'signAndSendMultisigCreation',
+    'readyForInstructionBuild',
+  ]) {
+    assert.ok(CREATE.includes(token), `${token} doit rester utilise`);
+  }
+  assert.ok(!/multisigCreateV2|new Multisig\(/.test(CREATE), 'aucune instruction Squads ici');
 });
 
-check('12. aucun useEffect ne declenche la creation', () => {
+check('8. aucun useEffect ne declenche la creation', () => {
   const effects = CREATE.split('useEffect(').slice(1);
   for (const effect of effects) {
-    const body = effect.slice(0, 700);
+    const body = effect.slice(0, 800);
     assert.ok(!/onCreateOnDevnet|signAndSendMultisigCreation|authorizeSession/.test(body), 'effet declencheur interdit');
   }
 });
 
-check('13/14. aucun nouvel envoi, aucune instruction Squads modifiee', () => {
-  assert.ok(!/new Multisig|multisigCreateV2|SystemProgram\.transfer/.test(CREATE), 'aucune instruction construite ici');
-  assert.ok(!/connection\.sendRawTransaction|sendTransaction/.test(CREATE));
-  assert.ok(PREVIEW.includes('Vault name required') || CREATE.includes('Vault name required') || true);
+check('9. sans signature : Nothing was sent. et Prepare again correctement conditionne', () => {
+  assert.ok(step5.includes('Nothing was sent.'));
+  assert.ok(
+    CREATE.includes('const needsPrepareAgain = hasCreateResult && attemptOutcome?.allowNewAttempt === true;'),
+    'Prepare again depend de allowNewAttempt',
+  );
+  assert.ok(!CREATE.includes('Prepare and retry'), 'libelle ambigu supprime');
+});
+
+check('10/11. signature presente : Prepare again absent, Check transaction again present', () => {
+  // La CTA n affiche « Prepare again » que si needsPrepareAgain (jamais sur une
+  // signature non revoquee : allowNewAttempt y est faux par construction).
+  assert.ok(step5.includes("needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'"));
+  assert.ok(step5.includes('Check transaction again'));
+});
+
+check('12/13. relecture en lecture seule, section repliable conditionnee', () => {
+  const readOnly = CREATE.slice(
+    CREATE.indexOf('const onCheckTransactionAgain = useCallback'),
+    CREATE.indexOf('const onCreateOnDevnet = useCallback'),
+  );
+  assert.ok(!/signAndSendTransactions|sendRawTransaction|partialSign/.test(readOnly), 'aucune methode d envoi');
+  assert.ok(readOnly.includes('confirmSignature'), 'lecture du statut de signature');
+  assert.ok(CREATE.includes('hasDiagnostics ?'), 'section repliable gated');
+  assert.ok(CREATE.includes('Troubleshooting details'));
+});
+
+check('14. succes : Open vault et Go to Inbox disponibles', () => {
+  assert.ok(step5.includes('Open vault'));
+  assert.ok(step5.includes('Go to Inbox'));
+  assert.ok(step5.includes('onGoToInbox'));
 });
 
 setTimeout(() => {
