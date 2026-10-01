@@ -8,6 +8,17 @@ Prototype développé pour un hackathon.
 > application. Aucune transaction n'est signée sans action explicite de
 > l'utilisateur.
 
+## Why Pocket Multisig
+
+Gérer une trésorerie d'équipe, ça se fait à plusieurs : deux signatures plutôt
+qu'une. Mais voter se fait encore sur un ordinateur. Pocket Multisig amène la
+proposition, l'approbation et l'exécution **directement sur Solana Seeker** :
+les clés ne sortent jamais du wallet, et chaque étape est relue on-chain.
+
+- Android, **devnet uniquement**, Mobile Wallet Adapter + Squads Protocol v4.
+- Quatre flux complets : créer un multisig, proposer, approuver, exécuter.
+- Reprise après coupure réseau sans jamais renvoyer de transaction.
+
 ## Problème résolu
 
 Un membre d'un multisig Squads doit aujourd'hui passer par un navigateur
@@ -106,12 +117,23 @@ Trois couches, aucune infrastructure serveur :
 ## Installation
 
 ```bash
-npm install
+git clone <url-du-depot> pocket-multisig
+cd pocket-multisig
+npm ci                      # ou npm install
 adb devices
 npm run typecheck
 npm test                    # tests purs (aucun réseau, aucune transaction)
 npx expo run:android        # build natif + installation sur l'appareil
 ```
+
+Installer un APK déjà construit sur un Seeker branché :
+
+```bash
+adb install -r <chemin>/app-release.apk
+```
+
+(`-r` conserve les données de l'application.) Aucun APK publié n'est fourni à
+ce jour : le build se fait localement.
 
 En cas de « SDK location not found », créer `android/local.properties`
 (fichier ignoré par Git) contenant `sdk.dir=/chemin/vers/Android/Sdk`.
@@ -127,6 +149,18 @@ Scripts : `npm run typecheck`, `npm run doctor`, `npm test`, `npm run android`.
    avec un second wallet, **exécuter** quand le seuil est atteint.
 4. Après une coupure réseau, **Check transaction again / Check approval again**
    permet de retrouver l'état on-chain sans rien renvoyer.
+
+## Demo flow
+
+Démo de référence (détail complet et checklists : `DEMO-RUNBOOK.md`) :
+
+1. Configurer un vault **2-of-3** et montrer le seuil recommandé.
+2. Créer une proposition de transfert SOL et la relire avant de signer.
+3. Faire approuver par un second wallet → « Approval threshold reached ».
+4. **Execute transaction** → « ✓ Transaction executed ».
+5. Optionnel, en insert : couper le réseau puis `Check approval again`.
+
+Le take principal ne dépend jamais d'une coupure réseau.
 
 ## Sécurité
 
