@@ -25,6 +25,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
+    "test": "bash scripts/run-pure-tests.sh",
     "doctor": "npx expo-doctor"
   },
   "private": true

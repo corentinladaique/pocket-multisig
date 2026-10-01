@@ -11,9 +11,12 @@ import {
 import {
   LOW_SECURITY_THRESHOLD_DETAIL,
   LOW_SECURITY_THRESHOLD_LABEL,
+  THREE_MEMBER_RECOMMENDATION,
+  THREE_MEMBER_RECOMMENDATION_DETAIL,
   TWO_MEMBER_RECOMMENDATION,
   TWO_MEMBER_RECOMMENDATION_DETAIL,
   lowSecurityThresholdWarning,
+  recommendationFor,
   recommendedThresholdFor,
   twoMemberRecommendation,
 } from '../src/vault/thresholdRecommendation';
@@ -182,10 +185,27 @@ check('15. Proposal executee : ✓ Transaction executed visible', () => {
   assert.ok(DETAILS.includes('PROPOSAL_ACTION_LABELS.executed'));
 });
 
-check('16. deux membres : threshold par defaut = 2', () => {
+check('16. deux ou trois membres : threshold par defaut = 2', () => {
   assert.equal(recommendedThresholdFor(2), 2);
-  assert.ok(CREATE.includes('setThreshold(TWO_MEMBER_RECOMMENDED_THRESHOLD)'));
-  assert.ok(CREATE.includes('!thresholdTouched'));
+  assert.equal(recommendedThresholdFor(3), 2);
+  assert.ok(CREATE.includes('setThreshold(recommended)'));
+  assert.ok(CREATE.includes('thresholdTouched'));
+});
+
+check('16b. trois membres : recommandation 2 of 3 (demo hackathon)', () => {
+  const recommendation = recommendationFor(3);
+  assert.ok(recommendation !== null);
+  assert.equal(recommendation?.label, THREE_MEMBER_RECOMMENDATION);
+  assert.equal(THREE_MEMBER_RECOMMENDATION, 'Recommended: 2 of 3');
+  assert.equal(recommendation?.detail, THREE_MEMBER_RECOMMENDATION_DETAIL);
+  assert.equal(
+    THREE_MEMBER_RECOMMENDATION_DETAIL,
+    'Two members must approve. One unavailable member cannot block the vault.',
+  );
+  assert.equal(recommendationFor(4), null, 'pas de recommandation au-dela de 3');
+  assert.ok(CREATE.includes('recommendationFor(members.length)'));
+  // 3 of 3 n'est jamais impose automatiquement.
+  assert.ok(!CREATE.includes('setThreshold(members.length)'));
 });
 
 check('17. deux membres + threshold 1 : Low security configuration', () => {

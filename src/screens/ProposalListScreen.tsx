@@ -223,10 +223,12 @@ export function ProposalListScreen({
               </Text>
             ) : null}
 
-            <Text style={styles.fieldNote}>
-              RPC calls used for this list: {proposals.list?.rpcCalls ?? 0} (one
-              getMultipleAccountsInfo).
-            </Text>
+            {__DEV__ ? (
+              <Text style={styles.fieldNote}>
+                RPC calls used for this list: {proposals.list?.rpcCalls ?? 0} (one
+                getMultipleAccountsInfo).
+              </Text>
+            ) : null}
           </View>
         ) : null}
 

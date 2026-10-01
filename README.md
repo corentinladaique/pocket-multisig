@@ -1,43 +1,52 @@
 # Pocket Multisig
 
-Application Android pour **consulter et gérer un multisig Squads Protocol v4
-depuis un téléphone Solana Mobile (Seeker)**, en utilisant Mobile Wallet
-Adapter. Prototype développé pour un hackathon.
+Application Android pour **créer et gérer un multisig Squads Protocol v4
+depuis un téléphone Solana Mobile (Seeker)**, via Mobile Wallet Adapter.
+Prototype développé pour un hackathon.
 
 > **DEVNET UNIQUEMENT.** Aucun réseau mainnet n'est accessible depuis cette
-> application. Aucune transaction ne peut y être signée sans action explicite
-> de l'utilisateur.
+> application. Aucune transaction n'est signée sans action explicite de
+> l'utilisateur.
 
 ## Problème résolu
 
 Un membre d'un multisig Squads doit aujourd'hui passer par un navigateur
-desktop pour consulter l'état d'une proposition et voter. Sur un téléphone,
-aucun outil natif ne permet d'approuver une transaction de son multisig :
-l'appareil sait signer, mais l'application manque. Pocket Multisig comble ce
-vide en restant dans le périmètre de sécurité du téléphone : le wallet garde
-les clés, l'application ne fait que lire l'état on-chain et faire signer.
+desktop pour consulter une proposition et voter. Sur un téléphone, aucun outil
+natif ne permet d'approuver une transaction de son multisig : l'appareil sait
+signer, l'application manquait. Pocket Multisig comble ce vide en restant dans
+le périmètre de sécurité du téléphone : **le wallet garde les clés**,
+l'application lit l'état on-chain et fait signer.
 
-## Fonctionnalités actuellement validées
+## Fonctionnalités (devnet, validées manuellement sur Seeker)
 
-Validées sur un Seeker physique (Android 16, devnet) :
+Quatre flux d'écriture, tous avec simulation, confirmation et read-back :
 
-- **Connexion wallet via Mobile Wallet Adapter** : ouverture du wallet,
-  autorisation, retour dans l'application.
-- **Affichage de l'adresse publique** connectée (complète et abrégée).
-- **Déconnexion** et retour à l'état déconnecté.
-- **Contrôle de l'état du réseau** : `Network: Devnet`, `RPC: Online` /
-  `Checking…` / `Offline`, avec détail de l'erreur et bouton Retry.
-- **Lecture d'un multisig Squads v4 par son adresse** : seuil, nombre de
-  membres, adresses publiques des membres, permissions décodées
-  (Initiate / Vote / Execute), adresse du vault index 0, réseau.
-- Validation locale des adresses saisies et messages d'erreur lisibles
-  (adresse invalide, compte absent).
+- **Créer un multisig** — membres, seuil, permissions ; signature unique du
+  créateur ; read-back vérifié (propriétaire, threshold, membres, permissions,
+  timeLock, rentCollector) avant d'afficher « Vault created and verified ».
+- **Créer une proposition** — transfert SOL vers une adresse ; montant saisi en
+  SOL (conversion exacte en lamports) ; simulation puis une seule transaction.
+- **Approuver** — un votant approuve ; anti-double-approbation à trois niveaux ;
+  refus on-chain si le wallet a déjà approuvé.
+- **Exécuter** — dès que le seuil est atteint et que le wallet a la permission
+  `Execute` ; solde relu avant envoi ; read-back de la proposition et du vault.
 
-## Controlled devnet fixture
+Plus, en lecture seule :
 
-Une fixture Squads Protocol v4 **contrôlée** est disponible sur devnet : un
-multisig 2/2 dont les deux membres nous appartiennent (le wallet public du
-Seeker et une clé d'approbation locale au projet).
+- **Connexion / déconnexion** via Mobile Wallet Adapter (Seed Vault, Solflare,
+  Ledger via Solflare).
+- **Lecture d'un multisig** par son adresse : seuil, membres, permissions,
+  adresse du vault index 0, solde du Main vault.
+- **Liste des propositions** et **détail d'une proposition** (décodage officiel
+  du message, source, destination, montant).
+- **Reprise après interruption réseau** : `Check transaction again` (création)
+  et `Check approval again` (approbation) — strictement en lecture, sans second
+  envoi, avec les mêmes invariants que le read-back initial.
+
+## Fixture devnet contrôlée
+
+Un multisig Squads v4 **contrôlé** est disponible sur devnet (2/2, les deux
+membres nous appartiennent) :
 
 - cluster : **devnet**
 - multisig (adresse de configuration) :
@@ -45,25 +54,9 @@ Seeker et une clé d'approbation locale au projet).
 - vault d'index 0 :
   `GLcZLbQZpMed3m8dAFF7XtNEn4TjedeLGKZeJSAG6yGG`
 - seuil : **2 / 2**, permissions Initiate + Vote + Execute pour les deux membres
-- transaction de création :
-  `4sHZmbyiFDeP4LxjYPXh1M7Y9YMrz9UK9WeE4vzG3sBDthmjEWD3Bdgfa6BmhF3cszH7iJXGBNy6a2kAPriofMGc`
-
-La lecture du seuil, des membres, de leurs permissions et du vault a été
-validée en conditions réelles sur un **Solana Seeker**, en lisant le compte via
-le SDK officiel.
-
-Le **vault n'est pas financé** : aucune valeur ne peut en sortir, aucune
-proposition n'a été créée et aucune approbation ni exécution n'a été testée.
 
 Toutes ces adresses sont des **données publiques de devnet, sans valeur
-réelle**. Le projet reste un prototype de hackathon, non audité, à ne pas
-utiliser pour gérer des fonds.
-
-## Non implémenté à ce stade
-
-- Découverte automatique des multisigs d'un wallet (reportée après le MVP).
-- Création de multisig, propositions, approbation et exécution depuis
-  l'application : à venir.
+réelle**.
 
 ## Stack technique
 
@@ -80,8 +73,6 @@ utiliser pour gérer des fonds.
 | expo-dev-client | 57.0.x |
 
 Programme Squads Protocol v4 : `SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`
-(identique sur devnet et mainnet — seule la constante d'endpoint distingue les
-deux, et elle est gelée sur devnet dans ce prototype).
 
 ## Architecture simplifiée
 
@@ -90,7 +81,7 @@ deux, et elle est gelée sur devnet dans ce prototype).
     │  Mobile Wallet Adapter (session Android, signatures)
     ▼
 [ Wallet MWA ] ──signe──► [ Pocket Multisig (Expo dev build) ]
-                                │  JSON-RPC HTTPS (lecture seule)
+                                │  JSON-RPC HTTPS
                                 ▼
                     [ api.devnet.solana.com ]
                                 │
@@ -100,79 +91,58 @@ deux, et elle est gelée sur devnet dans ce prototype).
 
 Trois couches, aucune infrastructure serveur :
 
-- le **wallet** détient les clés (Seed Vault sur Seeker) ; l'application ne
-  voit jamais de clé privée, seulement des signatures et des adresses ;
+- le **wallet** détient les clés ; l'application ne voit jamais de clé privée ;
 - l'**application** lit l'état on-chain et construit les instructions ;
 - la **chaîne** est l'unique source de vérité (aucun backend, aucune base de
   données, aucune clé de service).
 
-Les signataires éventuels vivent dans `scripts/` et servent uniquement à créer
-des fixtures de test ; aucune clé de test n'est stockée dans ce dépôt.
-
 ## Prérequis
 
-- Node.js 20+ et npm.
-- JDK 17.
-- Android SDK (`ANDROID_HOME` défini), `platform-tools`, `build-tools`,
-  une plateforme `android-36`.
-- Un appareil Android avec un wallet compatible Mobile Wallet Adapter
-  (sur Seeker : le Seed Vault Wallet). **Expo Go ne fonctionne pas** : Mobile
-  Wallet Adapter utilise des modules natifs Kotlin et exige un *development
-  build*. Un appareil physique est recommandé.
+- Node.js 20+ et npm, JDK 17.
+- Android SDK (`ANDROID_HOME`), `platform-tools`, `build-tools`, `android-36`.
+- Un appareil Android avec un wallet compatible MWA. **Expo Go ne fonctionne
+  pas** (modules natifs Kotlin) : un *development build* est obligatoire.
 
 ## Installation
 
 ```bash
 npm install
-adb devices                 # vérifier que l'appareil est en état "device"
-npm run typecheck           # vérification TypeScript stricte
-npx expo-doctor             # cohérence du projet Expo
+adb devices
+npm run typecheck
+npm test                    # tests purs (aucun réseau, aucune transaction)
 npx expo run:android        # build natif + installation sur l'appareil
 ```
 
 En cas de « SDK location not found », créer `android/local.properties`
 (fichier ignoré par Git) contenant `sdk.dir=/chemin/vers/Android/Sdk`.
 
-Scripts disponibles :
-
-- `npm run typecheck` — `tsc --noEmit`
-- `npm run doctor` — `npx expo-doctor`
-- `npm run android` — `expo start --android`
+Scripts : `npm run typecheck`, `npm run doctor`, `npm test`, `npm run android`.
 
 ## Utilisation
 
-1. Ouvrir l'application, appuyer sur **Connect wallet**.
-2. Autoriser l'application dans le wallet.
-3. L'adresse publique connectée s'affiche ; l'état du RPC devnet aussi.
-4. Coller l'adresse d'un multisig Squads v4 devnet, appuyer sur
-   **Load multisig** : seuil, membres, permissions et adresse du vault
-   s'affichent. **Clear** revient au formulaire.
-
-L'application n'écrit rien : aucune transaction, aucune signature à ce stade.
+1. **Connect wallet**, autoriser dans le wallet.
+2. Coller l'adresse d'un multisig et **Load multisig** (ou **Create vault**
+   pour en créer un sur devnet).
+3. Depuis l'accueil : ouvrir les propositions, en **créer** une, **approuver**
+   avec un second wallet, **exécuter** quand le seuil est atteint.
+4. Après une coupure réseau, **Check transaction again / Check approval again**
+   permet de retrouver l'état on-chain sans rien renvoyer.
 
 ## Sécurité
 
 - **Ne fournissez jamais votre seed phrase ou votre clé privée à quiconque, y
-  compris à cette application.** L'application ne les demande pas, ne les lit
-  pas et ne les stocke pas. Si un outil vous demande votre seed phrase, c'est
-  une tentative d'hameçonnage.
-- L'application ne voyage aucun secret : aucun `.env`, aucune clé d'API,
-  aucun token dans le dépôt.
-- Les adresses affichées sont publiques et vérifiables sur un explorateur
-  devnet.
-- Ce prototype **n'a pas été audité**. Voir `SECURITY.md` pour les règles de
-  sécurité appliquées pendant le développement (devnet seulement, écran de
-  confirmation obligatoire avant toute signature, aucune transaction envoyée
-  sans action explicite de l'utilisateur).
+  compris à cette application.** Elle ne les demande pas, ne les lit pas et ne
+  les stocke pas.
+- Aucun secret dans le dépôt : aucun `.env`, aucune clé d'API, aucun token.
+- Ce prototype **n'a pas été audité.** Voir `SECURITY.md` pour les règles
+  appliquées et les **risques ouverts** (RPC public unique, identité dApp de
+  développement, dépendances vulnérables transitives, listes d'adresses
+  dynamiques non supportées, absence de CI).
 
 ## Avertissement hackathon
 
-Ce projet est un **prototype de hackathon**, fourni tel quel et sans garantie
-d'aucune sorte. Il n'a pas été audité, il n'offre aucune garantie de sécurité
-financière, et il ne doit pas être utilisé pour gérer des fonds réels.
-N'utilisez pas ce logiciel pour un multisig contenant des actifs ayant une
-valeur. Aucun engagement de support, de disponibilité ou de correction n'est
-pris.
+Prototype fourni tel quel, sans garantie. Non audité. Ne pas l'utiliser pour
+gérer des actifs ayant une valeur réelle.
 
 ## État d'avancement
 
@@ -180,43 +150,28 @@ pris.
 | --- | --- |
 | Cadrage, architecture, sécurité | Terminé |
 | Socle natif Expo + polyfills | Terminé |
-| Connexion / déconnexion Mobile Wallet Adapter | Validé sur Seeker |
+| Connexion / déconnexion MWA | Validé sur Seeker |
 | État réseau et RPC devnet | Validé sur Seeker |
-| Lecture d'un multisig Squads v4 par adresse | Validé sur Seeker |
-| Fixture devnet contrôlée (multisig 2/2) | Créée, confirmée on-chain et validée sur Seeker |
+| Lecture d'un multisig, des propositions, décodage | Validé sur Seeker |
+| Création de multisig + read-back vérifié | Validé sur Seeker |
+| Création de proposition SOL | Validé sur Seeker |
+| Approbation + reprise réseau | Validé sur Seeker |
+| Exécution | Validé sur Seeker |
+| Tests purs (`npm test`) | 33 fichiers, lancés manuellement |
+| CI | Non implémentée |
 | Découverte automatique des multisigs | Reportée après le MVP |
-| Propositions et approbations depuis l'application | À venir |
-
-Détail des tâches : `TASKS.md`. Décisions d'architecture : `ARCHITECTURE.md`.
-Périmètre produit : `PRODUCT.md`.
-
-## Roadmap
-
-1. Fixture devnet contrôlée (multisig 2/2 dont nous maîtrisons les membres).
-2. Lecture des propositions en attente et de leur contenu décodé.
-3. Écran de confirmation avant signature, puis approbation d'une proposition
-   depuis le Seeker.
-4. Exécution d'une proposition lorsque le seuil est atteint.
-5. Découverte automatique des multisigs d'un wallet connecté.
-6. Publication sur le Solana dApp Store.
 
 ## Limitations connues
 
-- `npx expo-doctor` signale une dépendance React dupliquée introduite par une
-  dépendance transitive de Mobile Wallet Adapter (`@wallet-standard/react`).
-  Aucun impact observé jusqu'ici ; à traiter si un conflit réel apparaît.
-- L'identifiant Android par défaut de `prebuild` n'a pas encore été
-  personnalisé.
-- Deux wallets compatibles installés sur l'appareil font apparaître le
-  sélecteur d'application Android lors de la première connexion.
-
-## Licence
-
-MIT (voir `LICENSE`). Le fichier de licence actuel contient encore la mention
-de copyright héritée du modèle Expo et doit être corrigé avant publication.
+- `expo-doctor` signale une dépendance React dupliquée transitive
+  (`@wallet-standard/react`) ; aucun impact observé.
+- Deux wallets MWA installés font apparaître le sélecteur Android à la première
+  connexion.
+- Les Address Lookup Tables ne sont pas supportées à l'exécution.
+- `LICENSE` conserve la mention de copyright héritée du modèle Expo.
 
 ## Remerciements
 
-Le protocole et le SDK Squads Protocol v4, Mobile Wallet Adapter, le wallet
-Seed Vault et l'appareil Seeker sont des projets Solana Mobile / Squads Labs.
-Ce dépôt n'est ni affilié à ces équipes, ni approuvé par elles.
+Squads Protocol v4, Mobile Wallet Adapter, le wallet Seed Vault et l'appareil
+Seeker sont des projets Solana Mobile / Squads Labs. Ce dépôt n'y est ni
+affilié ni approuvé par eux.

@@ -165,8 +165,10 @@ check('9. le solde est relu avant toute execution', () => {
     'le solde doit etre relu AVANT toute signature/envoi',
   );
   assert.ok(runExecution.includes('Insufficient vault balance'));
+  // Le CTA Execute est rendu conditionnellement (etats exclusifs) ; le blocage
+  // par solde insuffisant reste porte par le handler onExecute.
   assert.ok(
-    source.includes('disabled={!canExecute || insufficientBalance'),
+    source.includes('if (!canExecute || insufficientBalance || executing'),
     'Execute doit etre bloque si le solde est insuffisant',
   );
 });

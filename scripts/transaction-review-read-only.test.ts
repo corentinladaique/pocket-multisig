@@ -116,7 +116,9 @@ check('8. Back retourne vers ProposalDetailsScreen (un seul bouton Back)', () =>
 
 // --- ProposalDetailsScreen reste canonique -------------------------------
 check('9. ProposalDetailsScreen contient toujours le CTA Approve', () => {
-  assert.ok(DETAILS.includes('accessibilityLabel="Approve this proposal"'));
+  // Le CTA existe toujours ; il peut etre rendu conditionnellement (etats
+  // exclusifs), donc le libelle est porte par une constante/ternaire.
+  assert.ok(DETAILS.includes("'Approve this proposal'"));
   assert.ok(DETAILS.includes('onPress={onApprove}'));
   assert.ok(DETAILS.includes('const onApprove = () => {'));
   assert.ok(DETAILS.includes('const runApproval = async () => {'));

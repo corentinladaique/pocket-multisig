@@ -1,153 +1,172 @@
 # SECURITY.md — Pocket Multisig
 
-Ces règles ne sont pas des recommandations. Elles sont vérifiées à chaque
-étape de `TASKS.md`. Une violation bloque la tâche.
+Ces règles ne sont pas des recommandations. Elles décrivent le comportement
+**réellement implémenté** et vérifié dans ce dépôt, et ce qui reste ouvert.
+
+> **Ce prototype n'a pas été audité professionnellement.** Il est fourni tel
+> quel, sans garantie, pour une démonstration **devnet**. Il ne doit pas servir
+> à gérer des actifs réels.
 
 ## 1. Réseau
 
 - **Devnet uniquement.** Le cluster est une constante (`src/config.ts`) :
   `https://api.devnet.solana.com`, `chain = "solana:devnet"`.
 - Aucune variable d'environnement, aucun réglage UI, aucun flag de build ne
-  permet de basculer sur mainnet dans le MVP. Le changement de réseau exige une
-  instruction explicite du donneur d'ordre + une revue de sécurité dédiée.
+  permet de basculer sur mainnet dans le MVP.
 - Le programme Squads v4 est identique sur devnet et mainnet
-  (`SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`) : la seule barrière est donc
-  la constante RPC et le `chain` passé à `MobileWalletProvider`. Le second est
-  aujourd'hui porté par la constante gelée `DEVNET_CHAIN` (`src/config.ts`).
-  Ce refus est **effectif** : le module `src/wallet/useWalletGuard.ts` est actif
-  et bloque toute session dont `chain !== "solana:devnet"` ou dont l'endpoint
-  RPC diffère de l'endpoint devnet gelé. Validé sur la proposition #1 réelle
-  depuis le Seeker. Aucune exécution n'est implémentée à ce jour.
+  (`SQDS4ep65T869zMMBKyuUq6aD6EgTu8psMjkvj52pCf`) : les barrières sont la
+  constante RPC gelée et le `chain` passé à `MobileWalletProvider`.
+  `src/wallet/useWalletGuard.ts` est actif : il bloque toute session dont
+  `chain !== "solana:devnet"` ou dont l'endpoint diffère de l'endpoint devnet
+  gelé. Le contrôle de réseau reste **dérivé de la constante qui a servi à
+  construire la connexion** (voir §9, risque ouvert).
 
 ## 2. Clés et secrets
 
 - Ne **jamais** demander, lire, afficher, stocker ou journaliser une seed
   phrase, un mnémonique ou une clé privée.
-- Ne jamais générer de keypair destiné à détenir des fonds réels.
-- Les seuls `Keypair` autorisés sont ceux de `scripts/` (fixtures devnet,
-  jetables, air-dropped) et ne doivent jamais être réutilisés hors devnet.
-- Aucun secret dans le dépôt : pas de `.env` commité, pas de clé en dur, pas de
-  fichier `id.json` versionné. `.gitignore` couvre `*.json` de keypair, `.env*`.
+- Les seuls `Keypair` du projet vivent dans `scripts/` (fixtures devnet,
+  jetables) et dans le signataire éphémère `createKey` d'une création de
+  multisig — gardé **en mémoire seule**, jamais persisté, jamais journalisé,
+  jamais fee payer.
+- Aucun secret dans le dépôt : pas de `.env` commité, pas de clé API, pas de
+  fichier de keypair versionné. `.gitignore` couvre `*.json` de keypair et
+  `.env*`. Le keystore de signature release n'est jamais versionné.
 - Les logs applicatifs ne contiennent que des adresses publiques, des index et
-  des signatures — jamais de bytes de signature de message arbitraire.
+  des signatures.
 
 ## 3. RPC et données
 
 - Un seul RPC public, sans clé API. Si un RPC authentifié devient nécessaire,
-  la clé passe par la config de build, jamais par le code source.
-- Les réponses RPC ne sont pas une source de vérité fiable en soi :
+  la clé passera par la config de build, jamais par le code source.
+- Les réponses RPC ne sont pas une source de vérité en soi :
   - toute adresse désérialisée est validée par `PublicKey` (`try/catch`) ;
-  - toute donnée d'account est validée par le désérialiseur officiel
+  - toute donnée d'account est validée par le **désérialiseur officiel**
     `@sqds/multisig`, jamais par un parsing d'offsets maison ;
-  - un compte qui échoue à se désérialiser est ignoré silencieusement côté
-    liste, avec un compteur « n comptes illisibles » affiché.
+  - un compte qui échoue à se désérialiser est ignoré (compteur « n comptes
+    illisibles » affiché), jamais interprété.
 
-## 4. Signature de transaction — écran de confirmation obligatoire
+## 4. Les quatre flux d'écriture
 
-**PREVIEW LOCALE IMPLÉMENTÉE — AUCUNE ACTION ON-CHAIN.** L'écran de revue
-existe (`src/screens/TransactionReviewScreen.tsx`) et affiche tous les champs
-exigés ci-dessous, mais il n'est branché à **aucune** donnée on-chain : il ne
-reçoit que des modèles locaux de démonstration
-(`src/types/transactionReview.ts`), ouverts par un bouton visible uniquement
-sous `__DEV__` et étiquetés « Development preview — not on-chain data ».
+Tous suivent la même discipline : **devnet**, construction locale, verdict de
+fenêtre de signature **avant** d'ouvrir le wallet, un seul envoi, confirmation
+on-chain, read-back métier, aucune seconde tentative automatique.
 
-Aucun chemin de signature n'existe : l'application ne construit aucune
-transaction et n'appelle ni `signAndSendTransactions` ni `signMessages`. Le
-bouton de confirmation est présent mais **désactivé** (« Confirmation not
-available yet ») et le restera tant que T11/T12 ne sont pas implémentés. La
-règle ci-dessous reste bloquante pour ce moment-là : aucune fonctionnalité
-d'écriture ne doit être livrée avant qu'elle soit satisfaite.
+### 4.1 Créer un multisig — `src/vault/signAndSendMultisigCreation.ts`
+1. Plan + preflight + simulation avec un blockhash frais unique.
+2. `createKey` éphémère signe en local (`partialSign`) ; il ne paie jamais.
+3. Fenêtre de signature évaluée **en blocs** (`evaluateSigningWindow`) : si la
+   marge est insuffisante, le wallet n'est pas ouvert.
+4. Un seul `signAndSendTransactions` (wallet MWA), une seule fois.
+5. Confirmation on-chain puis **read-back vérifié** : propriétaire du compte,
+   `configAuthority`, threshold, nombre de membres, **adresses ET masques de
+   permissions** des membres (ordre ignoré), `timeLock`, `rentCollector`, et
+   l'adresse attendue de la tentative signée.
+6. `Vault created and verified.` n'est affiché que si les trois preuves
+   concordent. En cas de divergence, l'écran affiche « Transaction confirmed »
+   + « Vault verification: failed » et **aucun second envoi**.
+7. Reprise : `Check transaction again` est **strictement en lecture**
+   (statut de signature, hauteur de bloc, `getAccountInfo`) et applique **les
+   mêmes invariants** que le read-back initial (fonction pure commune
+   `src/vault/multisigCreationReadBack.ts`).
 
-Cet écran affiche, en clair, AVANT toute signature :
+### 4.2 Créer une proposition — `src/squads/signAndSendProposalCreation.ts`
+1. Préflight local, puis simulation ; aucun envoi avant un succès de simulation.
+2. Une seule transaction : `vaultTransactionCreate` + `proposalCreate`.
+3. Blockhash frais, fenêtre en blocs, un seul envoi, confirmation, read-back
+   de la `Proposal` et de la `VaultTransaction`.
+4. Le formulaire n'accepte que des montants en **SOL** (conversion entière
+   exacte, 9 décimales max, zéro flottant) ; le montant transféré est appliqué
+   à l'exécution, pas à la création.
 
-1. Réseau : `DEVNET` (libellé visible et non ambigu).
-2. Action : « Approuver la proposition #N » ou « Exécuter la transaction #N ».
-3. Adresse du multisig (complet, avec bouton copier).
-4. Adresse du vault concerné.
-5. Index de transaction.
-6. Cible et effet de l'instruction quand décodable : programme destinataire,
-   montant en SOL, destination, changement de config (membres/seuil).
-7. `feePayer` (doit être l'adresse connectée) et blockhash récent.
-8. Bouton d'action distinct, libellé par verbe, jamais « OK ».
+### 4.3 Approuver — `src/squads/signAndSendProposalApproval.ts`
+1. Le plan **relit la `Proposal` on-chain** : statut `Active`, rôle `Vote`,
+   refus si le wallet a **déjà** approuvé.
+2. Blockhash frais, fenêtre en blocs, un seul `proposalApprove`.
+3. Bornes de temps : préparation (avant wallet) et attente wallet sont bornées
+   ; un dépassement laisse toujours le chargement se terminer proprement.
+4. Confirmation + read-back de la `Proposal`. Anti-double-approbation à trois
+   niveaux : UI désactivée pendant la tentative, verrou local, refus on-chain.
+5. `Already approved` / « Approved by you » est **dérivé du read-back**, jamais
+   d'un état mémoire seul. `Check approval again` ne fait que des lectures
+   (aucun wallet, aucun envoi).
 
-Deux validations programmatiques précèdent la signature :
-- `tx.feePayer` égale l'adresse publique connectée, sinon refus ;
-- le programme cible de chaque instruction est un programme connu sur devnet
-  (Squads v4, System Program, Memo) ; sinon refus explicite.
+### 4.4 Exécuter — `src/squads/signAndSendProposalExecution.ts`
+1. Préconditions : statut `Approved`, seuil réellement atteint, rôle `Execute`.
+2. Solde du vault **relu** avant envoi ; un solde insuffisant refuse.
+3. Un seul `vaultTransactionExecute` ; confirmation ; read-back (statut de la
+   `Proposal` après exécution, variation de solde du vault).
+4. Les Address Lookup Tables non résolues **échouent explicitement**
+   (`AddressLookupTablesUnsupported`) : aucune résolution heuristique.
 
-Toute instruction non décodable est affichée comme telle (« instruction
-illisible — vérifier sur l'explorer »), jamais masquée.
+## 5. Instructions autorisées (liste blanche)
 
-## 5. Instructions autorisées (liste blanche MVP)
+`src/squads/instructionAllowlist.ts` évalue la revue d'une instruction
+embarquée et bloque tout programme hors liste, en complément du guard (§1).
+Aujourd'hui elle ne reconnaît que le **System Program**
+(`11111111111111111111111111111111`) — c'est-à-dire le contenu du transfert
+SOL stocké dans une proposition. Toute instruction inconnue reste refusée et
+la confirmation est bloquée pour tout décodage `partial` ou `unknown`.
 
-**IMPLÉMENTÉE ET ACTIVE.** `src/squads/instructionAllowlist.ts` évalue chaque
-revue et bloque tout programme hors liste, en complément du guard (§1) ; les
-deux ont été validés sur la proposition #1 réelle. Elle ne reconnaît aujourd'hui
-qu'**une seule** instruction : `SystemProgram.transfer`
-(`11111111111111111111111111111111`). Toute autre instruction — y compris les
-instructions Squads ci-dessous — reste refusée tant qu'elle n'est pas
-explicitement autorisée :
+Les instructions que **l'application construit elle-même** (Squads v4 :
+`multisigCreateV2`, `vaultTransactionCreate`, `proposalCreate`,
+`proposalApprove`, `vaultTransactionExecute`) sont, elles, limitées au SDK
+officiel et ne sont jamais construites à partir d'une entrée utilisateur
+arbitraire.
 
-- `multisig.instructions.proposalApprove`
-- `multisig.instructions.vaultTransactionExecute`
+## 6. Revue et décodage
 
-Rien d'autre. Pas de création, pas de config transaction, pas de transfert
-direct depuis le wallet connecté, pas de `system_program::transfer` initié par
-nous.
-
-## 6. Règles de revue imposées par le décodeur (T09)
-
-Ces règles sont celles **effectivement implémentées** dans
-`src/solana/decodeTransactionMessage.ts`. Elles s'appliquent à toute revue
-affichée par `TransactionReviewScreen` :
-
-- seul `SystemProgram.transfer` est actuellement reconnu ;
-- toute autre instruction reste `unknown` (adresse brute préservée, aucune
-  interprétation) ;
-- une transaction comportant plusieurs instructions est classée `partial` tant
-  que toutes ses instructions ne sont pas reconnues — elle n'est jamais résumée
-  comme un transfert unique ;
-- une source différente du vault attendu entraîne `partial`, avec un
-  avertissement nommant la source décodée et le vault attendu ;
-- une Address Lookup Table non résolue bloque la revue (`unknown`) sans aucune
-  résolution RPC automatique ;
-- les frais restent `Unknown` tant qu'aucune simulation n'a été faite ;
-- toute future confirmation devra rester bloquée pour `partial` et pour
-  `unknown` ;
-- la confirmation est également **inactive aujourd'hui pour `decoded`** : le
-  branchement on-chain n'existe pas encore.
-
-Aucune approbation, aucune exécution et aucune signature n'est implémentée.
-
-### 6.1 Revue réelle on-chain (lecture seule)
-
-- La revue réelle est **strictement en lecture seule** : aucun chemin d'écriture
-  n'est branché sur l'écran.
-- Les comptes `VaultTransaction` et `Proposal` sont désérialisés par le **SDK
-  officiel** (`VaultTransaction.fromAccountAddress` / `fromAccountInfo`,
-  `Proposal.fromAccountAddress`).
-- **Aucun parsing manuel** du compte Squads : aucun offset, aucune lecture
-  d'octets bruts du compte.
-- Chaque index d'instruction (`programIdIndex`, `accountIndexes`) est **contrôlé
-  avant reconstruction** ; une incohérence produit `unknown` sans exception.
-- Les drapeaux `isSigner` / `isWritable` viennent des helpers **officiels** du
-  SDK (`utils.isSignerIndex`, `utils.isStaticWritableIndex`).
-- Les Address Lookup Tables non résolues **bloquent le décodage** (aucun RPC
-  automatique, aucune résolution heuristique).
+- `src/solana/decodeTransactionMessage.ts` ne reconnaît que le System Program ;
+  toute autre instruction reste `unknown` (adresse brute préservée, aucune
+  interprétation).
+- Une transaction multi-instructions est `partial` tant que toutes ne sont pas
+  reconnues : elle n'est jamais résumée comme un transfert unique.
+- `TransactionReviewScreen` est une vue technique **facultative et strictement
+  en lecture seule** : aucun wallet, aucune signature, aucun envoi.
+- Toute la désérialisation passe par le SDK officiel ; aucun offset maison.
 
 ## 7. Journalisation et erreurs
 
-- Erreurs affichées avec : contexte utilisateur + message brut du RPC.
-- Un rejet du wallet (refus de l'utilisateur) n'est jamais présenté comme une
-  erreur technique.
-- Les signatures sont affichées et copiables ; un lien explorer devnet les
-  accompagne (`?cluster=devnet` obligatoire).
+- Erreurs affichées avec contexte utilisateur + message brut dans une section
+  « Troubleshooting details » repliable, fermée par défaut.
+- Un rejet du wallet n'est jamais présenté comme une erreur technique.
+- Les signatures sont affichées et copiables.
 
-## 8. Checklist de revue (à passer à chaque tâche)
+## 8. Stockage local
+
+- Registre local (AsyncStorage) : adresses publiques, noms locaux et labels de
+  membres. **Rien n'est synchronisé**, aucun label n'est écrit on-chain, aucun
+  secret n'y est stocké.
+- Un multisig « observé » (adresse collée) est distinct d'un multisig
+  « créé » ; les permissions sont toujours revérifiées on-chain.
+
+## 9. Risques ouverts (assumés pour le MVP)
+
+- **RPC public unique**, sans fallback ni RPC authentifié.
+- **Garde réseau tautologique** : le contrôle compare la connexion à la
+  constante qui a servi à la construire ; il ne prouve pas l'absence de
+  mélange de réseaux par un canal indépendant.
+- **Identité dApp** présentée aux wallets : valeur de développement à
+  remplacer par une identité officielle du projet (voir `src/config.ts`).
+- **Dépendances** : `npm audit` remonte des vulnérabilités hautes transitives
+  (dont `bigint-buffer` via la chaîne Squads), non corrigées à ce jour.
+- **Address Lookup Tables** non supportées à l'exécution.
+- **Pas de CI** : les tests purs sont lancés manuellement (`npm test`).
+- Aucun test d'intégration on-chain automatisé : les validations réelles sont
+  manuelles, sur Seeker.
+
+## 10. Absence d'audit
+
+Ce projet **n'a pas été audité** et n'est pas présenté comme un audit. Les
+mécanismes ci-dessus réduisent les risques connus ; ils ne prouvent pas
+l'absence de vulnérabilité.
+
+## 11. Checklist de revue
 
 - [ ] Aucune référence à mainnet dans le diff.
 - [ ] Aucun secret, aucune clé privée, aucune seed phrase dans le diff.
 - [ ] Aucun chemin de signature sans écran de confirmation.
 - [ ] Aucun parsing d'account maison.
-- [ ] `npx tsc --noEmit` passe.
+- [ ] Aucun second envoi après une signature obtenue.
+- [ ] `npm run typecheck` passe.
 - [ ] Les tests de la tâche passent.

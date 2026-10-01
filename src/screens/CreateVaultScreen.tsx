@@ -22,11 +22,9 @@ import {
   LOW_SECURITY_THRESHOLD_CONFIRM,
   LOW_SECURITY_THRESHOLD_DETAIL,
   LOW_SECURITY_THRESHOLD_LABEL,
-  TWO_MEMBER_RECOMMENDATION,
-  TWO_MEMBER_RECOMMENDATION_DETAIL,
-  TWO_MEMBER_RECOMMENDED_THRESHOLD,
   lowSecurityThresholdWarning,
-  twoMemberRecommendation,
+  recommendationFor,
+  recommendedThresholdFor,
 } from '../vault/thresholdRecommendation';
 import { runMultisigCreationPreflight } from '../vault/multisigCreationPreflight';
 import {
@@ -310,17 +308,17 @@ export function CreateVaultScreen({
   // Plan technique : purement local (aucun RPC, aucune API Squads executee).
   const plan = useMemo(() => buildMultisigCreationPlan(request), [request]);
 
-  // Pour exactement deux membres, 2 of 2 est le defaut RECOMMANDE — sauf choix
-  // explicite de l'utilisateur, qui n'est jamais ecrase.
+  // Pour 2 ou 3 membres, le threshold recommande (2) est applique par defaut —
+  // sauf choix explicite de l'utilisateur, qui n'est jamais ecrase.
   useEffect(() => {
-    if (
-      !thresholdTouched &&
-      members.length === TWO_MEMBER_RECOMMENDED_THRESHOLD &&
-      threshold !== TWO_MEMBER_RECOMMENDED_THRESHOLD
-    ) {
-      setThreshold(TWO_MEMBER_RECOMMENDED_THRESHOLD);
-    }
+    if (thresholdTouched) return;
+    if (members.length !== 2 && members.length !== 3) return;
+    const recommended = recommendedThresholdFor(members.length);
+    if (threshold !== recommended) setThreshold(recommended);
   }, [members.length, threshold, thresholdTouched]);
+
+  // Recommandation affichee (2 of 2 / 2 of 3), ou null.
+  const thresholdRecommendation = recommendationFor(members.length);
 
   // Valeurs attendues on-chain, préparées AVANT signature : utilisées à
   // l'identique par le read-back initial ET par « Check transaction again ».
@@ -1218,10 +1216,10 @@ export function CreateVaultScreen({
             <Text style={styles.fieldValue}>
               {threshold} of {members.length} approvals required.
             </Text>
-            {twoMemberRecommendation(members.length) !== null ? (
+            {thresholdRecommendation !== null ? (
               <>
-                <Text style={styles.fieldValue}>{TWO_MEMBER_RECOMMENDATION}</Text>
-                <Text style={styles.hint}>{TWO_MEMBER_RECOMMENDATION_DETAIL}</Text>
+                <Text style={styles.fieldValue}>{thresholdRecommendation.label}</Text>
+                <Text style={styles.hint}>{thresholdRecommendation.detail}</Text>
               </>
             ) : null}
             {lowSecurityThresholdWarning(members.length, threshold) !== null ? (

@@ -1179,16 +1179,17 @@ export function ProposalDetailsScreen({
 
           <Pressable
               accessibilityRole="button"
+              accessibilityLabel="Advanced transaction details"
               accessibilityState={{ disabled: model === null }}
               disabled={model === null}
               onPress={() => setReviewOpen(true)}
-              style={[styles.button, model === null && styles.disabled]}
+              style={[styles.button, styles.secondary, model === null && styles.disabled]}
             >
-            <Text style={styles.buttonText}>Review proposal</Text>
+            <Text style={styles.secondaryText}>Advanced transaction details</Text>
           </Pressable>
           {model === null ? (
             <Text style={styles.fieldNote}>
-              The full transaction review is available once the proposal has been decoded by the
+              The technical review is available once the proposal has been decoded by the
               existing review flow.
             </Text>
           ) : null}
