@@ -44,6 +44,9 @@ const THEME = readFileSync('src/ui/theme.ts', 'utf8');
 const PRIM = readFileSync('src/ui/v2/primitives.tsx', 'utf8');
 const RUNNER = readFileSync('scripts/run-pure-tests.sh', 'utf8');
 const PACKAGE = readFileSync('package.json', 'utf8');
+// Home (ConnectScreen) : lu pour verifier qu'il garde les fondations V2 apres
+// le hotfix de coherence (bloc technique retire).
+const HOME_SRC = readFileSync('src/screens/ConnectScreen.tsx', 'utf8');
 
 const LIGHT_COLORS = ['#ffffff', '#101317', '#1a56db', '#374151', '#991b1b', '#065f46'];
 
@@ -241,7 +244,6 @@ check('29. Aucun package', () => {
 const GROUP1_FILES = [
   'src/ui/theme.ts',
   'src/ui/v2/primitives.tsx',
-  'src/screens/ConnectScreen.tsx',
   'src/screens/ReceiveScreen.tsx',
   'src/ui/AddressInput.tsx',
   'src/ui/clipboard.ts',
@@ -266,8 +268,11 @@ check('31. primitives.tsx inchange', () => {
   assert.ok(!changed.includes('src/ui/v2/primitives.tsx'), 'aucune modification des primitives');
 });
 
-check('32. ConnectScreen inchange', () => {
-  assert.ok(!changed.includes('src/screens/ConnectScreen.tsx'));
+check('32. ConnectScreen reste sur les fondations UI V2', () => {
+  // Home a evolue (hotfix de coherence) mais garde les fondations du Groupe 1.
+  assert.ok(HOME_SRC.includes("from '../ui/v2/primitives'"));
+  assert.ok(HOME_SRC.includes("from '../ui/theme'"));
+  assert.ok(!HOME_SRC.includes('ui/v2/primitives.tsx'), 'aucune primitive dupliquee');
 });
 
 check('33. ReceiveScreen inchange', () => {

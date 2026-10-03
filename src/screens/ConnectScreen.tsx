@@ -120,7 +120,6 @@ export function ConnectScreen() {
   );
   const [multisigInput, setMultisigInput] = useState('');
   const [previewCase, setPreviewCase] = useState<DecodeStatus | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   // Section « More » (actions de gestion) : repliée par défaut, ouverte si aucun vault.
   const [moreOpen, setMoreOpen] = useState(false);
   // Vue Receive SOL (Groupe 1) : informative, lecture seule.
@@ -788,6 +787,9 @@ export function ConnectScreen() {
               <Text style={styles.vaultCopySmall}>
                 {homeIsMember ? 'My multisig' : 'Observed multisig · Read only'}
               </Text>
+              {!homeIsMember ? (
+                <Text style={styles.vaultCopySmall}>This is public on-chain information.</Text>
+              ) : null}
               <View style={styles.vaultAddressRow}>
                 <Text selectable style={styles.vaultAddressText}>
                   {shortenAddress(view.vaultAddress)}
@@ -813,6 +815,19 @@ export function ConnectScreen() {
                   </Text>
                 </Pressable>
               </View>
+              {/* Objectif B : action secondaire vers l'UNIQUE vue detaillee
+                  (MultisigDetailsScreen V2), meme handler que le chemin Inbox. */}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="View vault details"
+                onPress={() => setManualDetailsOpen(true)}
+                style={({ pressed }) => [
+                  styles.inlineAction,
+                  pressed && styles.inlineActionPressed,
+                ]}
+              >
+                <Text style={styles.inlineActionText}>View vault details ›</Text>
+              </Pressable>
             </Card>
           )}
 
@@ -850,6 +865,13 @@ export function ConnectScreen() {
                   </Text>
                 </Pressable>
               </View>
+              {/* Compteurs derives des propositions deja lues (donnee conservee) :
+                  rendus uniquement s'ils sont non nuls, sans identifiant technique. */}
+              {homeNeedsVote + homeReadyToExecute > 0 ? (
+                <Text style={styles.vaultCopySmall}>
+                  {homeNeedsVote} waiting for your vote · {homeReadyToExecute} ready to execute
+                </Text>
+              ) : null}
               {proposals.status === 'loading' ? (
                 <Text style={styles.vaultCopySmall}>Reading…</Text>
               ) : null}
@@ -1043,55 +1065,10 @@ export function ConnectScreen() {
             </View>
           ) : null}
 
-          {/* DETAILS TECHNIQUES — repliés, hors du premier niveau. */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: detailsOpen }}
-            accessibilityLabel="Toggle technical details"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            onPress={() => setDetailsOpen((previous) => !previous)}
-            style={styles.detailsToggle}
-          >
-            <Text style={styles.detailsToggleText}>
-              {detailsOpen ? '▾ Technical details' : '▸ Technical details'}
-            </Text>
-          </Pressable>
-          {detailsOpen && view !== null ? (
-            <View style={styles.detailsBody}>
-              <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-              <Text selectable style={styles.fieldValue}>
-                {view.address}
-              </Text>
-              <Text style={styles.fieldLabel}>Vault address (index 0)</Text>
-              <Text selectable style={styles.fieldValue}>
-                {view.vaultAddress}
-              </Text>
-              <Text style={styles.fieldLabel}>Threshold</Text>
-              <Text style={styles.fieldValue}>
-                {view.threshold} / {view.members.length}
-              </Text>
-              <Text style={styles.fieldLabel}>Members ({view.members.length})</Text>
-              {view.members.map((member) => (
-                <Text key={member.address} selectable style={styles.memberLine}>
-                  {member.address}
-                  {member.roles.length > 0 ? `  ·  ${member.roles.join(' + ')}` : ''}
-                </Text>
-              ))}
-              <Text style={styles.fieldLabel}>Waiting for your vote</Text>
-              <Text style={styles.fieldValue}>
-                {homeNeedsVote} proposal(s) · {homeReadyToExecute} ready to execute
-              </Text>
-              <Text style={styles.fieldLabel}>Network</Text>
-              <Text style={styles.fieldValue}>Devnet</Text>
-              <Text style={styles.fieldValue}>RPC: {rpcStatus}</Text>
-              {!homeIsMember ? (
-                <Text style={styles.hint}>
-                  This is public on-chain information. Your connected wallet has no permissions in
-                  this multisig.
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
+          {/* Hotfix de coherence : le bloc technique complet du Home est
+              SUPPRIME. Les identifiants complets (Main vault, configuration,
+              Config authority, Rent collector, Program ID) vivent
+              exclusivement dans Vault Details → Advanced details. */}
         </View>
       )}
 

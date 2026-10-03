@@ -166,12 +166,13 @@ check('8. safe area : bandeau Devnet protege par la source partagee', () => {
   );
 });
 
-check('9. CTA Review proposal avant les details techniques', () => {
+check('9. Home : action reelle vers la proposition, details transferes vers Vault Details', () => {
   const actions = HOME.indexOf('To do');
-  const technical = HOME.indexOf('Technical details');
-  assert.ok(actions > 0 && technical > 0, 'les deux sections doivent exister');
-  assert.ok(actions < technical, 'la section d action doit preceder les informations techniques');
+  assert.ok(actions > 0, 'la section d action existe');
   assert.ok(HOME.includes('setOpenDecisionIndex(decision.index)'), 'action reelle vers la proposition');
+  // Hotfix de coherence : Home ne rend PLUS le bloc technique redondant.
+  assert.ok(!HOME.includes('Technical details'), 'le bloc technique est retire de Home');
+  assert.ok(HOME.includes('View vault details'), 'acces explicite a l unique vue detaillee');
 });
 
 check('10. aucun chargement automatique ne sollicite le wallet', () => {

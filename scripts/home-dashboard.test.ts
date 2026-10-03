@@ -161,12 +161,13 @@ check('10. aucun chargement Home ni refresh ne sollicite le wallet', () => {
   );
 });
 
-check('identite : nom local du vault et adresse complete selectionnable', () => {
+check('identite : nom local du vault et adresse abregée sur le dashboard', () => {
   assert.ok(HOME.includes("registry.entries.find((entry) => entry.address === viewAddress)"));
   assert.ok(HOME.includes("{homeVaultName ?? 'Main vault'}"));
-  // L'adresse Main vault (index 0) reste affichee et selectionnable (Details).
-  assert.ok(HOME.includes('{view.vaultAddress}'));
+  // Hotfix de coherence : Home n'affiche que l'adresse abregée ; l'adresse
+  // complete (selectionnable) vit dans Vault Details → Raw identifiers.
   assert.ok(HOME.includes('shortenAddress(view.vaultAddress)'));
+  assert.ok(!HOME.includes('{view.vaultAddress}'), 'adresse complete hors du dashboard');
 });
 
 setTimeout(() => {
