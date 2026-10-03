@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   BackHandler,
   KeyboardAvoidingView,
@@ -26,6 +25,8 @@ import {
 import { connection } from '../solana/connection';
 import { confirmSignature } from '../solana/confirmSignature';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { Card, DevnetPill, InfoBox, InfoText, PillButton } from '../ui/v2/primitives';
 import { estimateRemainingBalance, formatSol, describeTransferSource } from '../wallet/vaultBalance';
 
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
@@ -48,7 +49,7 @@ import {
   deriveProposalExecuteState,
   executionNotAvailableDetail,
 } from '../squads/proposalActionState';
-import type { TransactionReviewModel } from '../types/transactionReview';
+import { abbreviateAddress, type TransactionReviewModel } from '../types/transactionReview';
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
@@ -147,6 +148,8 @@ export function ProposalDetailsScreen({
   walletCanApprove: boolean;
 }) {
   const [reviewOpen, setReviewOpen] = useState(false);
+  // Section technique repliée par défaut : aucun détail brut à l'ouverture.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // --- Approbation : uniquement des verdicts DÉJÀ calculés par l'existant.
   const { signAndSendTransactions } = useMobileWallet();
@@ -747,6 +750,23 @@ export function ProposalDetailsScreen({
     );
   }
 
+  // --- Présentation pure (UI V2) : aucune logique métier, aucun nouveau CTA.
+  // CTA Approve : porte EXACTEMENT la même garde que l'existant.
+  const approveCtaVisible = actionState === 'approval-available' || approvalRetry;
+  // Statut utilisateur RÉEL : uniquement dérivé des verdicts déjà calculés.
+  const userStatusTitle = executed
+    ? 'Executed'
+    : effectiveProposalStatus === 'Approved' && progress.reached
+      ? PROPOSAL_ACTION_LABELS.thresholdReached
+      : walletAlreadyApproved
+        ? PROPOSAL_ACTION_LABELS.approvedByYou
+        : canConfirm
+          ? 'Needs your approval'
+          : `Status: ${effectiveProposalStatus}`;
+  // « Confirmed on-chain » : uniquement sur une preuve réelle.
+  const confirmedOnchain =
+    executionResult?.verified === true || effectiveProposalStatus === 'Executed';
+
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
@@ -754,451 +774,431 @@ export function ProposalDetailsScreen({
         keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
       >
-        <Text style={styles.badge}>DEVNET · READ ONLY</Text>
+        {/* --- En-tête : retour existant + DevnetPill + titre. --- */}
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to proposals"
+            onPress={onBack}
+            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <DevnetPill />
+        </View>
+
         <Text style={styles.title}>Proposal #{index}</Text>
-        <Text style={styles.subtitle}>
-          Read-only detail. No approval, no rejection and no execution exist on this screen.
-        </Text>
 
-        <View style={styles.block}>
-          <Text style={styles.fieldLabel}>Status</Text>
-          <Text style={styles.statusLine}>{decision.stateLabel}</Text>
-          <Text style={styles.fieldNote}>On-chain status: {proposal.status}</Text>
-
-          <Text style={styles.fieldLabel}>Approvals</Text>
-          <Text style={styles.fieldValue}>
-            {decision.approvals} of {decision.threshold} required
+        {/* --- Résumé RÉEL : action décodée, montant on-chain, destination. --- */}
+        <Card style={styles.hero}>
+          <Text style={styles.heroAction}>
+            {summary === null ? 'Transaction' : summary.action}
           </Text>
-
-          <Text style={styles.fieldLabel}>Voters ({proposal.approvedAddresses.length})</Text>
-          {proposal.approvedAddresses.length === 0 ? (
-            <Text style={styles.fieldNote}>
-              No member has approved this proposal yet.
-            </Text>
-          ) : (
-            proposal.approvedAddresses.map((voter) => (
-              <Text key={voter} selectable style={styles.monoValue}>
-                {voter}
-              </Text>
-            ))
-          )}
-
-          <Text style={styles.fieldLabel}>Vault balance and this proposal</Text>
-          <Text style={styles.fieldNote}>Current vault balance</Text>
+          <Text style={styles.heroAmount}>
+            {amountLamports === null ? 'Amount unavailable' : `${formatSol(amountLamports)} SOL`}
+          </Text>
+          <Text style={styles.heroCaption}>To</Text>
           <Text selectable style={styles.monoValue}>
-            {proposalVaultLamports === null ? 'Balance unavailable' : `${formatSol(proposalVaultLamports)} SOL`}
+            {summary === null ? 'Destination unavailable' : summary.destination}
           </Text>
-          <Text style={styles.fieldNote}>Proposal amount</Text>
-          <Text selectable style={styles.monoValue}>
-            {amountLamports === null ? 'Not decoded yet' : `${formatSol(amountLamports)} SOL`}
-          </Text>
-          <Text style={styles.fieldNote}>Estimated remaining balance</Text>
-          <Text selectable style={styles.monoValue}>
-            {remaining.sol === null ? 'Not available' : `${remaining.sol} SOL`}
-          </Text>
-          <Text style={styles.fieldNote}>{remaining.reason}</Text>
-          {insufficientBalance ? (
-            <Text style={styles.errorText}>Insufficient vault balance</Text>
-          ) : null}
+        </Card>
 
-          <Text style={styles.fieldLabel}>Operation summary</Text>
-          {summary === null ? (
-            <Text style={styles.fieldNote}>
-              Decoding this proposal… the amount and the destination appear as soon as the
-              transaction message is decoded. No wallet is involved.
-            </Text>
-          ) : (
-            <>
-              <Text style={styles.fieldValue}>{summary.action}</Text>
-              <Text selectable style={styles.monoValue}>
-                Amount: {summary.amount}
-              </Text>
-              {/* Destination en entier : l'adresse abrégée des cartes compactes
-                  ne suffit pas pour vérifier où part l'argent. */}
-              <Text style={styles.fieldNote}>Destination</Text>
-              <Text selectable style={styles.monoValue}>
-                {fullDestination ?? summary.destination}
-              </Text>
-              {model !== null && model.source.known ? (
-                <>
-                  <Text style={styles.fieldNote}>Funds will be sent from</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {model.source.value}
-                  </Text>
-                </>
-              ) : null}
-              <Text style={styles.fieldNote}>{sourceVerdict.label}</Text>
-              <Text style={styles.fieldNote}>{sourceVerdict.hint}</Text>
-              {!sourceVerdict.matches && vaultPdaAddress !== null ? (
-                <>
-                  <Text style={styles.fieldNote}>Vault address index 0</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {vaultPdaAddress}
-                  </Text>
-                </>
-              ) : null}
-            </>
-          )}
-
-          <Text style={styles.fieldLabel}>Transaction information</Text>
-          <Text style={styles.fieldNote}>Proposal account</Text>
-          <Text selectable style={styles.monoValue}>{pda ?? 'unavailable'}</Text>
-          <Text style={styles.fieldNote}>Vault transaction account</Text>
-          <Text selectable style={styles.monoValue}>{vaultTransactionAddress}</Text>
-          <Text style={styles.fieldNote}>Multisig</Text>
-          <Text selectable style={styles.monoValue}>{address}</Text>
-          {model !== null ? (
-            <>
-              <Text style={styles.fieldNote}>Decode status</Text>
-              <Text style={styles.fieldValue}>{model.decodeStatus}</Text>
-              {model.notes.length > 0 ? (
-                <>
-                  <Text style={styles.fieldNote}>Notes ({model.notes.length})</Text>
-                  {model.notes.map((note) => (
-                    <Text key={note} style={styles.fieldNote}>
-                      · {note}
-                    </Text>
-                  ))}
-                </>
-              ) : null}
-            </>
-          ) : null}
-
-          {/* --- Statut du wallet : INFORMATION, jamais un bouton. --- */}
-          {actionState !== 'executed' && walletAlreadyApproved ? (
-            <View
-              accessibilityLabel="Approved by you"
-              accessibilityRole="text"
-              accessible
-              style={styles.successBox}
-            >
-              <Text style={styles.successText}>{PROPOSAL_ACTION_LABELS.approvedByYou}</Text>
-              <Text style={styles.fieldNote}>{PROPOSAL_ACTION_LABELS.approvedByYouDetail}</Text>
-            </View>
-          ) : null}
-
-          {/* --- CTA Approve : uniquement quand une approbation est possible. --- */}
-          {actionState === 'approval-available' || approvalRetry ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                approvalRetry ? 'Prepare the approval again' : 'Approve this proposal'
-              }
-              accessibilityState={{ busy: approving, disabled: !canConfirm || approving }}
-              disabled={!canConfirm || approving}
-              onPress={onApprove}
-              style={[styles.button, (!canConfirm || approving) && styles.disabled]}
-            >
-              {approving ? (
-                <ActivityIndicator color="#ffffff" />
-              ) : (
-                <Text style={styles.buttonText}>{approvalRetry ? 'Prepare again' : 'Approve'}</Text>
-              )}
-            </Pressable>
-          ) : null}
-
-          {actionState === 'approval-available' && !canConfirm ? (
-            <Text style={styles.fieldNote}>
-              {decoding || model === null
-                ? // Pas refus terminal : le contexte se construit localement
-                  // (multisig + proposition + modèle + wallet + vault PDA).
-                  'Checking approval permissions…'
-                : effectiveGuardContext === null
-                  ? 'Checking approval permissions…'
-                  : guard.status !== 'allowed'
-                    ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
-                    : allowlist !== null && allowlist.status !== 'allowed'
-                      ? `Instruction allowlist: ${allowlist.status}.`
-                      : 'Approval is not available for this proposal in its current state.'}
-            </Text>
-          ) : null}
-
-            {approving ? (
-              <Text style={styles.fieldNote}>
-                Preparing the instruction and waiting for the wallet…
-              </Text>
-            ) : null}
-
-            {approvalError !== null && actionState !== 'executed' ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{approvalError}</Text>
-              </View>
-            ) : null}
-
-            {approvalResult !== null && actionState !== 'executed' ? (
-              <View
-                style={
-                  approvalOutcome !== null && approvalOutcome.tone === 'success'
-                    ? styles.successBox
-                    : styles.errorBox
-                }
-              >
-                <Text
-                  style={
-                    approvalOutcome !== null && approvalOutcome.tone === 'success'
-                      ? styles.successText
-                      : styles.errorText
-                  }
-                >
-                  {/* Sans signature, ce libellé est le SEUL autorisé : jamais « Sent ». */}
-                  {approvalLabel}
+        {/* --- Étapes Proposed → Approved → Execute : état RÉEL uniquement,
+            aucune étape remplie artificiellement. --- */}
+        <View style={styles.stepper}>
+          {[
+            { label: 'Proposed', done: true },
+            { label: 'Approved', done: progress.reached },
+            { label: 'Execute', done: executed },
+          ].map((step, position) => (
+            <View key={step.label} style={styles.stepItem}>
+              <View style={[styles.stepDot, step.done && styles.stepDotDone]}>
+                <Text style={[styles.stepDotText, step.done && styles.stepDotTextDone]}>
+                  {step.done ? '✓' : String(position + 1)}
                 </Text>
-                {approvalResult.signature !== null ? (
-                  <Text selectable style={styles.monoValue}>
-                    Signature: {approvalResult.signature}
-                  </Text>
-                ) : null}
-                {approvalResult.readBack !== null ? (
-                  <>
-                    <Text style={styles.fieldValue}>
-                      Status: {approvalResult.readBack.status} (was{' '}
-                      {approvalResult.approvalsBefore} approval(s))
-                    </Text>
-                    <Text style={styles.fieldValue}>
-                      Approvals: {approvalResult.readBack.approvedAddresses.length} of {threshold}
-                    </Text>
-                    <Text selectable style={styles.monoValue}>
-                      {approvalResult.readBack.address}
-                    </Text>
-                  </>
-                ) : null}
-                {approvalActions?.allowCheckAgain ? (
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Check approval again"
-                    accessibilityState={{ busy: checkingApproval, disabled: checkingApproval }}
-                    disabled={checkingApproval}
-                    onPress={() => {
-                      void onCheckApprovalAgain();
-                    }}
-                    style={[styles.button, styles.secondary]}
-                  >
-                    <Text style={styles.secondaryText}>
-                      {checkingApproval ? 'Checking…' : 'Check approval again'}
-                    </Text>
-                  </Pressable>
-                ) : null}
-                {approvalCheckReport !== null ? (
-                  <Text style={styles.fieldNote}>{approvalCheckReport}</Text>
-                ) : null}
               </View>
-            ) : null}
-
-          {/* --- Progression des approbations : source on-chain uniquement. --- */}
-          {actionState !== 'executed' ? (
-            <View style={styles.noticeBox}>
-              <Text style={styles.fieldValue}>{progress.collectedLabel}</Text>
-              <Text style={styles.fieldNote}>
-                {progress.waitingLabel ?? PROPOSAL_ACTION_LABELS.thresholdReached}
+              <Text style={[styles.stepLabel, step.done && styles.stepLabelDone]}>
+                {step.label}
               </Text>
             </View>
-          ) : null}
+          ))}
+        </View>
 
-          {/* --- Execute : uniquement quand il est pertinent. --- */}
-          {executeState === 'available' ? (
-            <>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Execute this proposal"
-                accessibilityState={{
-                  busy: executing,
-                  disabled: insufficientBalance || executing || (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false)),
+        {/* --- Statut utilisateur réel + progression on-chain. --- */}
+        <Card style={styles.statusCard}>
+          <Text style={styles.statusTitle}>{userStatusTitle}</Text>
+          <Text style={styles.statusDetail}>{progress.collectedLabel}</Text>
+          <Text style={styles.fieldNote}>{decision.stateLabel}</Text>
+        </Card>
+
+        {/* --- Statut du wallet : INFORMATION, jamais un bouton. --- */}
+        {actionState !== 'executed' && walletAlreadyApproved ? (
+          <View
+            accessibilityLabel="Approved by you"
+            accessibilityRole="text"
+            accessible
+            style={styles.successBox}
+          >
+            <Text style={styles.successText}>{PROPOSAL_ACTION_LABELS.approvedByYou}</Text>
+            <Text style={styles.fieldNote}>{PROPOSAL_ACTION_LABELS.approvedByYouDetail}</Text>
+          </View>
+        ) : null}
+
+        {/* --- CTA Approve : uniquement si les guards l'autorisent. --- */}
+        {approveCtaVisible && canConfirm ? (
+          <PillButton
+            accessibilityLabel={
+              approvalRetry ? 'Prepare the approval again' : 'Approve this proposal'
+            }
+            busy={approving}
+            disabled={!canConfirm || approving}
+            label={approvalRetry ? 'Prepare again' : 'Approve'}
+            onPress={onApprove}
+          />
+        ) : null}
+
+        {actionState === 'approval-available' && !canConfirm ? (
+          <Text style={styles.fieldNote}>
+            {decoding || model === null
+              ? // Pas refus terminal : le contexte se construit localement
+                // (multisig + proposition + modèle + wallet + vault PDA).
+                'Checking approval permissions…'
+              : effectiveGuardContext === null
+                ? 'Checking approval permissions…'
+                : guard.status !== 'allowed'
+                  ? `Guard: ${guard.reasons.join(' ') || 'blocked'}`
+                  : allowlist !== null && allowlist.status !== 'allowed'
+                    ? `Instruction allowlist: ${allowlist.status}.`
+                    : 'Approval is not available for this proposal in its current state.'}
+          </Text>
+        ) : null}
+
+        {approving ? (
+          <Text style={styles.fieldNote}>
+            Preparing the instruction and waiting for the wallet…
+          </Text>
+        ) : null}
+
+        {approvalError !== null && actionState !== 'executed' ? (
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">{approvalError}</InfoText>
+          </InfoBox>
+        ) : null}
+
+        {approvalResult !== null && actionState !== 'executed' ? (
+          <View
+            style={
+              approvalOutcome !== null && approvalOutcome.tone === 'success'
+                ? styles.successBox
+                : styles.errorBox
+            }
+          >
+            <Text
+              style={
+                approvalOutcome !== null && approvalOutcome.tone === 'success'
+                  ? styles.successText
+                  : styles.errorText
+              }
+            >
+              {/* Sans signature, ce libellé est le SEUL autorisé : jamais « Sent ». */}
+              {approvalLabel}
+            </Text>
+            {approvalResult.signature !== null ? (
+              <>
+                <Text style={styles.fieldNote}>Signature</Text>
+                <Text selectable style={styles.monoValue}>
+                  {abbreviateAddress(approvalResult.signature)}
+                </Text>
+                <Text selectable style={styles.monoValue}>
+                  {approvalResult.signature}
+                </Text>
+              </>
+            ) : null}
+            {approvalResult.readBack !== null ? (
+              <>
+                <Text style={styles.fieldValue}>
+                  Status: {approvalResult.readBack.status} (was{' '}
+                  {approvalResult.approvalsBefore} approval(s))
+                </Text>
+                <Text style={styles.fieldValue}>
+                  Approvals: {approvalResult.readBack.approvedAddresses.length} of {threshold}
+                </Text>
+                <Text selectable style={styles.monoValue}>
+                  {approvalResult.readBack.address}
+                </Text>
+              </>
+            ) : null}
+            {approvalActions?.allowCheckAgain ? (
+              <PillButton
+                accessibilityLabel="Check approval again"
+                busy={checkingApproval}
+                disabled={checkingApproval}
+                label={checkingApproval ? 'Checking…' : 'Check approval again'}
+                onPress={() => {
+                  void onCheckApprovalAgain();
                 }}
+                variant="secondary"
+              />
+            ) : null}
+            {approvalCheckReport !== null ? (
+              <Text style={styles.fieldNote}>{approvalCheckReport}</Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* --- Progression des approbations : source on-chain uniquement. --- */}
+        {actionState !== 'executed' ? (
+          <Card style={styles.progressCard}>
+            <Text style={styles.progressLabel}>{progress.collectedLabel}</Text>
+            <Text style={styles.fieldNote}>
+              {progress.waitingLabel ?? PROPOSAL_ACTION_LABELS.thresholdReached}
+            </Text>
+          </Card>
+        ) : null}
+
+        {/* --- Execute : uniquement quand les guards l'autorisent. --- */}
+        {executeState === 'available' ? (
+          insufficientBalance ? (
+            <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+              <InfoText tone="error">Insufficient vault balance</InfoText>
+            </InfoBox>
+          ) : (
+            <>
+              <PillButton
+                accessibilityLabel="Execute this proposal"
+                busy={executing}
                 disabled={
-                  insufficientBalance ||
                   executing ||
                   (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))
                 }
+                label={PROPOSAL_ACTION_LABELS.executeCta}
                 onPress={onExecute}
-                style={[
-                  styles.button,
-                  styles.executeButton,
-                  (insufficientBalance ||
-                    executing ||
-                    (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))) &&
-                    styles.disabled,
-                ]}
-              >
-                {executing ? (
-                  <ActivityIndicator color="#ffffff" />
-                ) : (
-                  <Text style={styles.buttonText}>{PROPOSAL_ACTION_LABELS.executeCta}</Text>
-                )}
-              </Pressable>
+                variant="danger"
+              />
               <Text style={styles.fieldNote}>
                 Executing submits the stored transaction to the vault. It is irreversible and
                 requires a double confirmation.
               </Text>
             </>
-          ) : executeState === 'unavailable-threshold' ? (
-            <View style={styles.noticeBox}>
-              <Text style={styles.fieldValue}>
-                {PROPOSAL_ACTION_LABELS.executeUnavailableTitle}
-              </Text>
-              <Text style={styles.fieldNote}>{executionNotAvailableDetail(progress.remaining)}</Text>
-            </View>
-          ) : executeState === 'no-permission' ? (
-            <View style={styles.noticeBox}>
-              <Text style={styles.fieldValue}>
-                {PROPOSAL_ACTION_LABELS.executeNoPermissionTitle}
-              </Text>
-              <Text style={styles.fieldNote}>
-                {PROPOSAL_ACTION_LABELS.executeNoPermissionDetail}
-              </Text>
-            </View>
-          ) : (
-            /* Etat terminal : transaction executee, aucun CTA. */
-            <View style={styles.successBox}>
-              <Text style={styles.successText}>{PROPOSAL_ACTION_LABELS.executed}</Text>
-              {executionResult?.signature != null ? (
+          )
+        ) : executeState === 'unavailable-threshold' ? (
+          <InfoBox glyph="•" style={styles.infoBox}>
+            <InfoText>{PROPOSAL_ACTION_LABELS.executeUnavailableTitle}</InfoText>
+            <InfoText>{executionNotAvailableDetail(progress.remaining)}</InfoText>
+          </InfoBox>
+        ) : executeState === 'no-permission' ? (
+          <InfoBox glyph="•" style={styles.infoBox}>
+            <InfoText>{PROPOSAL_ACTION_LABELS.executeNoPermissionTitle}</InfoText>
+            <InfoText>{PROPOSAL_ACTION_LABELS.executeNoPermissionDetail}</InfoText>
+          </InfoBox>
+        ) : (
+          /* Etat terminal : proposition exécutée, AUCUN CTA Approve/Execute. */
+          <View style={styles.executedCard}>
+            <Text style={styles.executedCheck}>✓</Text>
+            <Text style={styles.executedTitle}>Executed</Text>
+            <Text style={styles.executedMeta}>{PROPOSAL_ACTION_LABELS.executed}</Text>
+            <Text style={styles.fieldNote}>Proposal #{index}</Text>
+            <Text style={styles.executedAmount}>
+              {amountLamports === null ? 'Amount unavailable' : `${formatSol(amountLamports)} SOL`}
+            </Text>
+            <Text style={styles.fieldNote}>Destination</Text>
+            <Text selectable style={styles.monoValue}>
+              {fullDestination ?? (summary !== null ? summary.destination : 'Destination unavailable')}
+            </Text>
+            <Text style={styles.fieldNote}>{progress.collectedLabel}</Text>
+            {/* Aucune date n'est affichée : aucune date n'est réellement disponible. */}
+            {confirmedOnchain ? (
+              <Text style={styles.successText}>Confirmed on-chain</Text>
+            ) : null}
+            {executionResult?.signature != null ? (
+              <>
+                <Text style={styles.fieldNote}>Signature</Text>
                 <Text selectable style={styles.monoValue}>
-                  Signature: {executionResult.signature}
+                  {abbreviateAddress(executionResult.signature)}
                 </Text>
-              ) : null}
-              {summary !== null ? (
-                <>
-                  <Text style={styles.fieldNote}>Destination</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {fullDestination ?? summary.destination}
-                  </Text>
-                  <Text style={styles.fieldNote}>Amount</Text>
-                  <Text style={styles.fieldValue}>{summary.amount}</Text>
-                </>
-              ) : null}
-              {model !== null && model.source.known ? (
-                <>
-                  <Text style={styles.fieldNote}>Main vault source</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {model.source.value}
-                  </Text>
-                </>
-              ) : null}
-              <Text style={styles.fieldNote}>On-chain status: {effectiveProposalStatus}</Text>
-            </View>
-          )}
-
-            {executing ? (
-              <Text style={styles.fieldNote}>Waiting for the wallet…</Text>
-            ) : null}
-
-            {executionError !== null ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{executionError}</Text>
-              </View>
-            ) : null}
-
-            {executionResult !== null && executeState !== 'executed' ? (
-              <View
-                style={
-                  executionOutcome !== null && executionOutcome.tone === 'success'
-                    ? styles.successBox
-                    : styles.errorBox
-                }
-              >
-                <Text
-                  style={
-                    executionOutcome !== null && executionOutcome.tone === 'success'
-                      ? styles.successText
-                      : styles.errorText
-                  }
-                >
-                  {/* Sans signature, jamais « Sent » : le libellé vient du verdict. */}
-                  {executionOutcome?.label ?? 'Execution verified on-chain'}
+                <Text selectable style={styles.monoValue}>
+                  {executionResult.signature}
                 </Text>
-                {executionResult.signature !== null ? (
-                  <Text selectable style={styles.monoValue}>
-                    Signature: {executionResult.signature}
-                  </Text>
-                ) : null}
+              </>
+            ) : null}
+            <Text style={styles.fieldNote}>On-chain status: {effectiveProposalStatus}</Text>
+          </View>
+        )}
+
+        {executing ? (
+          <Text style={styles.fieldNote}>Waiting for the wallet…</Text>
+        ) : null}
+
+        {executionError !== null ? (
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">{executionError}</InfoText>
+          </InfoBox>
+        ) : null}
+
+        {executionResult !== null && executeState !== 'executed' ? (
+          <View
+            style={
+              executionOutcome !== null && executionOutcome.tone === 'success'
+                ? styles.successBox
+                : styles.errorBox
+            }
+          >
+            <Text
+              style={
+                executionOutcome !== null && executionOutcome.tone === 'success'
+                  ? styles.successText
+                  : styles.errorText
+              }
+            >
+              {/* Sans signature, jamais « Sent » : le libellé vient du verdict. */}
+              {executionOutcome?.label ?? 'Execution verified on-chain'}
+            </Text>
+            {executionResult.signature !== null ? (
+              <Text selectable style={styles.monoValue}>
+                Signature: {executionResult.signature}
+              </Text>
+            ) : null}
+            <Text style={styles.fieldValue}>
+              Status before: {executionResult.statusBefore ?? 'unknown'} ·{' '}
+              {executionResult.approvalsBefore} approval(s)
+            </Text>
+            {executionResult.readBack !== null ? (
+              <>
                 <Text style={styles.fieldValue}>
-                  Status before: {executionResult.statusBefore ?? 'unknown'} ·{' '}
-                  {executionResult.approvalsBefore} approval(s)
+                  Proposal after:{' '}
+                  {executionResult.readBack.proposalAccountPresent
+                    ? executionResult.readBack.proposalStatusAfter ?? 'unknown status'
+                    : 'account consumed (no longer present)'}
                 </Text>
-                {executionResult.readBack !== null ? (
+                <Text style={styles.fieldValue}>
+                  Vault:{' '}
+                  {executionResult.readBack.vaultLamportsDelta === null
+                    ? 'balance change not measurable'
+                    : `${executionResult.readBack.vaultLamportsDelta} lamports`}
+                </Text>
+                <Text selectable style={styles.monoValue}>
+                  {executionResult.readBack.vaultAddress}
+                </Text>
+              </>
+            ) : null}
+            {executionResult.validationWarnings.map((warning) => (
+              <Text key={warning} style={styles.fieldNote}>
+                · {warning}
+              </Text>
+            ))}
+          </View>
+        ) : null}
+
+        {decoding ? (
+          <Text style={styles.fieldNote}>Decoding the transaction from the chain…</Text>
+        ) : null}
+
+        {decodeError !== null ? (
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">{decodeError}</InfoText>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry decoding this proposal"
+              onPress={() => {
+                void runDecode();
+              }}
+              style={styles.inlineAction}
+            >
+              <Text style={styles.inlineActionText}>Retry decode</Text>
+            </Pressable>
+          </InfoBox>
+        ) : null}
+
+        {/* Relecture lecture seule : re-decode la proposition et son message.
+            Aucune signature, aucun envoi, aucun wallet sollicité. */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Refresh this proposal and decode it again"
+          disabled={decoding}
+          onPress={() => {
+            void runDecode();
+          }}
+          style={({ pressed }) => [
+            styles.button,
+            styles.secondary,
+            pressed && styles.secondaryPressed,
+            decoding && styles.disabled,
+          ]}
+        >
+          <Text style={styles.secondaryText}>
+            {decoding ? 'Refreshing…' : 'Refresh proposal'}
+          </Text>
+        </Pressable>
+
+        {/* --- Advanced transaction details : repliée par défaut. Ouvre la vue
+            de revue lecture seule existante. Aucun CTA d'écriture ici. --- */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Advanced transaction details"
+          accessibilityState={{ expanded: advancedOpen }}
+          onPress={() => setAdvancedOpen((open) => !open)}
+          style={styles.advancedToggle}
+        >
+          <Text style={styles.advancedToggleText}>
+            {advancedOpen ? '▾ Advanced transaction details' : '▸ Advanced transaction details'}
+          </Text>
+        </Pressable>
+
+        {advancedOpen ? (
+          <Card style={styles.advancedBody}>
+            {summary === null ? (
+              <Text style={styles.fieldNote}>
+                Decoding this proposal… the amount and the destination appear as soon as the
+                transaction message is decoded. No wallet is involved.
+              </Text>
+            ) : (
+              <>
+                <Text style={styles.fieldLabel}>Action</Text>
+                <Text style={styles.fieldValue}>{summary.action}</Text>
+                <Text selectable style={styles.monoValue}>Amount: {summary.amount}</Text>
+                <Text style={styles.fieldLabel}>Destination</Text>
+                <Text selectable style={styles.monoValue}>
+                  {fullDestination ?? summary.destination}
+                </Text>
+                {model !== null && model.source.known ? (
                   <>
-                    <Text style={styles.fieldValue}>
-                      Proposal after:{' '}
-                      {executionResult.readBack.proposalAccountPresent
-                        ? executionResult.readBack.proposalStatusAfter ?? 'unknown status'
-                        : 'account consumed (no longer present)'}
-                    </Text>
-                    <Text style={styles.fieldValue}>
-                      Vault:{' '}
-                      {executionResult.readBack.vaultLamportsDelta === null
-                        ? 'balance change not measurable'
-                        : `${executionResult.readBack.vaultLamportsDelta} lamports`}
-                    </Text>
+                    <Text style={styles.fieldLabel}>Funds will be sent from</Text>
                     <Text selectable style={styles.monoValue}>
-                      {executionResult.readBack.vaultAddress}
+                      {model.source.value}
                     </Text>
                   </>
                 ) : null}
-                {executionResult.validationWarnings.map((warning) => (
-                  <Text key={warning} style={styles.fieldNote}>
-                    · {warning}
-                  </Text>
-                ))}
-              </View>
-            ) : null}
-
-            {decoding ? (
-            <Text style={styles.fieldNote}>Decoding the transaction from the chain…</Text>
-          ) : null}
-
-          {decodeError !== null ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{decodeError}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Retry decoding this proposal"
-                onPress={() => {
-                  void runDecode();
-                }}
-                style={styles.retry}
-              >
-                <Text style={styles.retryText}>Retry decode</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          {/* Relecture lecture seule : re-decode la proposition et son message.
-              Aucune signature, aucun envoi, aucun wallet sollicité. */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Refresh this proposal and decode it again"
-            disabled={decoding}
-            onPress={() => {
-              void runDecode();
-            }}
-            style={({ pressed }) => [
-              styles.button,
-              styles.secondary,
-              pressed && styles.secondaryPressed,
-              decoding && styles.disabled,
-            ]}
-          >
-            <Text style={styles.secondaryText}>
-              {decoding ? 'Refreshing…' : 'Refresh proposal'}
-            </Text>
-          </Pressable>
-
-          <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Advanced transaction details"
-              accessibilityState={{ disabled: model === null }}
+                <Text style={styles.fieldNote}>{sourceVerdict.label}</Text>
+                <Text style={styles.fieldNote}>{sourceVerdict.hint}</Text>
+                {/* Estimation LOCALE, jamais un solde inventé : « Not available »
+                    si la lecture du vault n'a pas abouti. */}
+                <Text style={styles.fieldLabel}>Estimated remaining balance</Text>
+                <Text selectable style={styles.monoValue}>
+                  {remaining.sol === null ? 'Not available' : `${remaining.sol} SOL`}
+                </Text>
+                <Text style={styles.fieldNote}>{remaining.reason}</Text>
+              </>
+            )}
+            <Text style={styles.fieldLabel}>Proposal account</Text>
+            <Text selectable style={styles.monoValue}>{pda ?? 'unavailable'}</Text>
+            <Text style={styles.fieldLabel}>Vault transaction account</Text>
+            <Text selectable style={styles.monoValue}>{vaultTransactionAddress}</Text>
+            <Text style={styles.fieldLabel}>Multisig</Text>
+            <Text selectable style={styles.monoValue}>{address}</Text>
+            <PillButton
               disabled={model === null}
+              label="Open read-only review"
               onPress={() => setReviewOpen(true)}
-              style={[styles.button, styles.secondary, model === null && styles.disabled]}
-            >
-            <Text style={styles.secondaryText}>Advanced transaction details</Text>
-          </Pressable>
-          {model === null ? (
-            <Text style={styles.fieldNote}>
-              The technical review is available once the proposal has been decoded by the
-              existing review flow.
-            </Text>
-          ) : null}
-        </View>
+              variant="secondary"
+            />
+            {model === null ? (
+              <Text style={styles.fieldNote}>
+                The technical review is available once the proposal has been decoded by the
+                existing review flow.
+              </Text>
+            ) : null}
+          </Card>
+        ) : null}
 
         {/* TROUBLESHOOTING DETAILS — diagnostic d'une tentative ANTERIEURE,
             replie par defaut, jamais prioritaire sur l'etat courant. */}
@@ -1211,22 +1211,24 @@ export function ProposalDetailsScreen({
               accessibilityLabel="Troubleshooting details"
               accessibilityState={{ expanded: troubleshootingOpen }}
               onPress={() => setTroubleshootingOpen((open) => !open)}
-              style={[styles.button, styles.secondary]}
+              style={styles.advancedToggle}
             >
-              <Text style={styles.secondaryText}>
-                {troubleshootingOpen ? 'Hide troubleshooting details' : 'Troubleshooting details'}
+              <Text style={styles.advancedToggleText}>
+                {troubleshootingOpen
+                  ? '▾ Troubleshooting details'
+                  : '▸ Troubleshooting details'}
               </Text>
             </Pressable>
             {troubleshootingOpen ? (
-              <View style={styles.noticeBox}>
+              <Card style={styles.advancedBody}>
                 <Text style={styles.fieldNote}>Diagnostics from an earlier attempt.</Text>
-                {approvalDiagnostics.map((message, index) => (
-                  <Text key={`approval-detail-${index}`} selectable style={styles.fieldNote}>
+                {approvalDiagnostics.map((message, position) => (
+                  <Text key={`approval-detail-${position}`} selectable style={styles.fieldNote}>
                     {message}
                   </Text>
                 ))}
-                {(approvalResult?.validationErrors ?? []).map((message, index) => (
-                  <Text key={`approval-validation-${index}`} selectable style={styles.fieldNote}>
+                {(approvalResult?.validationErrors ?? []).map((message, position) => (
+                  <Text key={`approval-validation-${position}`} selectable style={styles.fieldNote}>
                     {message}
                   </Text>
                 ))}
@@ -1235,19 +1237,17 @@ export function ProposalDetailsScreen({
                     {executionError}
                   </Text>
                 ) : null}
-              </View>
+              </Card>
             ) : null}
           </View>
         ) : null}
 
-        <Pressable
-          accessibilityRole="button"
+        <PillButton
           accessibilityLabel="Back to proposals"
+          label="Back to proposals"
           onPress={onBack}
-          style={[styles.button, styles.secondary]}
-        >
-          <Text style={styles.secondaryText}>Back</Text>
-        </Pressable>
+          variant="secondary"
+        />
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -1255,155 +1255,262 @@ export function ProposalDetailsScreen({
 
 const styles = StyleSheet.create({
   keyboardAvoider: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   scrollView: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    padding: 24,
-    paddingBottom: 96,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
   },
-  badge: {
-    backgroundColor: '#e8f0fe',
-    borderRadius: 999,
-    color: '#1a56db',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backButtonPressed: {
+    backgroundColor: colors.surface,
+  },
+  backGlyph: {
+    color: colors.text,
+    fontSize: 24,
+    lineHeight: 26,
   },
   title: {
-    fontSize: 22,
+    color: colors.text,
+    fontSize: typography.screenTitle - 6,
+    fontWeight: '800',
+    marginBottom: spacing.lg,
+  },
+  hero: {
+    marginBottom: spacing.lg,
+  },
+  heroAction: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  heroAmount: {
+    color: colors.text,
+    fontSize: typography.balance,
+    fontWeight: '800',
+    marginTop: spacing.sm,
+  },
+  heroCaption: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    marginTop: spacing.md,
+    textTransform: 'uppercase',
+  },
+  stepper: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  stepItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  stepDot: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 34,
+    justifyContent: 'center',
+    width: 34,
+  },
+  stepDotDone: {
+    backgroundColor: colors.successSoft,
+  },
+  stepDotText: {
+    color: colors.textMuted,
+    fontSize: typography.secondary,
+    fontWeight: '800',
+  },
+  stepDotTextDone: {
+    color: colors.success,
+  },
+  stepLabel: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    fontWeight: '700',
+    marginTop: spacing.xs,
+  },
+  stepLabelDone: {
+    color: colors.text,
+  },
+  statusCard: {
+    marginBottom: spacing.md,
+  },
+  statusTitle: {
+    color: colors.text,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+  },
+  statusDetail: {
+    color: colors.textSecondary,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.xs,
+  },
+  progressCard: {
+    marginTop: spacing.md,
+  },
+  progressLabel: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
     fontWeight: '700',
   },
-  subtitle: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginBottom: 12,
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  block: {
-    alignSelf: 'stretch',
-  },
   fieldLabel: {
-    color: '#6b7280',
-    fontSize: 11,
-    marginTop: 14,
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    marginTop: spacing.md,
     textTransform: 'uppercase',
   },
   fieldValue: {
-    color: '#101317',
-    fontSize: 13,
+    color: colors.text,
+    fontSize: typography.bodySmall,
     marginTop: 2,
   },
   monoValue: {
-    color: '#101317',
+    color: colors.text,
     fontFamily: 'monospace',
-    fontSize: 11,
-    marginTop: 4,
+    fontSize: typography.secondary,
+    marginTop: spacing.xs,
   },
   fieldNote: {
-    color: '#6b7280',
-    fontSize: 12,
-    marginTop: 6,
-  },
-  statusLine: {
-    color: '#065f46',
-    fontSize: 14,
-    fontWeight: '800',
-    marginTop: 2,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
   },
   errorBox: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
+    backgroundColor: colors.errorSoft,
+    borderRadius: radii.field,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
   errorText: {
-    color: '#991b1b',
-    fontSize: 13,
+    color: colors.error,
+    fontSize: typography.secondary,
   },
   successBox: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#a7f3d0',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
+    backgroundColor: colors.successSoft,
+    borderRadius: radii.field,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
   successText: {
-    color: '#065f46',
-    fontSize: 13,
+    color: colors.success,
+    fontSize: typography.secondary,
     fontWeight: '800',
   },
-  noticeBox: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
+  infoBox: {
+    marginTop: spacing.md,
   },
   button: {
     alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
+    borderRadius: radii.button,
     justifyContent: 'center',
-    marginTop: 16,
-    minHeight: 48,
-    paddingHorizontal: 24,
+    marginTop: spacing.lg,
+    minHeight: 52,
+    paddingHorizontal: spacing.xl,
     width: '100%',
   },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 15,
+  secondary: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderWidth: 1,
+  },
+  secondaryPressed: {
+    backgroundColor: colors.surface,
+  },
+  secondaryText: {
+    color: colors.text,
+    fontSize: typography.body,
     fontWeight: '700',
     textAlign: 'center',
   },
   disabled: {
-    backgroundColor: '#9ca3af',
+    backgroundColor: colors.disabled,
   },
-  secondary: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    marginTop: 24,
+  inlineAction: {
+    borderRadius: radii.pill,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
-  // Etat appuye distinct de disabled pour l'action secondaire Refresh.
-  secondaryPressed: {
-    backgroundColor: '#e5e7eb',
-  },
-  // Execute : action irreversible, visuellement distincte d'Approve.
-  executeButton: {
-    backgroundColor: '#b45309',
-    marginTop: 24,
-  },
-  secondaryText: {
-    color: '#101317',
-    fontSize: 15,
+  inlineActionText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
     fontWeight: '700',
-    textAlign: 'center',
   },
-  retry: {
+  advancedToggle: {
     alignItems: 'center',
-    marginTop: 8,
-    paddingVertical: 6,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
-  retryText: {
-    color: '#1a56db',
-    fontSize: 14,
+  advancedToggleText: {
+    color: colors.text,
+    fontSize: typography.secondary,
     fontWeight: '700',
+  },
+  advancedBody: {
+    marginTop: spacing.sm,
+  },
+  executedCard: {
+    alignItems: 'center',
+    backgroundColor: colors.successSoft,
+    borderRadius: radii.card,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+  },
+  executedCheck: {
+    color: colors.mint,
+    fontSize: 56,
+    fontWeight: '800',
+    lineHeight: 60,
+  },
+  executedTitle: {
+    color: colors.success,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+    marginTop: spacing.sm,
+  },
+  executedMeta: {
+    color: colors.textSecondary,
+    fontSize: typography.caption,
+    marginTop: spacing.xs,
+  },
+  executedAmount: {
+    color: colors.text,
+    fontSize: typography.balance - 10,
+    fontWeight: '800',
+    marginTop: spacing.md,
   },
 });

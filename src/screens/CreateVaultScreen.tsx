@@ -46,6 +46,8 @@ import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { AddressInput } from '../ui/AddressInput';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { Card, DevnetPill, InfoBox, InfoText, PillButton } from '../ui/v2/primitives';
 import {
   buildOperationReport,
   classifyOperationFailure,
@@ -1010,15 +1012,26 @@ export function CreateVaultScreen({
             accessibilityLabel="Cancel vault creation"
             hitSlop={{ bottom: 8, left: 8, right: 8, top: 8 }}
             onPress={requestDiscard}
-            style={styles.headerCancel}
+            style={({ pressed }) => [styles.ghostAction, pressed && styles.pressed]}
           >
-            <Text style={styles.retryText}>Discard vault setup</Text>
+            <Text style={styles.ghostActionText}>Discard vault setup</Text>
           </Pressable>
+          <DevnetPill />
         </View>
 
-        <Text style={styles.badge}>DEVNET</Text>
         <Text style={styles.title}>Create a vault</Text>
         <Text style={styles.stepBar}>Step {step} of {STEP_COUNT}</Text>
+
+        {/* Progression du wizard visible : un segment par etape, l'etape courante
+            et les precedentes marquees. Purement visuel, aucun pas ajoute. */}
+        <View style={styles.progressRow}>
+          {Array.from({ length: STEP_COUNT }, (_entry, index) => index + 1).map((value) => (
+            <View
+              key={`progress-${value}`}
+              style={[styles.progressSegment, value <= step && styles.progressSegmentActive]}
+            />
+          ))}
+        </View>
 
         {step === 1 ? (
           <View style={styles.block}>
@@ -1029,9 +1042,16 @@ export function CreateVaultScreen({
                 accessibilityState={{ selected: setupType === preset.type }}
                 key={preset.type}
                 onPress={() => chooseSetup(preset.type, preset.threshold)}
-                style={[styles.option, setupType === preset.type && styles.optionSelected]}
+                style={({ pressed }) => [
+                  styles.option,
+                  setupType === preset.type && styles.optionSelected,
+                  pressed && styles.pressed,
+                ]}
               >
-                <Text style={styles.optionTitle}>{preset.title}</Text>
+                <View style={styles.optionHeader}>
+                  <Text style={styles.optionTitle}>{preset.title}</Text>
+                  {setupType === preset.type ? <Text style={styles.optionCheck}>✓</Text> : null}
+                </View>
                 <Text style={styles.optionDetail}>{preset.detail}</Text>
               </Pressable>
             ))}
@@ -1046,17 +1066,19 @@ export function CreateVaultScreen({
               }}
               onFocus={onFieldFocus('vaultName')}
               placeholder="Personal savings vault"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               ref={registerField('vaultName')}
               style={styles.input}
               value={vaultName}
             />
             {/* Nom OBLIGATOIRE : le placeholder ne devient jamais la valeur. */}
-            <Text style={styles.errorText}>
-              Vault name * — Required. Enter a name for this vault.
+            <Text style={styles.fieldHint}>
+              Required. Enter a name for this vault.
             </Text>
             {vaultName.trim().length === 0 && nameTouched ? (
-              <Text style={styles.errorText}>Enter a vault name to continue.</Text>
+              <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+                <InfoText tone="warning">Enter a vault name to continue.</InfoText>
+              </InfoBox>
             ) : null}
           </View>
         ) : null}
@@ -1069,15 +1091,11 @@ export function CreateVaultScreen({
               walletAlreadyMember ? (
                 <Text style={styles.hint}>Your connected wallet is already a signer.</Text>
               ) : (
-                <Pressable
-                  accessibilityRole="button"
+                <PillButton
+                  label={`Add connected wallet (${shortenMemberAddress(walletAddress)})`}
                   onPress={addConnectedWallet}
-                  style={[styles.button, styles.secondary]}
-                >
-                  <Text style={styles.secondaryText}>
-                    Add connected wallet ({shortenMemberAddress(walletAddress)})
-                  </Text>
-                </Pressable>
+                  variant="secondary"
+                />
               )
             ) : (
               <Text style={styles.hint}>
@@ -1105,23 +1123,21 @@ export function CreateVaultScreen({
               onBlur={onFieldBlur}
               onFocus={onFieldFocus('pendingLabel')}
               placeholder="Ledger at home"
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={colors.textMuted}
               ref={registerField('pendingLabel')}
               style={styles.input}
               value={pendingLabel}
             />
 
-            <Pressable
-              accessibilityRole="button"
-              onPress={addPendingMember}
-              style={[styles.button, styles.secondary]}
-            >
-              <Text style={styles.secondaryText}>Add signer</Text>
-            </Pressable>
+            <PillButton label="Add signer" onPress={addPendingMember} variant="secondary" />
 
-            {pendingError !== null ? <Text style={styles.errorText}>{pendingError}</Text> : null}
+            {pendingError !== null ? (
+              <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+                <InfoText tone="error">{pendingError}</InfoText>
+              </InfoBox>
+            ) : null}
 
-            <Text style={styles.blockTitle}>
+            <Text style={styles.sectionTitle}>
               Signers ({members.length} of {requiredMembers} required)
             </Text>
             {members.length < requiredMembers ? (
@@ -1132,7 +1148,7 @@ export function CreateVaultScreen({
               </Text>
             ) : null}
             {members.map((member) => (
-              <View key={member.id} style={styles.memberRow}>
+              <Card key={member.id} style={styles.memberCard}>
                 {renameId === member.id ? (
                   <View style={styles.renameBlock}>
                     <TextInput
@@ -1144,8 +1160,12 @@ export function CreateVaultScreen({
                       style={styles.input}
                       value={renameValue}
                     />
-                    <Pressable accessibilityRole="button" onPress={commitRename} style={styles.retry}>
-                      <Text style={styles.retryText}>Save label</Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={commitRename}
+                      style={styles.inlineAction}
+                    >
+                      <Text style={styles.inlineActionText}>Save label</Text>
                     </Pressable>
                   </View>
                 ) : (
@@ -1159,30 +1179,30 @@ export function CreateVaultScreen({
                         accessibilityRole="button"
                         accessibilityLabel={`Rename ${member.label}`}
                         onPress={() => startRename(member)}
-                        style={styles.retry}
+                        style={styles.inlineAction}
                       >
-                        <Text style={styles.retryText}>Rename</Text>
+                        <Text style={styles.inlineActionText}>Rename</Text>
                       </Pressable>
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Remove ${member.label}`}
                         onPress={() => removeMember(member.id)}
-                        style={styles.retry}
+                        style={styles.inlineAction}
                       >
-                        <Text style={styles.retryText}>Remove</Text>
+                        <Text style={styles.inlineActionText}>Remove</Text>
                       </Pressable>
                     </View>
                   </>
                 )}
-              </View>
+              </Card>
             ))}
 
             {draft.validationErrors.length > 0 ? (
-              <View style={styles.errorBox}>
+              <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
                 {draft.validationErrors.map((message) => (
-                  <Text key={message} style={styles.errorText}>{message}</Text>
+                  <InfoText key={message} tone="error">{message}</InfoText>
                 ))}
-              </View>
+              </InfoBox>
             ) : null}
           </View>
         ) : null}
@@ -1206,9 +1226,20 @@ export function CreateVaultScreen({
                       setThreshold(value);
                       setThresholdTouched(true);
                     }}
-                    style={[styles.kindChip, threshold === value && styles.kindChipSelected]}
+                    style={({ pressed }) => [
+                      styles.kindChip,
+                      threshold === value && styles.kindChipSelected,
+                      pressed && styles.pressed,
+                    ]}
                   >
-                    <Text style={styles.kindChipText}>{value}</Text>
+                    <Text
+                      style={[
+                        styles.kindChipText,
+                        threshold === value && styles.kindChipTextSelected,
+                      ]}
+                    >
+                      {value}
+                    </Text>
                   </Pressable>
                 ))}
               </View>
@@ -1217,20 +1248,21 @@ export function CreateVaultScreen({
               {threshold} of {members.length} approvals required.
             </Text>
             {thresholdRecommendation !== null ? (
-              <>
-                <Text style={styles.fieldValue}>{thresholdRecommendation.label}</Text>
-                <Text style={styles.hint}>{thresholdRecommendation.detail}</Text>
-              </>
+              <InfoBox glyph="★" style={styles.infoBox} tone="success">
+                <InfoText tone="success">{thresholdRecommendation.label}</InfoText>
+                <InfoText>{thresholdRecommendation.detail}</InfoText>
+              </InfoBox>
             ) : null}
             {lowSecurityThresholdWarning(members.length, threshold) !== null ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>{LOW_SECURITY_THRESHOLD_LABEL}</Text>
-                <Text style={styles.hint}>{LOW_SECURITY_THRESHOLD_DETAIL}</Text>
-                <Text style={styles.hint}>
-                  To continue with this setting, confirm explicitly: "
-                  {LOW_SECURITY_THRESHOLD_CONFIRM}".
-                </Text>
-              </View>
+              <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+                <InfoText tone="warning">{LOW_SECURITY_THRESHOLD_LABEL}</InfoText>
+                <InfoText tone="warning">{LOW_SECURITY_THRESHOLD_DETAIL}</InfoText>
+                <InfoText tone="warning">
+                  {'To continue with this setting, confirm explicitly: "'}
+                  {LOW_SECURITY_THRESHOLD_CONFIRM}
+                  {'".'}
+                </InfoText>
+              </InfoBox>
             ) : null}
             <Text style={styles.hint}>
               Example: 2 of 3 means any two signers can approve, so one lost signer is
@@ -1257,20 +1289,24 @@ export function CreateVaultScreen({
             </Text>
 
             {draft.validationErrors.map((message) => (
-              <Text key={message} style={styles.errorText}>{message}</Text>
+              <InfoBox glyph="⚠" key={message} style={styles.infoBox} tone="error">
+                <InfoText tone="error">{message}</InfoText>
+              </InfoBox>
             ))}
             {draft.validationWarnings.map((message) => (
-              <Text key={message} style={styles.warningText}>{message}</Text>
+              <InfoBox glyph="⚠" key={message} style={styles.infoBox} tone="warning">
+                <InfoText tone="warning">{message}</InfoText>
+              </InfoBox>
             ))}
 
-            <View style={styles.noticeBox}>
-              <Text style={styles.noticeText}>
+            <InfoBox glyph="ℹ" style={styles.infoBox}>
+              <InfoText>
                 Verify every hardware wallet address on the device itself.
-              </Text>
-              <Text style={styles.noticeText}>
+              </InfoText>
+              <InfoText>
                 Pocket Multisig never asks for recovery phrases or private keys.
-              </Text>
-            </View>
+              </InfoText>
+            </InfoBox>
           </View>
         ) : null}
 
@@ -1291,7 +1327,7 @@ export function CreateVaultScreen({
                   <Text style={styles.memberLabel}>
                     {member.label}
                   </Text>
-                  <Text selectable style={styles.fieldValue}>{member.publicKey}</Text>
+                  <Text selectable style={styles.memberAddress}>{member.publicKey}</Text>
                 </View>
               ))}
 
@@ -1308,20 +1344,6 @@ export function CreateVaultScreen({
               <Text style={styles.fieldLabel}>Network</Text>
               <Text style={styles.fieldValue}>Devnet</Text>
 
-              {/* Objet local derive (aucun RPC, aucune signature) : meme source de
-                  verite que la future demande de creation Devnet. */}
-              <Text style={styles.fieldLabel}>Creation summary</Text>
-              <View style={styles.summaryBox}>
-                <Text style={styles.fieldValue}>Members: {request.memberCount}</Text>
-                <Text style={styles.fieldValue}>
-                  Threshold: {request.threshold} of {request.memberCount}
-                </Text>
-                <Text style={styles.fieldValue}>Network: Devnet</Text>
-                <Text style={request.readyForCreation ? styles.statusReady : styles.warningText}>
-                  State: {request.readyForCreation ? 'Ready' : 'Not Ready'}
-                </Text>
-              </View>
-
               <Text style={styles.fieldLabel}>Status</Text>
               <Text style={ready ? styles.statusReady : styles.warningText}>
                 {ready ? 'Ready to create' : 'Not ready yet — see below'}
@@ -1330,28 +1352,28 @@ export function CreateVaultScreen({
               {/* Erreurs bloquantes et avertissements rappeles ici : la revue doit
                   rester lisible sans revenir a l'etape Security check. */}
               {draft.validationErrors.length > 0 ? (
-                <View style={styles.errorBox}>
+                <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
                   {draft.validationErrors.map((message) => (
-                    <Text key={message} style={styles.errorText}>{message}</Text>
+                    <InfoText key={message} tone="error">{message}</InfoText>
                   ))}
-                </View>
+                </InfoBox>
               ) : null}
 
               {draft.validationWarnings.length > 0 ? (
-                <View style={styles.noticeBox}>
+                <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
                   {draft.validationWarnings.map((message) => (
-                    <Text key={message} style={styles.warningText}>{message}</Text>
+                    <InfoText key={message} tone="warning">{message}</InfoText>
                   ))}
-                </View>
+                </InfoBox>
               ) : null}
 
               {/* Cout estime : TOUJOURS en SOL (jamais de lamports a l'ecran).
                   Total issu de la simulation reelle ; decomposition rent/frais
                   uniquement quand les deux composantes sont disponibles. */}
               {creationCost !== null && costTotalSol !== null && vaultVisibleState !== 'awaiting-wallet' ? (
-                <View style={styles.summaryBox}>
+                <Card style={styles.summaryBox}>
                   <Text style={styles.fieldLabel}>Estimated creation cost</Text>
-                  <Text style={styles.fieldValue}>{costTotalSol}</Text>
+                  <Text style={styles.costValue}>{costTotalSol}</Text>
 
                   {costBreakdownAvailable ? (
                     <>
@@ -1380,32 +1402,39 @@ export function CreateVaultScreen({
                   )}
 
                   <Text style={styles.hint}>{DEVNET_SOL_DISCLAIMER}</Text>
-                </View>
+                </Card>
               ) : null}
 
               {/* ETAT 1 — avant tentative : verdict de preparation
                   (createReadiness) + recapitulatif deja affiche ci-dessus.
                   Masque pendant la creation (ETAT 2) et apres succes. */}
               {vaultVisibleState !== 'awaiting-wallet' ? (
-                <View style={styles.noticeBox}>
-                  <Text style={canCreate ? styles.statusReady : styles.warningText}>
+                <InfoBox
+                  glyph={canCreate ? '✓' : '⚠'}
+                  style={styles.noticeBox}
+                  tone={canCreate ? 'success' : 'warning'}
+                >
+                  <InfoText tone={canCreate ? 'success' : 'warning'}>
                     {createReadiness.userMessage}
-                  </Text>
+                  </InfoText>
                   {!canCreate ? (
-                    <Text style={styles.warningText}>{createReadiness.recommendedAction}</Text>
+                    <InfoText tone="warning">{createReadiness.recommendedAction}</InfoText>
                   ) : null}
                   {!canCreate ? (
-                    <Text style={styles.warningText}>{createBlockedReason.message}</Text>
+                    <InfoText tone="warning">{createBlockedReason.message}</InfoText>
                   ) : null}
                   {!canCreate ? (
-                    <Text style={styles.warningText}>{createBlockedReason.action}</Text>
+                    <InfoText tone="warning">{createBlockedReason.action}</InfoText>
                   ) : null}
-                </View>
+                </InfoBox>
               ) : null}
 
               {/* ETAT 2 — creation en cours : progression uniquement. */}
               {vaultVisibleState === 'awaiting-wallet' ? (
-                <Text style={styles.hint}>Preparing creation…</Text>
+                <View style={styles.busyRow}>
+                  <ActivityIndicator color={colors.mint} />
+                  <Text style={styles.hint}>Preparing creation…</Text>
+                </View>
               ) : null}
 
               {/* CTA PRINCIPAL UNIQUE (ETAT 1 et ETAT 3) : meme handler que
@@ -1415,21 +1444,13 @@ export function CreateVaultScreen({
                   signature existe (ETAT 4) ou apres succes (ETAT 5). */}
               {!signatureObtained && vaultVisibleState !== 'awaiting-wallet' ? (
                 <>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ busy: creating, disabled: !canCreate || creating }}
+                  <PillButton
+                    busy={creating}
                     disabled={!canCreate || creating}
+                    label={needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'}
                     onPress={onCreateOnDevnet}
-                    style={[styles.button, (!canCreate || creating) && styles.disabled]}
-                  >
-                    {creating ? (
-                      <ActivityIndicator color="#ffffff" />
-                    ) : (
-                      <Text style={styles.buttonText}>
-                        {needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'}
-                      </Text>
-                    )}
-                  </Pressable>
+                    variant="primary"
+                  />
 
                   <Text style={styles.hint}>
                     Nothing is sent on-chain before the final confirmation.
@@ -1441,57 +1462,52 @@ export function CreateVaultScreen({
                   techniques sont dans Troubleshooting details, pas ici. Le flux de
                   nouvelle tentative reste le CTA unique ci-dessus. */}
               {nothingWasSent ? (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorText}>Nothing was sent.</Text>
+                <InfoBox glyph="⚠" style={styles.errorBox} tone="error">
+                  <InfoText tone="error">Nothing was sent.</InfoText>
                   {createError !== null ? (
-                    <Text style={styles.errorText}>{createError}</Text>
+                    <InfoText tone="error">{createError}</InfoText>
                   ) : null}
                   {operationReport !== null ? (
-                    <Text style={styles.hint}>{operationReport.title}</Text>
+                    <InfoText>{operationReport.title}</InfoText>
                   ) : null}
-                  <Text style={styles.hint}>
+                  <InfoText>
                     {needsPrepareAgain
                       ? 'Prepare again is available: no signature was obtained.'
                       : 'A new attempt is not available right now.'}
-                  </Text>
-                </View>
+                  </InfoText>
+                </InfoBox>
               ) : null}
 
               {/* ETAT C — signature obtenue, PAS encore confirmee. Un seul libelle,
                   derive des preuves : jamais de contradiction avec le statut. */}
               {vaultVisibleState === 'signed-pending-confirmation' ? (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorText}>
+                <InfoBox glyph="⏳" style={styles.noticeBox} tone="warning">
+                  <InfoText tone="warning">
                     {VAULT_VISIBLE_LABELS['signed-pending-confirmation']}
-                  </Text>
+                  </InfoText>
                   <Text selectable style={styles.fieldValue}>
                     Signature: {createResult?.signature}
                   </Text>
                   <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
                   <Text style={styles.hint}>Vault verification: pending</Text>
                   {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ busy: checking, disabled: checking }}
+                  <PillButton
+                    accessibilityLabel="Check transaction again"
+                    busy={checking}
                     disabled={checking}
+                    label="Check transaction again"
                     onPress={() => {
                       void onCheckTransactionAgain();
                     }}
-                    style={[styles.button, styles.secondary]}
-                  >
-                    {checking ? (
-                      <ActivityIndicator color="#101317" />
-                    ) : (
-                      <Text style={styles.secondaryText}>Check transaction again</Text>
-                    )}
-                  </Pressable>
+                    variant="secondary"
+                  />
                   {signatureVerdict?.retryAllowed !== true ? (
                     <Text style={styles.hint}>
                       A signature already exists: no second send is allowed until the transaction is
                       proven absent, expired or failed.
                     </Text>
                   ) : null}
-                </View>
+                </InfoBox>
               ) : null}
 
               {/* ETAT D — transaction CONFIRMEE mais read-back pas encore disponible.
@@ -1499,60 +1515,53 @@ export function CreateVaultScreen({
                   rouge est reserve a un echec definitivement prouve. */}
               {vaultVisibleState === 'confirmed-pending-readback' ||
               vaultVisibleState === 'confirmed-readback-temporarily-unavailable' ? (
-                <View style={styles.noticeBox}>
+                <InfoBox glyph="⏳" style={styles.noticeBox} tone="info">
                   <Text style={styles.infoHeading}>Transaction confirmed</Text>
-                  <Text style={styles.noticeText}>
+                  <InfoText>
                     {vaultVisibleState === 'confirmed-readback-temporarily-unavailable'
                       ? 'The vault details could not be loaded because the network connection was unavailable.'
                       : 'The vault details are not readable yet.'}
-                  </Text>
-                  <Text style={styles.noticeText}>Nothing needs to be sent again.</Text>
+                  </InfoText>
+                  <InfoText>Nothing needs to be sent again.</InfoText>
                   <Text selectable style={styles.fieldValue}>
                     Signature: {createResult?.signature}
                   </Text>
                   <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
                   <Text style={styles.hint}>Vault verification: pending</Text>
                   {checkReport !== null ? <Text style={styles.hint}>{checkReport}</Text> : null}
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityState={{ busy: checking, disabled: checking }}
+                  <PillButton
+                    accessibilityLabel="Check transaction again"
+                    busy={checking}
                     disabled={checking}
+                    label="Check transaction again"
                     onPress={() => {
                       void onCheckTransactionAgain();
                     }}
-                    style={[styles.button, styles.secondary]}
-                  >
-                    {checking ? (
-                      <ActivityIndicator color="#101317" />
-                    ) : (
-                      <Text style={styles.secondaryText}>Check transaction again</Text>
-                    )}
-                  </Pressable>
+                    variant="secondary"
+                  />
                   {operationReport?.actions.allowReconnect === true ? (
-                    <Pressable
-                      accessibilityRole="button"
+                    <PillButton
                       accessibilityLabel="Reconnect wallet"
+                      label="Reconnect wallet"
                       onPress={() => {
                         void onReconnectWallet();
                       }}
-                      style={[styles.button, styles.secondary]}
-                    >
-                      <Text style={styles.secondaryText}>Reconnect wallet</Text>
-                    </Pressable>
+                      variant="secondary"
+                    />
                   ) : null}
                   <Text style={styles.hint}>
                     A signature already exists: no second send is allowed until the transaction is
                     proven absent, expired or failed.
                   </Text>
-                </View>
+                </InfoBox>
               ) : null}
               </>
             ) : null}
 
             {/* ETAT D — succes : creation confirmee ET multisig relu/verifie. */}
             {createdAndVerified ? (
-              <View style={styles.successBox}>
-                <Text style={styles.successText}>Vault created and verified.</Text>
+              <InfoBox glyph="✓" style={styles.successBox} tone="success">
+                <InfoText tone="success">Vault created and verified.</InfoText>
                 <Text style={styles.fieldLabel}>Multisig configuration address</Text>
                 <Text selectable style={styles.fieldValue}>
                   {createResult?.readBack?.address}
@@ -1569,94 +1578,88 @@ export function CreateVaultScreen({
                 </Text>
                 <Text style={styles.fieldLabel}>Members</Text>
                 <Text style={styles.fieldValue}>{createResult?.readBack?.memberCount}</Text>
-                <Pressable
-                  accessibilityRole="button"
+                <PillButton
                   accessibilityLabel="Open the created vault"
+                  label="Open vault"
                   onPress={() => {
                     const address = createResult?.readBack?.address ?? null;
                     if (address !== null) onOpenVault({ address, vaultName });
                   }}
-                  style={[styles.button, styles.secondary]}
-                >
-                  <Text style={styles.secondaryText}>Open vault</Text>
-                </Pressable>
-                <Pressable
-                  accessibilityRole="button"
+                  variant="secondary"
+                />
+                <PillButton
                   accessibilityLabel="Go to inbox"
+                  label="Go to Inbox"
                   onPress={onGoToInbox}
-                  style={[styles.button, styles.secondary]}
-                >
-                  <Text style={styles.secondaryText}>Go to Inbox</Text>
-                </Pressable>
-              </View>
+                  variant="secondary"
+                />
+              </InfoBox>
             ) : null}
 
             {/* ETAT E — transaction CONFIRMEE mais configuration NON conforme
                 (owner/threshold/membre/permissions…). Echec DETERMINISTE : aucun
                 second envoi, aucune ouverture de wallet, aucun Prepare again. */}
             {vaultVisibleState === 'confirmed-verification-mismatch' ? (
-              <View style={styles.errorBox}>
-                <Text style={styles.errorText}>Transaction confirmed</Text>
-                <Text style={styles.errorText}>
+              <InfoBox glyph="✕" style={styles.errorBox} tone="error">
+                <InfoText tone="error">Transaction confirmed</InfoText>
+                <InfoText tone="error">
                   The multisig account could not be verified against the configuration you
                   reviewed.
-                </Text>
-                <Text style={styles.errorText}>Nothing needs to be sent again.</Text>
+                </InfoText>
+                <InfoText tone="error">Nothing needs to be sent again.</InfoText>
                 <Text selectable style={styles.fieldValue}>
                   Signature: {createResult?.signature}
                 </Text>
                 <Text style={styles.hint}>Confirmation: {signatureStatus}</Text>
                 <Text style={styles.hint}>Vault verification: failed</Text>
-                <Text style={styles.errorText}>Verification mismatch</Text>
+                <InfoText tone="error">Verification mismatch</InfoText>
                 <Text style={styles.hint}>
                   The exact differences are in Troubleshooting details. No second send is allowed
                   while a confirmed signature exists.
                 </Text>
-              </View>
+              </InfoBox>
             ) : null}
 
             {/* TROUBLESHOOTING DETAILS — repliable, affiche uniquement si au
                 moins un diagnostic existe. Jamais une etape obligatoire. */}
             {hasDiagnostics ? (
               <View style={styles.block}>
-                <Pressable
-                  accessibilityRole="button"
+                <PillButton
                   accessibilityLabel="Troubleshooting details"
+                  label="Troubleshooting details"
                   onPress={() => setTroubleshootingOpen((open) => !open)}
-                  style={[styles.button, styles.secondary]}
-                >
-                  <Text style={styles.secondaryText}>Troubleshooting details</Text>
-                </Pressable>
+                  variant="secondary"
+                />
                 {/* Ferme par defaut : les details techniques ne sont jamais
                     imposes a l'utilisateur. Erreurs RPC completes, MWA, block
                     heights. */}
                 {troubleshootingOpen ? (
-                  <View style={styles.noticeBox}>
+                  <View style={styles.detailBox}>
                     {technicalErrors.map((message, index) => (
-                      <Text key={`detail-${index}`} selectable style={styles.hint}>
+                      <Text key={`detail-${index}`} selectable style={styles.detailText}>
                         {message}
                       </Text>
                     ))}
                     {mwaReport !== null ? (
                       <>
-                        <Text style={styles.hint}>MWA step: {mwaReport.step}</Text>
-                        <Text style={styles.hint}>
+                        <Text style={styles.detailText}>MWA step: {mwaReport.step}</Text>
+                        <Text style={styles.detailText}>
                           MWA code: {mwaReport.code ?? 'none returned'}
                         </Text>
-                        <Text style={styles.hint}>MWA message: {mwaReport.message}</Text>
+                        <Text style={styles.detailText}>MWA message: {mwaReport.message}</Text>
                       </>
                     ) : null}
                     {signingStateLabel !== null ? (
-                      <Text style={styles.hint}>Signing state: {signingStateLabel}</Text>
+                      <Text style={styles.detailText}>Signing state: {signingStateLabel}</Text>
                     ) : null}
                     {checkEvidence !== null ? (
-                      <Text style={styles.hint}>
+                      <Text style={styles.detailText}>
                         Blockhash: height {checkEvidence.blockHeight ?? 'unknown'} · last valid{' '}
                         {checkEvidence.lastValidBlockHeight ?? 'unknown'}
                       </Text>
                     ) : null}
                     {checkReport !== null ? (
-                      <Text style={styles.hint}>Last recheck: {checkReport}</Text>
+                      <Text style={styles.detailText}>Last recheck: {checkReport}</Text>
                     ) : null}
                   </View>
                 ) : null}
@@ -1667,23 +1670,15 @@ export function CreateVaultScreen({
 
         <View style={styles.navRow}>
           {step > 1 && !createdAndVerified ? (
-            <Pressable
-              accessibilityRole="button"
-              onPress={goBack}
-              style={[styles.navButton, styles.secondary]}
-            >
-              <Text style={styles.secondaryText}>Back</Text>
-            </Pressable>
+            <PillButton label="Back" onPress={goBack} variant="secondary" />
           ) : null}
           {step < STEP_COUNT ? (
-            <Pressable
-              accessibilityRole="button"
+            <PillButton
               disabled={!canContinue}
+              label="Continue"
               onPress={goNext}
-              style={[styles.navButton, !canContinue && styles.disabled]}
-            >
-              <Text style={styles.buttonText}>Continue</Text>
-            </Pressable>
+              variant="primary"
+            />
           ) : null}
         </View>
       </ScrollView>
@@ -1693,293 +1688,283 @@ export function CreateVaultScreen({
 
 const styles = StyleSheet.create({
   keyboardAvoider: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   scrollView: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    padding: 24,
+    padding: spacing.lg,
     // Meme marge basse que la preview : le dernier bloc du wizard reste
     // atteignable au scroll.
-    paddingBottom: 160,
+    paddingBottom: spacing.xxl * 2,
   },
-  // En-tete du wizard : Cancel reste accessible sans scroller.
+  // En-tete du wizard : Discard et la pastille reseau.
   headerRow: {
-    alignSelf: 'stretch',
+    alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
   },
-  headerCancel: {
-    paddingVertical: 8,
+  ghostAction: {
+    borderRadius: radii.pill,
+    paddingVertical: spacing.sm,
   },
-  badge: {
-    backgroundColor: '#e8f0fe',
-    borderRadius: 999,
-    color: '#1a56db',
-    fontSize: 12,
+  pressed: {
+    opacity: 0.82,
+  },
+  ghostActionText: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
     fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 4,
+    color: colors.text,
+    fontSize: typography.screenTitle - 10,
+    fontWeight: '800',
   },
   stepBar: {
-    color: '#6b7280',
-    fontSize: 13,
+    color: colors.textMuted,
+    fontSize: typography.caption,
     fontWeight: '700',
-    marginBottom: 20,
+    marginBottom: spacing.md,
+    marginTop: spacing.xs,
     textTransform: 'uppercase',
+  },
+  // Progression du wizard : une barre de segments, aucun pas ajoute.
+  progressRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.lg,
+  },
+  progressSegment: {
+    backgroundColor: colors.disabled,
+    borderRadius: radii.pill,
+    flex: 1,
+    height: 4,
+  },
+  progressSegmentActive: {
+    backgroundColor: colors.mint,
   },
   block: {
     alignSelf: 'stretch',
   },
   blockTitle: {
-    color: '#111827',
-    fontSize: 16,
+    color: colors.text,
+    fontSize: typography.sectionTitle,
     fontWeight: '800',
-    marginBottom: 8,
-    marginTop: 16,
+    marginBottom: spacing.sm,
+    marginTop: spacing.lg,
   },
   option: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
     borderWidth: 1,
-    marginTop: 8,
-    padding: 14,
+    marginTop: spacing.sm,
+    padding: spacing.lg,
   },
   optionSelected: {
-    borderColor: '#1a56db',
+    borderColor: colors.mint,
     borderWidth: 2,
   },
+  optionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   optionTitle: {
-    color: '#111827',
-    fontSize: 15,
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '800',
+  },
+  optionCheck: {
+    color: colors.mint,
+    fontSize: typography.body,
     fontWeight: '800',
   },
   optionDetail: {
-    color: '#4b5563',
-    fontSize: 13,
-    marginTop: 2,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: spacing.xs,
   },
   fieldLabel: {
-    color: '#6b7280',
-    fontSize: 11,
-    marginTop: 12,
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    marginTop: spacing.md,
     textTransform: 'uppercase',
   },
   fieldValue: {
-    color: '#101317',
-    fontSize: 13,
-    marginTop: 2,
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.xs,
   },
-  summaryBox: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 6,
-    padding: 12,
+  fieldHint: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    marginTop: spacing.sm,
   },
   input: {
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    color: '#101317',
-    fontSize: 13,
-    marginTop: 6,
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.sm,
     minHeight: 44,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+    marginTop: spacing.lg,
   },
   kindRow: {
     flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   kindChip: {
     alignItems: 'center',
-    borderColor: '#d1d5db',
-    borderRadius: 999,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    minHeight: 40,
-    minWidth: 64,
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    minHeight: 44,
+    minWidth: 64,
+    paddingHorizontal: spacing.lg,
   },
   kindChipSelected: {
-    backgroundColor: '#e8f0fe',
-    borderColor: '#1a56db',
+    backgroundColor: colors.text,
+    borderColor: colors.text,
   },
   kindChipText: {
-    color: '#111827',
-    fontSize: 13,
+    color: colors.text,
+    fontSize: typography.bodySmall,
     fontWeight: '700',
   },
-  button: {
-    alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    justifyContent: 'center',
-    marginTop: 12,
-    minHeight: 48,
-    paddingHorizontal: 24,
-    width: '100%',
-  },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  secondary: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-  },
-  secondaryText: {
-    color: '#101317',
-    fontSize: 15,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  disabled: {
-    opacity: 0.5,
-  },
-  navRow: {
-    alignSelf: 'stretch',
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 24,
-  },
-  navButton: {
-    alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    flex: 1,
-    justifyContent: 'center',
-    minHeight: 48,
-    paddingHorizontal: 16,
+  kindChipTextSelected: {
+    color: colors.onLight,
   },
   hint: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginTop: 8,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
   },
-  memberRow: {
-    alignSelf: 'stretch',
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 8,
-    padding: 12,
+  warningText: {
+    color: colors.warning,
+    fontSize: typography.secondary,
+    marginTop: spacing.xs,
+  },
+  statusReady: {
+    color: colors.success,
+    fontSize: typography.bodySmall,
+    fontWeight: '800',
+    marginTop: spacing.xs,
+  },
+  checkLine: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.xs,
+  },
+  infoBox: {
+    marginTop: spacing.md,
+  },
+  infoHeading: {
+    color: colors.warning,
+    fontSize: typography.body,
+    fontWeight: '800',
+    marginBottom: spacing.xs,
+  },
+  noticeBox: {
+    marginTop: spacing.lg,
+  },
+  errorBox: {
+    marginTop: spacing.lg,
+  },
+  successBox: {
+    marginTop: spacing.lg,
+  },
+  summaryBox: {
+    marginTop: spacing.md,
+  },
+  costValue: {
+    color: colors.text,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+    marginTop: spacing.xs,
+  },
+  busyRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
+  },
+  memberCard: {
+    marginTop: spacing.sm,
   },
   memberLabel: {
-    color: '#111827',
-    fontSize: 14,
+    color: colors.text,
+    fontSize: typography.bodySmall,
     fontWeight: '700',
   },
   memberAddress: {
-    color: '#4b5563',
+    color: colors.textSecondary,
     fontFamily: 'monospace',
-    fontSize: 12,
-    marginTop: 2,
+    fontSize: typography.caption,
+    marginTop: spacing.xs,
   },
   memberActions: {
     flexDirection: 'row',
-    gap: 16,
+    gap: spacing.lg,
+    marginTop: spacing.sm,
   },
   renameBlock: {
     alignSelf: 'stretch',
   },
+  inlineAction: {
+    borderRadius: radii.pill,
+    paddingVertical: spacing.xs,
+  },
+  inlineActionText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
   reviewMember: {
-    borderTopColor: '#e5e7eb',
+    borderTopColor: colors.divider,
     borderTopWidth: 1,
-    marginTop: 8,
-    paddingTop: 8,
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
   },
-  checkLine: {
-    color: '#111827',
-    fontSize: 14,
-    marginTop: 6,
-  },
-  noticeBox: {
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe',
-    borderRadius: 10,
+  detailBox: {
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
-  noticeText: {
-    color: '#312e81',
-    fontSize: 13,
-    marginTop: 4,
+  detailText: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    marginTop: spacing.xs,
   },
-  infoHeading: {
-    color: '#1e3a8a',
-    fontSize: 15,
-    fontWeight: '800',
-    marginBottom: 2,
-  },
-  errorBox: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
-  },
-  errorText: {
-    color: '#991b1b',
-    fontSize: 13,
-    marginTop: 4,
-  },
-  successBox: {
-    backgroundColor: '#ecfdf5',
-    borderColor: '#a7f3d0',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
-  },
-  successText: {
-    color: '#065f46',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  warningText: {
-    color: '#92400e',
-    fontSize: 13,
-    marginTop: 4,
-  },
-  statusReady: {
-    color: '#065f46',
-    fontSize: 14,
-    fontWeight: '800',
-    marginTop: 2,
-  },
-  retry: {
-    alignItems: 'center',
-    marginTop: 12,
-    paddingVertical: 8,
-  },
-  retryText: {
-    color: '#1a56db',
-    fontSize: 15,
-    fontWeight: '600',
+  navRow: {
+    alignSelf: 'stretch',
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginTop: spacing.xl,
   },
 });

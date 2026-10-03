@@ -12,15 +12,22 @@ import {
 
 import { shortenMemberAddress } from '../vault/vaultDraft';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { DevnetPill, InfoBox, InfoText } from '../ui/v2/primitives';
 import type { MultisigRegistryEntry } from '../vault/multisigRegistry';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 
 /**
- * Inbox des multisigs connus.
+ * My multisigs — liste du registre LOCAL (UI V2 sombre).
  *
- * Ecran de lecture seule : il n'affiche que le registre LOCAL (aucun RPC, aucune
- * blockchain, aucune signature, aucune creation). Le tap sur une entree remonte
- * un callback simple vers l'appelant ; l'ecran de detail viendra ensuite.
+ * Chaque carte affiche uniquement des donnees LOCALES reelles (nom local,
+ * adresse abregée, provenance, date d'ajout). Aucun RPC par carte : le registre
+ * local est la seule source. Le tap remonte le callback EXISTANT
+ * `onOpenMultisig(entry)` (aucun handler dupliqué).
+ *
+ * C'est le seul ecran de liste de multisigs de l'app (il porte le titre
+ * « My multisigs »). Les actions « Add existing multisig » et « Create a vault »
+ * restent sur Home, ou leurs handlers existent deja : rien n'est inventé ici.
  */
 
 function formatAddedAt(value: string): string {
@@ -34,7 +41,7 @@ export function MultisigInboxScreen({
   onOpenMultisig,
 }: {
   onBack: () => void;
-  /** Callback simple : l'ecran de detail n'existe pas encore. */
+  /** Callback simple : ouvre le detail dans MultisigDetailsScreen V2. */
   onOpenMultisig: (entry: MultisigRegistryEntry) => void;
 }) {
   const registry = useMultisigRegistry();
@@ -59,24 +66,32 @@ export function MultisigInboxScreen({
         keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
       >
-        <Text style={styles.badge}>DEVNET</Text>
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to main screen"
+            onPress={onBack}
+            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <DevnetPill />
+        </View>
+
         <Text style={styles.title}>My multisigs</Text>
-        <Text style={styles.subtitle}>Saved on this device only. Nothing is read on-chain here.</Text>
+        <Text style={styles.subtitle}>Saved on this device only.</Text>
 
         {registry.status === 'loading' ? (
           <View style={styles.centerBlock}>
-            <ActivityIndicator color="#1a56db" />
-            <Text style={styles.hint}>Loading local registry…</Text>
+            <ActivityIndicator color={colors.mint} />
+            <Text style={styles.note}>Loading local registry…</Text>
           </View>
         ) : null}
 
         {registry.status !== 'loading' && registry.entries.length === 0 ? (
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyTitle}>No multisig saved yet</Text>
-            <Text style={styles.emptyText}>
-              Multisigs you create from this app are added here automatically. A multisig you
-              are a member of can be added manually from the main screen.
-            </Text>
+            <Text style={styles.emptyTitle}>No multisigs yet</Text>
+            <Text style={styles.emptyText}>Create a vault or add an existing multisig.</Text>
           </View>
         ) : null}
 
@@ -86,49 +101,47 @@ export function MultisigInboxScreen({
             accessibilityLabel={`Open ${entry.vaultName.length > 0 ? entry.vaultName : entry.address}`}
             key={entry.address}
             onPress={() => onOpenMultisig(entry)}
-            style={styles.entryCard}
+            style={({ pressed }) => [styles.entryCard, pressed && styles.entryCardPressed]}
           >
-            <Text style={styles.entryName}>
-              {entry.vaultName.length > 0 ? entry.vaultName : 'Untitled vault'}
-            </Text>
-            <Text style={styles.entryAddress}>{shortenMemberAddress(entry.address)}</Text>
-            <Text style={styles.entryMeta}>
-              {entry.source === 'created' ? 'Created here' : 'Added manually'} ·{' '}
-              {formatAddedAt(entry.addedAt)}
-            </Text>
+            <View style={styles.entryBody}>
+              <Text style={styles.entryName}>
+                {entry.vaultName.length > 0 ? entry.vaultName : 'Untitled vault'}
+              </Text>
+              <Text selectable style={styles.entryAddress}>
+                {shortenMemberAddress(entry.address)}
+              </Text>
+              <Text style={styles.entryMeta}>
+                {entry.source === 'created' ? 'Created here' : 'Added manually'} ·{' '}
+                {formatAddedAt(entry.addedAt)}
+              </Text>
+            </View>
+            <Text style={styles.chevron}>›</Text>
           </Pressable>
         ))}
 
         {registry.warnings.length > 0 ? (
-          <View style={styles.noticeBox}>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
             {registry.warnings.map((warning) => (
-              <Text key={warning} style={styles.warningText}>{warning}</Text>
+              <InfoText key={warning} tone="warning">
+                {warning}
+              </InfoText>
             ))}
-          </View>
+          </InfoBox>
         ) : null}
 
         {registry.error !== null ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{registry.error}</Text>
-          </View>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">{registry.error}</InfoText>
+          </InfoBox>
         ) : null}
 
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Reload local registry"
           onPress={onReload}
-          style={styles.retry}
+          style={({ pressed }) => [styles.inlineAction, pressed && styles.inlineActionPressed]}
         >
-          <Text style={styles.retryText}>Reload</Text>
-        </Pressable>
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to main screen"
-          onPress={onBack}
-          style={[styles.button, styles.secondary]}
-        >
-          <Text style={styles.secondaryText}>Back</Text>
+          <Text style={styles.inlineActionText}>Reload</Text>
         </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -137,154 +150,135 @@ export function MultisigInboxScreen({
 
 const styles = StyleSheet.create({
   keyboardAvoider: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   scrollView: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    padding: 24,
-    paddingBottom: 96,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
   },
-  badge: {
-    backgroundColor: '#e8f0fe',
-    borderRadius: 999,
-    color: '#1a56db',
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backButtonPressed: {
+    backgroundColor: colors.surface,
+  },
+  backGlyph: {
+    color: colors.text,
+    fontSize: 24,
+    lineHeight: 26,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
+    color: colors.text,
+    fontSize: typography.screenTitle - 6,
+    fontWeight: '800',
   },
   subtitle: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginBottom: 16,
-    marginTop: 4,
-    textAlign: 'center',
+    color: colors.textSecondary,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.xs,
   },
   centerBlock: {
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   emptyBox: {
-    alignSelf: 'stretch',
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
     borderStyle: 'dashed',
     borderWidth: 1,
-    marginTop: 8,
-    padding: 16,
+    marginTop: spacing.lg,
+    padding: spacing.lg,
   },
   emptyTitle: {
-    color: '#111827',
-    fontSize: 15,
+    color: colors.text,
+    fontSize: typography.body,
     fontWeight: '800',
   },
   emptyText: {
-    color: '#4b5563',
-    fontSize: 13,
-    marginTop: 6,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
   },
   entryCard: {
-    alignSelf: 'stretch',
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
     borderWidth: 1,
-    marginTop: 10,
-    padding: 14,
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+    padding: spacing.md,
+  },
+  entryCardPressed: {
+    backgroundColor: colors.surfaceElevated,
+  },
+  entryBody: {
+    flex: 1,
   },
   entryName: {
-    color: '#111827',
-    fontSize: 16,
+    color: colors.text,
+    fontSize: typography.body,
     fontWeight: '800',
   },
   entryAddress: {
-    color: '#101317',
+    color: colors.textSecondary,
     fontFamily: 'monospace',
-    fontSize: 12,
+    fontSize: typography.caption,
     marginTop: 2,
   },
   entryMeta: {
-    color: '#6b7280',
-    fontSize: 12,
-    marginTop: 6,
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    marginTop: spacing.sm,
   },
-  button: {
-    alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    justifyContent: 'center',
-    marginTop: 16,
-    minHeight: 48,
-    paddingHorizontal: 24,
-    width: '100%',
+  chevron: {
+    color: colors.textMuted,
+    fontSize: 22,
+    marginLeft: spacing.sm,
   },
-  secondary: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    marginTop: 24,
+  infoBox: {
+    marginTop: spacing.md,
   },
-  secondaryText: {
-    color: '#101317',
-    fontSize: 15,
+  note: {
+    color: colors.textMuted,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
+  },
+  inlineAction: {
+    alignSelf: 'flex-start',
+    borderRadius: radii.pill,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  inlineActionPressed: {
+    backgroundColor: colors.surface,
+  },
+  inlineActionText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
     fontWeight: '700',
-    textAlign: 'center',
-  },
-  hint: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginTop: 8,
-  },
-  warningText: {
-    color: '#92400e',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  noticeBox: {
-    alignSelf: 'stretch',
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
-  },
-  errorBox: {
-    alignSelf: 'stretch',
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
-  },
-  errorText: {
-    color: '#991b1b',
-    fontSize: 13,
-  },
-  retry: {
-    alignItems: 'center',
-    marginTop: 16,
-    paddingVertical: 8,
-  },
-  retryText: {
-    color: '#1a56db',
-    fontSize: 15,
-    fontWeight: '600',
   },
 });

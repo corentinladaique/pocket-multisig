@@ -207,20 +207,28 @@ check('27. Les etats disabled et busy restent distincts', () => {
   assert.ok(PRIM.includes('accessibilityState={{ busy, disabled: inactive }}'), 'etats annonces');
 });
 
-check('28. Aucun ecran hors Groupes 1-2 n est migre vers UI V2', () => {
-  // MultisigDetailsScreen et ProposalListScreen ont ete migres par le Groupe 2.
-  const others = [
-    'NewProposalScreen',
-    'ProposalDetailsScreen',
-    'CreateVaultScreen',
-    'TransactionReviewScreen',
-    'OnboardingScreen',
+check('28. Tous les ecrans utilisateur sont migres vers UI V2', () => {
+  // Fin de la migration : chaque ecran utilise le theme sombre ; tous sauf la vue
+  // technique brute utilisent aussi les primitives V2.
+  const screens = [
+    'ConnectScreen',
+    'ReceiveScreen',
+    'MultisigDetailsScreen',
+    'ProposalListScreen',
     'MultisigInboxScreen',
+    'OnboardingScreen',
+    'NewProposalScreen',
+    'TransactionReviewScreen',
+    'ProposalDetailsScreen',
+    'TransactionTechnicalDetails',
+    'CreateVaultScreen',
   ];
-  for (const name of others) {
+  for (const name of screens) {
     const source = readFileSync(`src/screens/${name}.tsx`, 'utf8');
-    assert.ok(!source.includes('ui/v2/primitives'), `${name} ne doit pas utiliser les primitives V2`);
-    assert.ok(!source.includes("from '../ui/theme'"), `${name} ne doit pas utiliser le theme V2`);
+    assert.ok(source.includes("from '../ui/theme'"), `${name} doit utiliser le theme V2`);
+    if (name !== 'TransactionTechnicalDetails') {
+      assert.ok(source.includes('ui/v2/primitives'), `${name} doit utiliser les primitives V2`);
+    }
   }
 });
 

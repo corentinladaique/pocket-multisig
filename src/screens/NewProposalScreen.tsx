@@ -38,6 +38,8 @@ import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, 
 import { signingStateTitle } from '../wallet/signingWindow';
 import { AddressInput } from '../ui/AddressInput';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { DevnetPill, InfoBox, InfoText } from '../ui/v2/primitives';
 import {
   computeMaxTransfer,
   isMaxSnapshotCurrent,
@@ -62,6 +64,11 @@ import {
  * Aucun Reject, aucun batch, aucune Address Lookup Table : seulement un
  * transfert SOL simple. Rien n'est envoye sans les trois portes du pipeline
  * (build, preflight, simulation) et sans double confirmation explicite.
+ *
+ * UI : theme sombre « Seeker style » (UI V2). Seule la présentation a changé :
+ * handlers, machine d'état, parsing SOL<->lamports, buffer Max, validation,
+ * Paste, runPipeline, préflight, simulation et déclenchement EXPLICITE du wallet
+ * sont inchangés.
  */
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -140,6 +147,8 @@ export function NewProposalScreen({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   /** Section explicative repliable, FERMÉE par défaut. */
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
+  /** Section « More options » repliable, FERMÉE par défaut (buffer + Max). */
+  const [moreOptionsOpen, setMoreOptionsOpen] = useState(false);
   // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
   const attemptOutcome =
     createResult === null
@@ -453,12 +462,17 @@ export function NewProposalScreen({
 
   // Revue locale : l'opération du message (transfert SOL), pas la transaction
   // de création. Aucun contexte de guard réel : la proposition n'existe pas.
+  // Le CTA « Create proposal » reste branché sur le MÊME handler explicite
+  // (onCreate : double confirmation puis wallet), la simulation a réellement
+  // réussi avant d'atteindre cet écran.
   if (reviewOpen && reviewModel !== null) {
     return (
       <TransactionReviewScreen
         guardContext={null}
         model={reviewModel}
         onBack={() => setReviewOpen(false)}
+        onCreate={onCreate}
+        simulationPassed={pipeline.status === 'ready'}
       />
     );
   }
@@ -470,11 +484,30 @@ export function NewProposalScreen({
         keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
       >
-        <Text style={styles.badge}>DEVNET · SOL TRANSFER</Text>
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to multisig details"
+            onPress={onBack}
+            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <DevnetPill />
+        </View>
+
+        <Text style={styles.kicker}>DEVNET · SOL TRANSFER</Text>
         <Text style={styles.title}>New proposal</Text>
         <Text style={styles.subtitle}>
           Nothing is signed or sent until the pipeline is green and you confirm twice.
         </Text>
+
+        {/* Indicateur d'étapes : PUREMENT visuel, sans navigation ni état. */}
+        <View style={styles.steps}>
+          <Text style={styles.stepActive}>1 Details</Text>
+          <Text style={styles.stepIdle}>2 Review</Text>
+          <Text style={styles.stepIdle}>3 Sign</Text>
+        </View>
 
         <View style={styles.block}>
           {/* Destination : le collage passe par le MEME setter qu'une saisie
@@ -488,16 +521,19 @@ export function NewProposalScreen({
           />
 
           <Text style={styles.fieldLabel}>Amount (SOL)</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="decimal-pad"
-            onChangeText={setSolText}
-            placeholder="e.g. 0.02"
-            placeholderTextColor="#9ca3af"
-            style={styles.input}
-            value={solText}
-          />
+          <View style={styles.amountRow}>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="decimal-pad"
+              onChangeText={setSolText}
+              placeholder="e.g. 0.02"
+              placeholderTextColor={colors.textMuted}
+              style={styles.amountInput}
+              value={solText}
+            />
+            <Text style={styles.amountUnit}>SOL</Text>
+          </View>
           <Text style={styles.fieldNote}>
             {Number.isFinite(lamports) && lamports > 0
               ? `Proposal amount: ${formatSolAmount(lamports)}`
@@ -506,74 +542,6 @@ export function NewProposalScreen({
                 : SOL_AMOUNT_MESSAGES[parsedSol.reason]}
           </Text>
 
-          {/* Max : relit le solde confirme puis fige un montant exact. Le buffer
-              est EXPLICITE et facultatif : aucune reserve cachee n'est appliquee. */}
-          <Text style={styles.fieldLabel}>Optional safety buffer (SOL)</Text>
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="decimal-pad"
-            onChangeText={setBufferText}
-            placeholder="e.g. 0.001"
-            placeholderTextColor="#9ca3af"
-            style={styles.input}
-            value={bufferText}
-          />
-          <Text style={styles.fieldNote}>
-            Amount kept in the Main vault when using Max.
-          </Text>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Fill the maximum transferable amount"
-            onPress={() => {
-              void onMax();
-            }}
-            style={[styles.button, styles.secondary, styles.maxButton]}
-          >
-            <Text style={styles.secondaryText}>Max</Text>
-          </Pressable>
-
-          {maxSummaryVisible && maxPlan !== null ? (
-            <View style={maxPlan.ready ? styles.noticeBox : styles.errorBox}>
-              <Text style={maxPlan.ready ? styles.noticeText : styles.errorText}>
-                {maxPlan.label}
-              </Text>
-              <Text style={styles.fieldNote}>{maxPlan.hint}</Text>
-              {maxPlan.warnings.map((warning) => (
-                <Text key={warning} style={styles.fieldNote}>
-                  · {warning}
-                </Text>
-              ))}
-              {maxPlan.ready ? (
-                <>
-                  <Text style={styles.fieldNote}>Current vault balance</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {formatSol((maxPlan.amountLamports ?? 0) + maxPlan.bufferLamports)} SOL
-                  </Text>
-                  <Text style={styles.fieldNote}>Proposed transfer</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {formatSol(maxPlan.amountLamports ?? 0)} SOL
-                  </Text>
-                  <Text style={styles.fieldNote}>
-                    Safety buffer: {formatSolAmount(maxPlan.bufferLamports)}
-                  </Text>
-                  <Text style={styles.fieldNote}>Estimated remaining balance</Text>
-                  <Text selectable style={styles.monoValue}>
-                    {formatSol(maxPlan.remainingLamports ?? 0)} SOL
-                  </Text>
-                  <Text style={styles.fieldNote}>
-                    This summary matches the current amount, destination and buffer.
-                  </Text>
-                </>
-              ) : null}
-            </View>
-          ) : maxPlan !== null && !maxPlan.ready ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{maxPlan.label}</Text>
-              <Text style={styles.fieldNote}>{maxPlan.hint}</Text>
-            </View>
-          ) : null}
-
           <Text style={styles.fieldLabel}>Memo (optional)</Text>
           <TextInput
             autoCapitalize="none"
@@ -581,28 +549,117 @@ export function NewProposalScreen({
             multiline
             onChangeText={setMemo}
             placeholder="What is this transfer for?"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={colors.textMuted}
             style={[styles.input, styles.memoInput]}
             value={memo}
           />
+
+          {/* « More options » : replié par défaut. Contient le buffer EXPLICITE
+              et le bouton Max. Aucun effet sur les validations. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Toggle more options"
+            accessibilityState={{ expanded: moreOptionsOpen }}
+            onPress={() => setMoreOptionsOpen((previous) => !previous)}
+            style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
+          >
+            <Text style={styles.toggleText}>
+              {moreOptionsOpen ? 'Hide more options' : 'More options'}
+            </Text>
+          </Pressable>
+
+          {moreOptionsOpen ? (
+            <View style={styles.moreOptions}>
+              <Text style={styles.fieldLabel}>Optional safety buffer (SOL)</Text>
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="decimal-pad"
+                onChangeText={setBufferText}
+                placeholder="e.g. 0.001"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+                value={bufferText}
+              />
+              <Text style={styles.fieldNote}>
+                Amount kept in the Main vault when using Max.
+              </Text>
+              <Text style={styles.fieldNote}>Keep in Main vault when using Max.</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Fill the maximum transferable amount"
+                onPress={() => {
+                  void onMax();
+                }}
+                style={({ pressed }) => [
+                  styles.secondaryButton,
+                  styles.maxButton,
+                  pressed && styles.secondaryPressed,
+                ]}
+              >
+                <Text style={styles.secondaryText}>Max</Text>
+              </Pressable>
+
+              {maxSummaryVisible && maxPlan !== null ? (
+                <View style={maxPlan.ready ? styles.noticeBox : styles.errorBox}>
+                  <Text style={maxPlan.ready ? styles.noticeTitle : styles.errorTitle}>
+                    {maxPlan.label}
+                  </Text>
+                  <Text style={styles.fieldNote}>{maxPlan.hint}</Text>
+                  {maxPlan.warnings.map((warning) => (
+                    <Text key={warning} style={styles.fieldNote}>
+                      · {warning}
+                    </Text>
+                  ))}
+                  {maxPlan.ready ? (
+                    <>
+                      <Text style={styles.fieldNote}>Current vault balance</Text>
+                      <Text selectable style={styles.monoValue}>
+                        {formatSol((maxPlan.amountLamports ?? 0) + maxPlan.bufferLamports)} SOL
+                      </Text>
+                      <Text style={styles.fieldNote}>Proposed transfer</Text>
+                      <Text selectable style={styles.monoValue}>
+                        {formatSol(maxPlan.amountLamports ?? 0)} SOL
+                      </Text>
+                      <Text style={styles.fieldNote}>
+                        Safety buffer: {formatSolAmount(maxPlan.bufferLamports)}
+                      </Text>
+                      <Text style={styles.fieldNote}>Estimated remaining balance</Text>
+                      <Text selectable style={styles.monoValue}>
+                        {formatSol(maxPlan.remainingLamports ?? 0)} SOL
+                      </Text>
+                      <Text style={styles.fieldNote}>
+                        This summary matches the current amount, destination and buffer.
+                      </Text>
+                    </>
+                  ) : null}
+                </View>
+              ) : maxPlan !== null && !maxPlan.ready ? (
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorTitle}>{maxPlan.label}</Text>
+                  <Text style={styles.fieldNote}>{maxPlan.hint}</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
         </View>
 
         {/* Etats utilisateur : un montant vide n'est PAS une erreur avant toute
             tentative explicite. Les messages visibles sont en SOL ; les lamports
-            restent confinés à la section « Technical details ». */}
+            restent confinés à la section « Advanced diagnostics ». */}
         {build.errors.length > 0 && amountAttempted ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorTitle}>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">
               {parsedSol.ok ? 'Not ready' : SOL_AMOUNT_MESSAGES[parsedSol.reason]}
-            </Text>
+            </InfoText>
             {build.errors
               .filter((error) => !/lamports/i.test(error))
               .map((error) => (
-                <Text key={error} style={styles.errorText}>
+                <InfoText key={error} tone="error">
                   · {error}
-                </Text>
+                </InfoText>
               ))}
-          </View>
+          </InfoBox>
         ) : null}
         {/* Une seule indication de montant manquant, près du champ. Les autres
             raisons de blocage restent visibles si elles existent. */}
@@ -621,10 +678,14 @@ export function NewProposalScreen({
           onPress={() => {
             void runPipeline();
           }}
-          style={[styles.button, !canRunPipeline && styles.disabled]}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            pressed && styles.primaryPressed,
+            !canRunPipeline && styles.disabled,
+          ]}
         >
           {pipeline.status === 'working' ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color={colors.onLight} />
           ) : (
             <Text style={styles.buttonText}>Review proposal</Text>
           )}
@@ -634,15 +695,15 @@ export function NewProposalScreen({
         </Text>
 
         {pipeline.status === 'error' ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorTitle}>Pipeline stopped before any signature</Text>
-            <Text style={styles.errorText}>{pipeline.message}</Text>
-          </View>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">Pipeline stopped before any signature</InfoText>
+            <InfoText tone="error">{pipeline.message}</InfoText>
+          </InfoBox>
         ) : null}
 
         {simulation !== null && preflight !== null ? (
           <View style={pipeline.status === 'ready' ? styles.successBox : styles.noticeBox}>
-            <Text style={pipeline.status === 'ready' ? styles.successTitle : styles.warningText}>
+            <Text style={pipeline.status === 'ready' ? styles.successTitle : styles.noticeTitle}>
               {pipeline.status === 'ready' ? 'Simulation succeeded' : 'Simulation did not pass'}
             </Text>
             <Text style={styles.fieldValue}>
@@ -665,9 +726,9 @@ export function NewProposalScreen({
               accessibilityLabel="Toggle advanced diagnostics"
               accessibilityState={{ expanded: advancedOpen }}
               onPress={() => setAdvancedOpen((previous) => !previous)}
-              style={[styles.button, styles.secondary]}
+              style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
             >
-              <Text style={styles.secondaryText}>
+              <Text style={styles.toggleText}>
                 {advancedOpen ? 'Hide advanced diagnostics' : 'Advanced diagnostics'}
               </Text>
             </Pressable>
@@ -711,13 +772,13 @@ export function NewProposalScreen({
         ) : null}
 
         {otherWarnings.length > 0 ? (
-          <View style={styles.noticeBox}>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
             {otherWarnings.map((warning) => (
-              <Text key={warning} style={styles.warningText}>
+              <InfoText key={warning} tone="warning">
                 · {warning}
-              </Text>
+              </InfoText>
             ))}
-          </View>
+          </InfoBox>
         ) : null}
 
         {/* Section explicative FACULTATIVE, fermée par défaut : information pure,
@@ -729,22 +790,20 @@ export function NewProposalScreen({
               accessibilityLabel="Toggle how proposal creation works"
               accessibilityState={{ expanded: howItWorksOpen }}
               onPress={() => setHowItWorksOpen((previous) => !previous)}
-              style={[styles.button, styles.secondary]}
+              style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
             >
-              <Text style={styles.secondaryText}>
+              <Text style={styles.toggleText}>
                 {howItWorksOpen
                   ? 'Hide how proposal creation works'
                   : 'How proposal creation works'}
               </Text>
             </Pressable>
             {howItWorksOpen ? (
-              <View style={styles.noticeBox}>
+              <InfoBox style={styles.infoBox}>
                 {explainers.map((warning) => (
-                  <Text key={warning} style={styles.warningText}>
-                    · {warning}
-                  </Text>
+                  <InfoText key={warning}>· {warning}</InfoText>
                 ))}
-              </View>
+              </InfoBox>
             ) : null}
           </>
         ) : null}
@@ -754,7 +813,10 @@ export function NewProposalScreen({
             accessibilityRole="button"
             accessibilityLabel="Review the transfer to be created"
             onPress={() => setReviewOpen(true)}
-            style={[styles.button, styles.secondary]}
+            style={({ pressed }) => [
+              styles.secondaryButton,
+              pressed && styles.secondaryPressed,
+            ]}
           >
             <Text style={styles.secondaryText}>Review the transfer</Text>
           </Pressable>
@@ -769,17 +831,18 @@ export function NewProposalScreen({
             }}
             disabled={creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false))}
             onPress={onCreate}
-            style={[
-              styles.button,
+            style={({ pressed }) => [
+              styles.secondaryButton,
               styles.createButton,
+              pressed && styles.secondaryPressed,
               (creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false))) &&
                 styles.disabled,
             ]}
           >
             {creating ? (
-              <ActivityIndicator color="#ffffff" />
+              <ActivityIndicator color={colors.text} />
             ) : (
-              <Text style={styles.buttonText}>
+              <Text style={styles.secondaryText}>
                 {createResult !== null && (attemptOutcome?.allowNewAttempt ?? false)
                   ? 'Prepare again'
                   : 'Create on Devnet'}
@@ -793,9 +856,9 @@ export function NewProposalScreen({
         ) : null}
 
         {createError !== null ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{createError}</Text>
-          </View>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">{createError}</InfoText>
+          </InfoBox>
         ) : null}
 
         {createResult !== null ? (
@@ -864,9 +927,9 @@ export function NewProposalScreen({
                       onOpenCreatedProposal?.(createdIndex);
                     }
                   }}
-                  style={[
-                    styles.button,
-                    styles.secondary,
+                  style={({ pressed }) => [
+                    styles.secondaryButton,
+                    pressed && styles.secondaryPressed,
                     (createResult.readBack === null ||
                       createResult.readBack.transactionIndex === null) &&
                       styles.disabled,
@@ -881,7 +944,11 @@ export function NewProposalScreen({
               accessibilityLabel="Go to proposals list"
               disabled={postCreate === 'refreshing'}
               onPress={onDone}
-              style={[styles.button, styles.secondary, postCreate === 'refreshing' && styles.disabled]}
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                pressed && styles.secondaryPressed,
+                postCreate === 'refreshing' && styles.disabled,
+              ]}
             >
               <Text style={styles.secondaryText}>
                 {postCreate === 'refreshing' ? 'Refreshing proposals…' : 'Go to Proposals'}
@@ -894,19 +961,19 @@ export function NewProposalScreen({
           accessibilityRole="button"
           accessibilityLabel="Cancel and go back"
           onPress={onBack}
-          style={styles.cancel}
+          style={({ pressed }) => [styles.cancel, pressed && styles.secondaryPressed]}
         >
           <Text style={styles.cancelText}>Cancel</Text>
         </Pressable>
 
         {createResult !== null && createResult.validationWarnings.length > 0 ? (
-          <View style={styles.noticeBox}>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
             {createResult.validationWarnings.map((warning) => (
-              <Text key={warning} style={styles.warningText}>
+              <InfoText key={warning} tone="warning">
                 · {warning}
-              </Text>
+              </InfoText>
             ))}
-          </View>
+          </InfoBox>
         ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
@@ -914,126 +981,214 @@ export function NewProposalScreen({
 }
 
 const styles = StyleSheet.create({
-  keyboardAvoider: { flex: 1, width: '100%' },
-  scrollView: { flex: 1, width: '100%' },
+  keyboardAvoider: { backgroundColor: colors.background, flex: 1, width: '100%' },
+  scrollView: { backgroundColor: colors.background, flex: 1, width: '100%' },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    padding: 24,
+    padding: spacing.lg,
     // Assez d'espace sous le contenu pour que MEMO et « Review proposal »
     // restent atteignables par scroll quand le clavier est ouvert.
     paddingBottom: 160,
   },
-  badge: {
-    backgroundColor: '#eef2ff',
-    borderRadius: 999,
-    color: '#4338ca',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
   },
-  title: { fontSize: 22, fontWeight: '700' },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backButtonPressed: { backgroundColor: colors.surface },
+  backGlyph: { color: colors.text, fontSize: 24, lineHeight: 26 },
+  kicker: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  title: {
+    color: colors.text,
+    fontSize: typography.screenTitle,
+    fontWeight: '800',
+    marginTop: spacing.xs,
+  },
   subtitle: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginBottom: 8,
-    marginTop: 4,
-    textAlign: 'center',
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    lineHeight: 19,
+    marginTop: spacing.sm,
+  },
+  steps: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    marginBottom: spacing.lg,
+    marginTop: spacing.lg,
+  },
+  stepActive: {
+    color: colors.mint,
+    fontSize: typography.caption,
+    fontWeight: '800',
+    marginRight: spacing.lg,
+  },
+  stepIdle: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    fontWeight: '700',
+    marginRight: spacing.lg,
   },
   block: { alignSelf: 'stretch' },
   fieldLabel: {
-    color: '#6b7280',
-    fontSize: 11,
-    marginTop: 16,
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginTop: spacing.lg,
     textTransform: 'uppercase',
   },
+  amountRow: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+  },
+  amountInput: {
+    color: colors.text,
+    flex: 1,
+    fontSize: typography.balance,
+    fontWeight: '800',
+    paddingVertical: spacing.xs,
+  },
+  amountUnit: {
+    color: colors.textSecondary,
+    fontSize: typography.sectionTitle,
+    fontWeight: '700',
+    marginBottom: spacing.sm,
+    marginLeft: spacing.sm,
+  },
   input: {
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    color: '#101317',
-    fontSize: 14,
-    marginTop: 6,
-    minHeight: 44,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.sm,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   memoInput: { minHeight: 72, textAlignVertical: 'top' },
-  fieldNote: { color: '#6b7280', fontSize: 12, marginTop: 6 },
-  fieldValue: { color: '#101317', fontSize: 16, fontWeight: '700', marginTop: 4 },
+  fieldNote: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    lineHeight: 18,
+    marginTop: spacing.sm,
+  },
+  fieldValue: {
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '700',
+    marginTop: spacing.xs,
+  },
+  toggle: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+  },
+  togglePressed: { backgroundColor: colors.surfaceElevated },
+  toggleText: { color: colors.text, fontSize: typography.bodySmall, fontWeight: '700' },
+  moreOptions: {
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+  },
+  infoBox: { marginTop: spacing.md },
   errorBox: {
     alignSelf: 'stretch',
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderRadius: 10,
+    backgroundColor: colors.errorSoft,
+    borderColor: colors.errorSoft,
+    borderRadius: radii.field,
     borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
-  errorTitle: { color: '#991b1b', fontSize: 14, fontWeight: '800' },
-  errorText: { color: '#991b1b', fontSize: 12, marginTop: 4 },
+  errorTitle: { color: colors.error, fontSize: typography.bodySmall, fontWeight: '800' },
   successBox: {
     alignSelf: 'stretch',
-    backgroundColor: '#ecfdf5',
-    borderColor: '#a7f3d0',
-    borderRadius: 10,
+    backgroundColor: colors.successSoft,
+    borderColor: colors.successSoft,
+    borderRadius: radii.field,
     borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
-  successTitle: { color: '#065f46', fontSize: 14, fontWeight: '800' },
+  successTitle: { color: colors.success, fontSize: typography.bodySmall, fontWeight: '800' },
   noticeBox: {
     alignSelf: 'stretch',
-    backgroundColor: '#eef2ff',
-    borderColor: '#c7d2fe',
-    borderRadius: 10,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    marginTop: 16,
-    padding: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
-  noticeText: { color: '#3730a3', fontSize: 14, fontWeight: '800' },
-  maxButton: {
-    alignSelf: 'flex-start',
-    marginTop: 8,
-    paddingHorizontal: 24,
+  noticeTitle: { color: colors.mint, fontSize: typography.bodySmall, fontWeight: '800' },
+  monoValue: {
+    color: colors.textSecondary,
+    fontFamily: 'monospace',
+    fontSize: typography.micro,
+    marginTop: spacing.xs,
   },
-  warningText: { color: '#3730a3', fontSize: 12, marginTop: 4 },
-  monoValue: { color: '#101317', fontFamily: 'monospace', fontSize: 11, marginTop: 4 },
-  button: {
+  primaryButton: {
     alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
+    backgroundColor: colors.text,
+    borderRadius: radii.button,
     justifyContent: 'center',
-    marginTop: 16,
-    minHeight: 48,
-    paddingHorizontal: 24,
-    width: '100%',
+    marginTop: spacing.xl,
+    minHeight: 52,
+    paddingHorizontal: spacing.xl,
   },
-  buttonText: { color: '#ffffff', fontSize: 15, fontWeight: '700', textAlign: 'center' },
-  createButton: { backgroundColor: '#047857', marginTop: 20 },
-  secondary: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
+  primaryPressed: { opacity: 0.82 },
+  buttonText: { color: colors.onLight, fontSize: typography.body, fontWeight: '800', textAlign: 'center' },
+  secondaryButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.button,
     borderWidth: 1,
-    marginTop: 12,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
   },
-  secondaryText: { color: '#101317', fontSize: 15, fontWeight: '700', textAlign: 'center' },
-  disabled: { backgroundColor: '#9ca3af' },
+  secondaryPressed: { backgroundColor: colors.surface },
+  secondaryText: { color: colors.text, fontSize: typography.bodySmall, fontWeight: '700', textAlign: 'center' },
+  createButton: { marginTop: spacing.xl },
+  maxButton: { alignSelf: 'flex-start', marginTop: spacing.sm, paddingHorizontal: spacing.xl },
+  disabled: { backgroundColor: colors.disabled, borderColor: colors.disabled },
   cancel: {
     alignItems: 'center',
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderRadius: 10,
-    borderWidth: 1,
+    borderRadius: radii.button,
     justifyContent: 'center',
-    marginTop: 24,
+    marginTop: spacing.lg,
     minHeight: 48,
-    width: '100%',
   },
-  cancelText: { color: '#101317', fontSize: 15, fontWeight: '700' },
+  cancelText: { color: colors.textSecondary, fontSize: typography.bodySmall, fontWeight: '700' },
 });

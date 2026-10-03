@@ -1,14 +1,19 @@
-// Section « Technical details » de la revue on-chain : repliable, FERMÉE par
-// défaut, elle regroupe tout ce qui n'aide pas à la décision immédiate.
+// Section « Advanced transaction details » de la revue on-chain : LECTURE SEULE.
+//
+// Premier niveau : l'essentiel décodé pour la décision — action, montant SOL,
+// source, destination, programme reconnu. Un second niveau repliable, FERMÉ par
+// défaut, regroupe les identifiants techniques bruts (« Raw transaction data »).
 //
 // Aucune donnée n'est recalculée ni transformée : ce composant ne fait
-// qu'afficher le modèle et les verdicts déjà calculés. Aucun appel réseau,
-// aucune fonction d'écriture.
+// qu'afficher le modèle déjà calculé. Aucun appel réseau, aucune fonction
+// d'écriture, aucun CTA d'approbation ou d'exécution, aucun wallet ni signature.
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { colors, radii, spacing, typography } from '../ui/theme';
 import {
   formatLamportsExact,
+  SYSTEM_PROGRAM_ID,
   type ReviewField,
   type SolAmount,
   type TransactionReviewModel,
@@ -33,7 +38,7 @@ function amountText(field: ReviewField<SolAmount>): string {
 
 function Row({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
-    <View>
+    <View style={styles.row}>
       <Text style={styles.label}>{label}</Text>
       <Text selectable style={styles.value}>
         {value}
@@ -52,30 +57,48 @@ export interface TransactionTechnicalDetailsProps {
 
 export function TransactionTechnicalDetails({
   model,
-  guard,
-  allowlist,
   proposalAddress,
 }: TransactionTechnicalDetailsProps): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false);
+  const [rawOpen, setRawOpen] = useState(false);
+
+  // Libellé d'action dérivé des champs RÉELLEMENT décodés (programme + action).
+  const isSystemTransfer =
+    model.program.known &&
+    model.program.value.id === SYSTEM_PROGRAM_ID &&
+    model.action.known &&
+    /transfer/i.test(model.action.value);
+  const actionLabel = isSystemTransfer ? 'SOL transfer' : fieldText(model.action);
+  const amountSol = model.amount.known
+    ? formatLamportsExact(model.amount.value.lamports)
+    : 'Unknown';
+  const programLabel = model.program.known
+    ? `${model.program.value.label} — ${model.program.value.id}`
+    : 'Unknown';
 
   return (
     <View style={styles.wrapper}>
-      {/* Toute la ligne est tactile : chevron + titre dans une seule Pressable,
-          avec une hauteur minimale confortable. */}
+      {/* --- Premier niveau : ce qui aide à la décision immédiate. --- */}
+      <Row label="Action" value={actionLabel} />
+      <Row label="Amount (SOL)" value={amountSol} />
+      <Row label="Source" value={fieldText(model.source)} />
+      <Row label="Destination" value={fieldText(model.destination)} />
+      <Row label="Program" value={programLabel} />
+
+      {/* --- Second niveau : identifiants techniques, replié par défaut. --- */}
       <Pressable
         accessibilityRole="button"
-        accessibilityState={{ expanded }}
-        accessibilityLabel="Toggle technical details"
+        accessibilityState={{ expanded: rawOpen }}
+        accessibilityLabel="Toggle raw transaction data"
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        onPress={() => setExpanded((previous) => !previous)}
+        onPress={() => setRawOpen((previous) => !previous)}
         style={styles.toggle}
       >
         <Text style={styles.toggleText}>
-          {expanded ? '▾ Technical details' : '▸ Technical details'}
+          {rawOpen ? '▾ Raw transaction data' : '▸ Raw transaction data'}
         </Text>
       </Pressable>
 
-      {expanded ? (
+      {rawOpen ? (
         <View style={styles.body}>
           <Row label="Network" value="Devnet" />
           <Row label="Multisig configuration address" value={model.multisigAddress} />
@@ -89,8 +112,8 @@ export function TransactionTechnicalDetails({
             }
           />
           <Row label="Action (raw)" value={fieldText(model.action)} />
-          <Row label="Source" value={fieldText(model.source)} />
-          <Row label="Destination" value={fieldText(model.destination)} />
+          <Row label="Source (raw)" value={fieldText(model.source)} />
+          <Row label="Destination (raw)" value={fieldText(model.destination)} />
           <Row
             label="Program called"
             value={
@@ -102,18 +125,6 @@ export function TransactionTechnicalDetails({
           <Row label="Fees" value={amountText(model.fee)} />
           <Row label="Amount (raw)" value={amountText(model.amount)} />
           <Row label="Decode status" value={DECODE_LABEL[model.decodeStatus]} />
-          <Row
-            label="Wallet guard"
-            value={
-              guard.status === 'allowed'
-                ? 'allowed'
-                : `blocked — ${guard.reasons.join(' ') || 'no detail'}`
-            }
-          />
-          <Row
-            label="Instruction allowlist"
-            value={`${allowlist.status} — ${allowlist.reason}`}
-          />
           {model.notes.length > 0 ? (
             <Row label="Technical notes" value={model.notes.join(' ')} />
           ) : null}
@@ -126,41 +137,46 @@ export function TransactionTechnicalDetails({
 const styles = StyleSheet.create({
   wrapper: {
     alignSelf: 'stretch',
-    marginTop: 8,
+    marginTop: spacing.sm,
   },
-  toggle: {
-    alignItems: 'center',
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    minHeight: 48,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  toggleText: {
-    color: '#374151',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  body: {
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    borderWidth: 1,
-    marginTop: 8,
-    padding: 12,
+  row: {
+    marginTop: spacing.sm,
   },
   label: {
-    color: '#6b7280',
-    fontSize: 10,
-    fontWeight: '700',
+    color: colors.textMuted,
+    fontSize: typography.micro,
     letterSpacing: 0.5,
-    marginTop: 8,
     textTransform: 'uppercase',
   },
   value: {
-    color: '#374151',
-    fontSize: 12,
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    marginTop: 2,
+  },
+  toggle: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  toggleText: {
+    color: colors.text,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  body: {
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    marginTop: spacing.sm,
+    padding: spacing.md,
   },
 });

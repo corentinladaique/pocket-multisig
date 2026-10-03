@@ -141,9 +141,9 @@ check('15. Refresh disponible utilise un style secondaire, pas disabled', () => 
   assert.ok(LIST.includes('pressed && styles.secondaryPressed'));
   assert.ok(PD.includes('pressed && styles.secondaryPressed'));
   // Les actions disponibles gardent un style secondaire reel (bordure).
-  // Groupe 2 : ProposalListScreen est passe au theme sombre -> bordure par token.
+  // Ecrans migres UI V2 : la bordure vient du theme (token), plus d'un litteral clair.
   assert.ok(LIST.includes('colors.divider'), 'bordure secondaire via le theme V2');
-  assert.ok(PD.includes("borderColor: '#d1d5db'"));
+  assert.ok(PD.includes('colors.divider'), 'bordure secondaire via le theme V2');
 });
 
 check('16. Les etats Approved / Executed restent inchanges', () => {

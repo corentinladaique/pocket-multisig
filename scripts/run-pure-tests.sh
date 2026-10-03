@@ -49,6 +49,10 @@ files=(
   scripts/ui-v2-corrections.test.ts
   scripts/ui-v2-coherence.test.ts
   scripts/ui-v2-group2.test.ts
+  scripts/ui-v2-group4.test.ts
+  scripts/ui-v2-group25.test.ts
+  scripts/ui-v2-group3-form.test.ts
+  scripts/ui-v2-group3-details.test.ts
   scripts/vault-balance.test.ts
   scripts/vault-draft.test.ts
   scripts/vault-name-required.test.ts

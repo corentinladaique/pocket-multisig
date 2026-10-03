@@ -22,10 +22,12 @@ import {
   type LearningProfile,
 } from '../onboarding/profile';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { DevnetPill, InfoText } from '../ui/v2/primitives';
 
 /**
- * Onboarding pédagogique : AUCUN wallet, aucune signature, aucune transaction,
- * aucun appel RPC. Le profil reste sur l'appareil.
+ * Onboarding pédagogique (UI V2 sombre) : AUCUN wallet, aucune signature, aucune
+ * transaction, aucun appel RPC. Le profil reste sur l'appareil.
  *
  * Étape unique de profil (3 questions) puis les leçons du niveau choisi ; le
  * compteur « Step X of Y » utilise le parcours réellement sélectionné.
@@ -57,6 +59,8 @@ export function OnboardingScreen({
           signingMeans: [...initialProfile.signingMeans],
         },
   );
+  // Concepts techniques : repliés par défaut (aucun PDA/blockhash au 1er niveau).
+  const [conceptsOpen, setConceptsOpen] = useState(false);
 
   // Le niveau n'est JAMAIS pré-rempli : il ne sert au parcours (nombre d'étapes
   // et contenu) qu'après un choix explicite.
@@ -80,9 +84,24 @@ export function OnboardingScreen({
   return (
     <View style={[styles.screen, SAFE_TOP_PADDING]}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={styles.badge}>DEVNET · LEARNING</Text>
+        <View style={styles.headerRow}>
+          {step > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+              onPress={onBack}
+              style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+            >
+              <Text style={styles.backGlyph}>‹</Text>
+            </Pressable>
+          ) : (
+            <View style={styles.backSpacer} />
+          )}
+          <DevnetPill />
+        </View>
+
         <Text style={styles.title}>
-          {step === 0 ? 'Quick questions' : (lesson?.title ?? 'Learn about multisig')}
+          {step === 0 ? 'Learn about multisig' : (lesson?.title ?? 'Learn about multisig')}
         </Text>
         <Text style={styles.progress}>
           Step {step + 1} of {lastStep + 1}
@@ -102,10 +121,8 @@ export function OnboardingScreen({
                   onPress={() => setAnswers((previous) => selectLevel(previous, option))}
                   style={[styles.option, selected && styles.optionSelected]}
                 >
-                  <View style={styles.optionRow}>
-                    <Text style={styles.optionText}>{option.label}</Text>
-                    {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
-                  </View>
+                  <Text style={styles.optionText}>{option.label}</Text>
+                  {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
                 </Pressable>
               );
             })}
@@ -122,10 +139,8 @@ export function OnboardingScreen({
                   onPress={() => setAnswers((previous) => selectGoal(previous, option))}
                   style={[styles.option, selected && styles.optionSelected]}
                 >
-                  <View style={styles.optionRow}>
-                    <Text style={styles.optionText}>{option.label}</Text>
-                    {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
-                  </View>
+                  <Text style={styles.optionText}>{option.label}</Text>
+                  {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
                 </Pressable>
               );
             })}
@@ -157,6 +172,30 @@ export function OnboardingScreen({
             })}
 
             {!complete ? <Text style={styles.warning}>Choose an option to continue.</Text> : null}
+
+            {/* Concepts techniques : repliés par défaut, jamais au premier niveau. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: conceptsOpen }}
+              accessibilityLabel="Toggle technical concepts"
+              onPress={() => setConceptsOpen((previous) => !previous)}
+              style={styles.conceptsToggle}
+            >
+              <Text style={styles.conceptsToggleText}>
+                {conceptsOpen ? '▾ Technical concepts' : '▸ Technical concepts'}
+              </Text>
+            </Pressable>
+            {conceptsOpen ? (
+              <View style={styles.conceptsBody}>
+                <Text style={styles.conceptsHeading}>What is a multisig?</Text>
+                <Text style={styles.paragraph}>A shared vault controlled by several wallets.</Text>
+                <Text style={styles.paragraph}>Propose. Approve. Execute.</Text>
+                <InfoText>
+                  Example: two approvals can protect the treasury while one unavailable member
+                  does not block the team. This is an example, not a universal rule.
+                </InfoText>
+              </View>
+            ) : null}
           </View>
         ) : null}
 
@@ -212,9 +251,9 @@ export function OnboardingScreen({
               accessibilityRole="button"
               accessibilityLabel="Finish onboarding"
               onPress={() => onFinish(publishProfile())}
-              style={styles.button}
+              style={[styles.button, styles.primary]}
             >
-              <Text style={styles.buttonText}>Finish</Text>
+              <Text style={styles.primaryText}>Finish</Text>
             </Pressable>
           ) : (
             <Pressable
@@ -223,9 +262,9 @@ export function OnboardingScreen({
               accessibilityState={{ disabled: !canAdvance }}
               disabled={!canAdvance}
               onPress={onNext}
-              style={[styles.button, !canAdvance && styles.buttonDisabled]}
+              style={[styles.button, canAdvance ? styles.primary : styles.buttonDisabled]}
             >
-              <Text style={!canAdvance ? styles.buttonTextDisabled : styles.buttonText}>Next</Text>
+              <Text style={canAdvance ? styles.primaryText : styles.buttonTextDisabled}>Next</Text>
             </Pressable>
           )}
         </View>
@@ -240,56 +279,111 @@ export function OnboardingScreen({
 }
 
 const styles = StyleSheet.create({
-  actions: { flexDirection: 'row', gap: 8, marginTop: 16, width: '100%' },
-  badge: { color: '#1a56db', fontSize: 12, fontWeight: '800', letterSpacing: 1 },
-  block: { marginTop: 12, width: '100%' },
-  bullet: { color: '#374151', fontSize: 14, marginTop: 6 },
+  actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg, width: '100%' },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backButtonPressed: { backgroundColor: colors.surface },
+  backGlyph: { color: colors.text, fontSize: 24, lineHeight: 26 },
+  backSpacer: { height: 40, width: 40 },
+  block: { marginTop: spacing.md, width: '100%' },
+  bullet: { color: colors.textSecondary, fontSize: typography.bodySmall, marginTop: spacing.sm },
   button: {
     alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
+    borderRadius: radii.button,
     flexGrow: 1,
     justifyContent: 'center',
     minHeight: 48,
-    paddingHorizontal: 16,
+    paddingHorizontal: spacing.lg,
   },
-  // Contraste verifie : texte sombre sur fond desactive clair.
-  buttonDisabled: { backgroundColor: '#e5e7eb' },
-  buttonText: { color: '#ffffff', fontSize: 15, fontWeight: '700' },
-  buttonTextDisabled: { color: '#6b7280', fontSize: 15, fontWeight: '700' },
-  container: { alignItems: 'center', padding: 24, paddingBottom: 96 },
-  emphasis: {
-    backgroundColor: '#eef2ff',
+  buttonDisabled: { backgroundColor: colors.disabled },
+  buttonTextDisabled: { color: colors.disabledText, fontSize: typography.body, fontWeight: '700' },
+  conceptsBody: {
+    borderColor: colors.divider,
     borderRadius: 8,
-    color: '#3730a3',
-    fontSize: 16,
+    borderWidth: 1,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+  },
+  conceptsHeading: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
     fontWeight: '800',
-    marginBottom: 10,
-    padding: 10,
+    marginBottom: spacing.xs,
+  },
+  conceptsToggle: {
+    alignItems: 'center',
+    borderColor: colors.divider,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+    minHeight: 48,
+    paddingHorizontal: spacing.lg - 2,
+    paddingVertical: spacing.md,
+  },
+  conceptsToggleText: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  container: {
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
+    flexGrow: 1,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
+  },
+  emphasis: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: 8,
+    color: colors.mint,
+    fontSize: typography.body,
+    fontWeight: '800',
+    marginBottom: spacing.sm,
+    padding: spacing.md,
     textAlign: 'center',
   },
-  fieldLabel: { color: '#4b5563', fontSize: 13, fontWeight: '700', marginTop: 16 },
-  footNote: { color: '#6b7280', fontSize: 12, marginTop: 16, textAlign: 'center' },
+  fieldLabel: { color: colors.textMuted, fontSize: typography.secondary, fontWeight: '700', marginTop: spacing.lg },
+  footNote: { color: colors.textMuted, fontSize: typography.caption, marginTop: spacing.lg, textAlign: 'center' },
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
   option: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    marginTop: 8,
-    padding: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+    minHeight: 52,
+    padding: spacing.md,
     width: '100%',
   },
   // Coche en plus du style : l'etat selectionne ne depend pas de la couleur seule.
-  optionCheck: { color: '#1a56db', fontSize: 16, fontWeight: '800', marginLeft: 8 },
-  optionNote: { color: '#6b7280', fontSize: 12, marginTop: 4 },
+  optionCheck: { color: colors.mint, fontSize: 16, fontWeight: '800', marginLeft: spacing.sm },
+  optionNote: { color: colors.textSecondary, fontSize: typography.secondary, marginTop: spacing.xs },
   optionRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  optionSelected: { backgroundColor: '#e8f0fe', borderColor: '#1a56db', borderWidth: 2 },
-  optionText: { color: '#101317', flexShrink: 1, fontSize: 15 },
-  paragraph: { color: '#101317', fontSize: 15, marginTop: 8 },
-  progress: { color: '#4b5563', fontSize: 13, marginTop: 6 },
-  screen: { backgroundColor: '#ffffff', flex: 1, width: '100%' },
-  secondary: { backgroundColor: '#f3f4f6', borderColor: '#d1d5db', borderWidth: 1 },
-  secondaryText: { color: '#101317', fontSize: 15, fontWeight: '700' },
-  title: { color: '#101317', fontSize: 22, fontWeight: '800', marginTop: 10, textAlign: 'center' },
-  warning: { color: '#7c2d12', fontSize: 13, fontWeight: '700', marginTop: 12 },
+  optionSelected: { backgroundColor: colors.surfaceElevated, borderColor: colors.mint },
+  optionText: { color: colors.text, flexShrink: 1, fontSize: typography.body },
+  paragraph: { color: colors.text, fontSize: typography.body, marginTop: spacing.sm },
+  primary: { backgroundColor: colors.text },
+  primaryText: { color: colors.onLight, fontSize: typography.body, fontWeight: '700' },
+  progress: { color: colors.textMuted, fontSize: typography.caption, marginTop: spacing.xs },
+  screen: { backgroundColor: colors.background, flex: 1, width: '100%' },
+  secondary: { backgroundColor: colors.surface, borderColor: colors.divider, borderWidth: 1 },
+  secondaryText: { color: colors.text, fontSize: typography.body, fontWeight: '700' },
+  title: { color: colors.text, fontSize: typography.screenTitle - 10, fontWeight: '800', marginTop: spacing.sm },
+  warning: { color: colors.warning, fontSize: typography.secondary, fontWeight: '700', marginTop: spacing.md },
 });
