@@ -121,8 +121,12 @@ export function OnboardingScreen({
                   onPress={() => setAnswers((previous) => selectLevel(previous, option))}
                   style={[styles.option, selected && styles.optionSelected]}
                 >
-                  <Text style={styles.optionText}>{option.label}</Text>
-                  {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                  <View style={styles.optionHeaderRow}>
+                    <Text style={styles.optionText}>{option.label}</Text>
+                    <View style={styles.optionCheckSlot}>
+                      {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                    </View>
+                  </View>
                 </Pressable>
               );
             })}
@@ -139,8 +143,12 @@ export function OnboardingScreen({
                   onPress={() => setAnswers((previous) => selectGoal(previous, option))}
                   style={[styles.option, selected && styles.optionSelected]}
                 >
-                  <Text style={styles.optionText}>{option.label}</Text>
-                  {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                  <View style={styles.optionHeaderRow}>
+                    <Text style={styles.optionText}>{option.label}</Text>
+                    <View style={styles.optionCheckSlot}>
+                      {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                    </View>
+                  </View>
                 </Pressable>
               );
             })}
@@ -157,9 +165,11 @@ export function OnboardingScreen({
                   onPress={() => setAnswers((previous) => toggleSigningMean(previous, option))}
                   style={[styles.option, selected && styles.optionSelected]}
                 >
-                  <View style={styles.optionRow}>
+                  <View style={styles.optionHeaderRow}>
                     <Text style={styles.optionText}>{option.label}</Text>
-                    {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                    <View style={styles.optionCheckSlot}>
+                      {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                    </View>
                   </View>
                   <Text style={styles.optionNote}>{SIGNING_MEAN_DESCRIPTIONS[option.value]}</Text>
                   {option.value === 'hardware-wallet' || option.value === 'seed-vault' ? (
@@ -359,24 +369,45 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   option: {
-    alignItems: 'center',
+    alignItems: 'stretch',
     backgroundColor: colors.surface,
     borderColor: colors.divider,
     borderRadius: radii.field,
     borderWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     marginTop: spacing.sm,
     minHeight: 52,
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
     width: '100%',
   },
+  // Ligne titre + coche : le bloc texte prend tout l'espace restant (flex: 1,
+  // flexShrink) ; la coche garde une largeur FIXE et ne recouvre jamais le texte.
+  optionHeaderRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  optionCheckSlot: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    width: 24,
+  },
   // Coche en plus du style : l'etat selectionne ne depend pas de la couleur seule.
-  optionCheck: { color: colors.mint, fontSize: 16, fontWeight: '800', marginLeft: spacing.sm },
-  optionNote: { color: colors.textSecondary, fontSize: typography.secondary, marginTop: spacing.xs },
-  optionRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  optionCheck: { color: colors.mint, fontSize: 16, fontWeight: '800' },
+  // Description SOUS le titre (hauteur automatique, retour a la ligne).
+  optionNote: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    lineHeight: 19,
+    marginTop: spacing.xs,
+  },
   optionSelected: { backgroundColor: colors.surfaceElevated, borderColor: colors.mint },
-  optionText: { color: colors.text, flexShrink: 1, fontSize: typography.body },
+  optionText: {
+    color: colors.text,
+    flex: 1,
+    flexShrink: 1,
+    fontSize: typography.body,
+    paddingRight: spacing.sm,
+  },
   paragraph: { color: colors.text, fontSize: typography.body, marginTop: spacing.sm },
   primary: { backgroundColor: colors.text },
   primaryText: { color: colors.onLight, fontSize: typography.body, fontWeight: '700' },

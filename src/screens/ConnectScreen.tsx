@@ -29,6 +29,7 @@ import type { MultisigRegistryEntry } from '../vault/multisigRegistry';
 import { computeProposalDecision, summarizeOperation, loadProposalReview,
   useProposals,
   type ProposalReviewResult, } from '../squads/proposals';
+import { filterProposals } from '../squads/proposalFilters';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { CreateVaultScreen } from './CreateVaultScreen';
 import { MultisigDetailsScreen } from './MultisigDetailsScreen';
@@ -57,6 +58,12 @@ import {
 // multisig) et le haut de la zone visible : uniquement une valeur de confort,
 // aucune dimension d'ecran codee en dur.
 const MULTISIG_KEYBOARD_MARGIN = 24;
+
+// Largeur MINIMALE du composant pour disposer [champ + Paste] et [Load] cote a
+// cote. En dessous, on bascule sur la version compacte sur deux lignes. Le
+// constat vient de la largeur REELLE du composant (onLayout) : jamais d'une
+// detection de modele d'appareil ni d'une dimension d'ecran codee en dur.
+const MULTISIG_LOADER_ROW_MIN_WIDTH = 320;
 
 // Jeux de preview construits localement par le décodeur pur (aucun RPC,
 // aucune signature). Voir src/solana/decodeTransactionMessage.ts.
@@ -160,6 +167,15 @@ export function ConnectScreen() {
     multisigBlockYRef.current = event.nativeEvent.layout.y;
   }, []);
 
+  // Largeur REELLE du bloc « Add existing multisig », mesuree par onLayout : elle
+  // decide de la disposition (cote a cote ou compacte) sans jamais detecter le
+  // modele d'appareil. Valeur purement locale a la session de rendu.
+  const [loaderWidth, setLoaderWidth] = useState(0);
+  const onLoaderLayout = useCallback((event: LayoutChangeEvent) => {
+    setLoaderWidth(event.nativeEvent.layout.width);
+  }, []);
+  const loaderWide = loaderWidth >= MULTISIG_LOADER_ROW_MIN_WIDTH;
+
   const onMultisigInputFocus = useCallback(() => {
     multisigFocusedRef.current = true;
   }, []);
@@ -202,21 +218,6 @@ export function ConnectScreen() {
     msig.view.members.some(
       (member) => member.address === walletAddress && member.roles.includes('Vote'),
     );
-  const decisions =
-    proposals.list === null
-      ? []
-      : proposals.list.proposals.map((proposal) =>
-          computeProposalDecision({
-            index: proposal.index,
-            status: proposal.status,
-            approvedAddresses: proposal.approvedAddresses,
-            threshold: msig.view?.threshold ?? 0,
-            walletAddress,
-            walletCanApprove,
-          }),
-        );
-  const inboxDecisions = decisions.filter((entry) => entry.kind !== 'none');
-  const priorityIndex = inboxDecisions[0]?.index ?? null;
 
   // Modele deja en memoire pour un index donne : seule la proposition
   // prioritaires prechargee fournit un modele. Aucun appel reseau ici.
@@ -378,6 +379,10 @@ export function ConnectScreen() {
     status: BalanceStatus;
   } | null>(null);
   const [homeBalanceError, setHomeBalanceError] = useState(false);
+  // Confidentialite du solde : etat LOCAL de session uniquement (jamais
+  // persiste). Masquer n'affecte QUE l'affichage : la valeur reelle reste
+  // intacte, aucune incidence sur Max, les propositions ou les calculs.
+  const [balanceHidden, setBalanceHidden] = useState(false);
   // Registre LOCAL : sert uniquement à afficher le nom donné au vault par
   // l'utilisateur. Rien n'en est jamais transmis ni synchronisé.
   const registry = useMultisigRegistry();
@@ -439,6 +444,46 @@ export function ConnectScreen() {
       : (view.members.find((member) => member.address === walletAddress)?.roles ?? []);
   const homeIsMember = homeWalletRoles.length > 0;
   const homeVaultName = registry.entries.find((entry) => entry.address === viewAddress)?.vaultName ?? null;
+
+  // Droit d'exécution RÉELLEMENT lu on-chain pour le wallet connecté.
+  const homeWalletCanExecute =
+    view !== null &&
+    walletAddress !== null &&
+    view.members.some(
+      (member) => member.address === walletAddress && member.roles.includes('Execute'),
+    );
+
+  // TO DO — uniquement les actions RÉELLEMENT disponibles pour ce wallet,
+  // classées par les fonctions PURES de `proposalFilters` (aucune seconde
+  // logique maison) :
+  //   Active + wallet peut voter + pas déjà approuvée → « Needs your approval » ;
+  //   Approved + wallet peut exécuter                 → « Ready to execute ».
+  // Ordre d'affichage : « Ready to execute » d'abord, puis « Needs your approval ».
+  const proposalFilterInputs = (proposals.list?.proposals ?? []).map((proposal) => ({
+    index: proposal.index,
+    status: proposal.status,
+    approvals: proposal.approvals,
+    threshold: msig.view?.threshold ?? 0,
+    approvedAddresses: proposal.approvedAddresses,
+    walletAddress,
+    walletCanApprove,
+    walletCanExecute: homeWalletCanExecute,
+  }));
+  const todoInputs = filterProposals(proposalFilterInputs, 'todo');
+  const inboxDecisions = [
+    ...todoInputs.filter((input) => input.status === 'Approved'),
+    ...todoInputs.filter((input) => input.status === 'Active'),
+  ].map((input) =>
+    computeProposalDecision({
+      index: input.index,
+      status: input.status,
+      approvedAddresses: input.approvedAddresses,
+      threshold: input.threshold,
+      walletAddress,
+      walletCanApprove: input.walletCanApprove,
+    }),
+  );
+  const priorityIndex = inboxDecisions[0]?.index ?? null;
 
   // Compteurs : ce qui attend une action du wallet (vote) et ce qui est prêt à
   // être exécuté par lui. Aucune lecture supplémentaire : propositions déjà lues.
@@ -769,9 +814,29 @@ export function ConnectScreen() {
                   </Text>
                 </View>
               </View>
-              <Text selectable style={styles.balanceValue}>
-                {homeBalanceView.sol !== null ? `${homeBalanceView.sol} SOL` : '0 SOL'}
-              </Text>
+              <View style={styles.balanceRow}>
+                <Text selectable style={styles.balanceValue}>
+                  {balanceHidden
+                    ? '•••••• SOL'
+                    : homeBalanceView.sol !== null
+                      ? `${homeBalanceView.sol} SOL`
+                      : '0 SOL'}
+                </Text>
+                {/* Confidentialite du solde : etat LOCAL de session, aucune
+                    persistance, aucune modification de la valeur reelle ni des
+                    calculs (Max / propositions). */}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={balanceHidden ? 'Show balance' : 'Hide balance'}
+                  accessibilityState={{ selected: balanceHidden }}
+                  onPress={() => setBalanceHidden((previous) => !previous)}
+                  style={({ pressed }) => [styles.inlineAction, pressed && styles.inlineActionPressed]}
+                >
+                  <Text style={styles.inlineActionText}>
+                    {balanceHidden ? 'Show balance' : 'Hide balance'}
+                  </Text>
+                </Pressable>
+              </View>
               {homeBalanceView.title === 'Main vault not funded' ? (
                 <Text style={styles.balanceNote}>Main vault not funded</Text>
               ) : null}
@@ -910,6 +975,23 @@ export function ConnectScreen() {
                   </Pressable>
                 );
               })}
+              {/* Plus de 3 actions : lien vers la liste complete des propositions,
+                  via le handler de navigation EXISTANT (Vault Details → Proposals).
+                  Aucune nouvelle route n'est creee. */}
+              {inboxDecisions.length > 3 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="View all proposals"
+                  onPress={() => setManualDetailsOpen(true)}
+                  style={({ pressed }) => [
+                    styles.inlineAction,
+                    styles.viewAllAction,
+                    pressed && styles.inlineActionPressed,
+                  ]}
+                >
+                  <Text style={styles.inlineActionText}>View all proposals</Text>
+                </Pressable>
+              ) : null}
               {proposals.status === 'error' && proposals.error ? (
                 <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
                   <InfoText tone="error">{proposals.error}</InfoText>
@@ -962,27 +1044,45 @@ export function ConnectScreen() {
                 variant="secondary"
               />
               {addMultisigOpen ? (
-                <View style={styles.loaderBlock}>
-                  <AddressInput
-                    disabled={msig.status === 'loading'}
-                    inputRef={multisigInputRef}
-                    label="Multisig address"
-                    onBlur={onMultisigInputBlur}
-                    onChangeText={setMultisigInput}
-                    onFocus={onMultisigInputFocus}
-                    onSubmitEditing={onLoadMultisig}
-                    placeholder="Multisig address"
-                    returnKeyType="go"
-                    value={multisigInput}
-                  />
-                  <PillButton
-                    accessibilityLabel="Load multisig"
-                    busy={msig.status === 'loading'}
-                    disabled={msig.status === 'loading'}
-                    label="Load multisig"
-                    onPress={onLoadMultisig}
-                    variant="primary"
-                  />
+                <View onLayout={onLoaderLayout} style={styles.loaderBlock}>
+                  <View style={loaderWide ? styles.loaderRow : styles.loaderColumn}>
+                    <View style={styles.loaderField}>
+                      <AddressInput
+                        disabled={msig.status === 'loading'}
+                        inputRef={multisigInputRef}
+                        label="Multisig address"
+                        onBlur={onMultisigInputBlur}
+                        onChangeText={setMultisigInput}
+                        onFocus={onMultisigInputFocus}
+                        onSubmitEditing={onLoadMultisig}
+                        placeholder="Multisig address"
+                        returnKeyType="go"
+                        value={multisigInput}
+                      />
+                    </View>
+                    {loaderWide ? (
+                      <View style={styles.loaderButtonSlot}>
+                        <PillButton
+                          accessibilityLabel="Load multisig"
+                          busy={msig.status === 'loading'}
+                          disabled={msig.status === 'loading'}
+                          label="Load"
+                          onPress={onLoadMultisig}
+                          variant="primary"
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                  {loaderWide ? null : (
+                    <PillButton
+                      accessibilityLabel="Load multisig"
+                      busy={msig.status === 'loading'}
+                      disabled={msig.status === 'loading'}
+                      label="Load multisig"
+                      onPress={onLoadMultisig}
+                      variant="primary"
+                    />
+                  )}
                   {msig.status === 'loading' ? (
                     <Text style={styles.vaultCopySmall}>Lecture…</Text>
                   ) : null}
@@ -1423,8 +1523,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 8,
   },
+  balanceRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
   balanceValue: {
     color: colors.text,
+    flex: 1,
     fontSize: 40,
     fontWeight: '800',
     marginTop: 4,
@@ -1636,6 +1742,26 @@ const styles = StyleSheet.create({
   loaderBlock: {
     marginTop: spacing.md,
   },
+  // Disposition cote a cote [champ + Paste] [Load] (largeur suffisante).
+  loaderRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  // Disposition compacte sur deux lignes (largeur etroite) : le champ prend
+  // toute la largeur, Load multisig passe dessous en pleine largeur.
+  loaderColumn: {
+    width: '100%',
+  },
+  // Bloc texte du champ : occupe l'espace restant, ne deborde jamais (flexShrink).
+  loaderField: {
+    flex: 1,
+    flexShrink: 1,
+  },
+  // Aligne le bouton Load sur la zone de saisie (sous le label du champ).
+  loaderButtonSlot: {
+    marginTop: spacing.xxl,
+  },
   manageBody: {
     gap: spacing.sm,
     marginTop: spacing.md,
@@ -1656,6 +1782,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
+  },
+  // Lien « View all proposals » : simple action inline alignee a gauche.
+  viewAllAction: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.sm,
   },
   inlineActionPressed: {
     backgroundColor: colors.surface,

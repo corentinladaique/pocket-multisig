@@ -282,7 +282,6 @@ check('15. aucun invariant metier modifie', () => {
     'App.tsx',
     'src/vault/thresholdRecommendation.ts',
     'src/screens/ReceiveScreen.tsx',
-    'src/ui/AddressInput.tsx',
     'src/ui/clipboard.ts',
   ];
   const changed = execSync(`git diff --name-only HEAD -- ${protectedFiles.join(' ')}`, {

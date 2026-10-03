@@ -14,16 +14,22 @@ import {
   pasteErrorMessage,
 } from './addressPaste';
 import { readClipboardText } from './clipboard';
+import { colors, radii, spacing, typography } from './theme';
 
 /**
- * Champ d'adresse Solana partage, avec bouton « Paste » EXPLICITE.
+ * Champ d'adresse Solana partage (UI V2 sombre), avec « Paste » INTEGRE dans la
+ * partie droite du champ.
  *
- * Regles de confidentialite :
+ * Regles de confidentialite (inchangees) :
  * - le presse-papiers n'est lu qu'apres un tap sur « Paste » (jamais au montage,
  *   jamais au focus, aucune surveillance) ;
  * - le contenu n'est jamais journalise, jamais transmis, jamais conserve
  *   ailleurs que dans le champ demande ;
  * - une valeur invalide est refusee sans correction ni troncature.
+ *
+ * Presentation : le champ occupe tout l'espace restant (flex: 1) et « Paste »
+ * garde une largeur/taille tactile fixes a droite : il ne recouvre jamais
+ * l'adresse, et le texte peut passer a la ligne sans debordement.
  *
  * API presse-papiers : centralisee dans `./clipboard` (module Clipboard du coeur
  * de React Native). Aucune dependance ajoutee, aucun rebuild natif necessaire.
@@ -80,7 +86,13 @@ export function AddressInput({
   return (
     <View style={styles.wrapper}>
       <Text style={styles.label}>{label}</Text>
-      <View style={styles.row}>
+      <View
+        style={[
+          styles.field,
+          error !== null && styles.fieldError,
+          disabled && styles.fieldDisabled,
+        ]}
+      >
         <TextInput
           autoCapitalize="none"
           autoCorrect={false}
@@ -93,9 +105,10 @@ export function AddressInput({
           onFocus={onFocus}
           onSubmitEditing={onSubmitEditing}
           placeholder={placeholder}
+          placeholderTextColor={colors.textMuted}
           ref={inputRef}
           returnKeyType={returnKeyType}
-          style={[styles.input, styles.rowInput, error !== null && styles.inputError]}
+          style={styles.input}
           testID={testID}
           value={value}
         />
@@ -118,37 +131,44 @@ export function AddressInput({
 }
 
 const styles = StyleSheet.create({
-  error: { color: '#7c2d12', fontSize: 13, fontWeight: '700', marginTop: 6 },
-  hint: { color: '#6b7280', fontSize: 11, marginTop: 4 },
-  input: {
-    backgroundColor: '#ffffff',
-    borderColor: '#d1d5db',
-    borderRadius: 10,
+  error: { color: colors.warning, fontSize: typography.secondary, fontWeight: '700', marginTop: spacing.xs },
+  // Conteneur du champ : le texte prend l'espace restant, Paste reste a droite.
+  field: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    color: '#101317',
-    fontSize: 14,
-    marginTop: 6,
-    padding: 10,
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+    minHeight: 52,
+    paddingLeft: spacing.md,
+    // Padding droit suffisant : l'adresse n'est jamais recouverte par Paste.
+    paddingRight: spacing.xs,
     width: '100%',
   },
-  inputError: { borderColor: '#b91c1c', borderWidth: 2 },
-  label: { color: '#4b5563', fontSize: 13, fontWeight: '700' },
+  fieldDisabled: { opacity: 0.6 },
+  fieldError: { borderColor: colors.error, borderWidth: 2 },
+  hint: { color: colors.textMuted, fontSize: typography.micro, marginTop: spacing.xs },
+  input: {
+    color: colors.text,
+    flex: 1,
+    fontSize: typography.bodySmall,
+    minHeight: 48,
+    paddingVertical: spacing.sm,
+  },
+  label: { color: colors.textMuted, fontSize: typography.secondary, fontWeight: '700' },
+  // Taille tactile confortable, largeur stable, jamais de recouvrement du texte.
   paste: {
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    borderWidth: 1,
-    marginTop: 8,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 64,
+    paddingHorizontal: spacing.md,
   },
   pasteDisabled: { opacity: 0.5 },
-  pasteText: { color: '#1a56db', fontSize: 14, fontWeight: '700' },
-  // Paste est dans la MEME rangee que le champ et reste visible clavier ouvert.
-  row: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 6, width: '100%' },
-  rowInput: { flex: 1, marginTop: 0 },
-  wrapper: { marginTop: 12, width: '100%' },
+  pasteText: { color: colors.mint, fontSize: typography.bodySmall, fontWeight: '700' },
+  wrapper: { marginTop: spacing.md, width: '100%' },
 });

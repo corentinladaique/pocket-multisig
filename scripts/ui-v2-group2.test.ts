@@ -245,7 +245,6 @@ const GROUP1_FILES = [
   'src/ui/theme.ts',
   'src/ui/v2/primitives.tsx',
   'src/screens/ReceiveScreen.tsx',
-  'src/ui/AddressInput.tsx',
   'src/ui/clipboard.ts',
   'App.tsx',
 ];

@@ -14,7 +14,6 @@ import {
 import { PublicKey } from '@solana/web3.js';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
-import { modelFromInstructions } from '../solana/decodeTransactionMessage';
 import { connection } from '../solana/connection';
 import {
   buildProposalCreation,
@@ -32,14 +31,13 @@ import {
   simulateProposalCreation,
   type ProposalCreationSimulationResult,
 } from '../squads/simulateProposalCreation';
-import { TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
 import { signingStateTitle } from '../wallet/signingWindow';
 import { AddressInput } from '../ui/AddressInput';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import { colors, radii, spacing, typography } from '../ui/theme';
-import { DevnetPill, InfoBox, InfoText } from '../ui/v2/primitives';
+import { Card, DevnetPill, InfoBox, InfoText, PillButton } from '../ui/v2/primitives';
 import {
   computeMaxTransfer,
   isMaxSnapshotCurrent,
@@ -75,6 +73,38 @@ const LAMPORTS_PER_SOL = 1_000_000_000;
 
 function formatSol(lamports: number): string {
   return `${(lamports / LAMPORTS_PER_SOL).toFixed(9)} SOL`;
+}
+
+/**
+ * Erreur de préflight « solde du vault insuffisant » : DÉTECTION seule du message
+ * BRUT produit par le module de préflight (jamais modifié). Les valeurs sont
+ * converties à l'affichage avec `formatSolAmount` (fonction existante) ; le nom
+ * technique et les lamports bruts restent confinés à « Troubleshooting details ».
+ */
+const INSUFFICIENT_VAULT_BALANCE_PATTERN =
+  /InsufficientVaultBalance:\s*(\d+)\s*lamports requested,\s*vault holds\s*(\d+)\./;
+
+type InsufficientVaultBalanceDetails = {
+  requestedLamports: number;
+  availableLamports: number;
+  missingLamports: number;
+};
+
+function parseInsufficientVaultBalance(
+  message: string,
+): InsufficientVaultBalanceDetails | null {
+  const match = INSUFFICIENT_VAULT_BALANCE_PATTERN.exec(message);
+  if (match === null) return null;
+  const requestedLamports = Number(match[1]);
+  const availableLamports = Number(match[2]);
+  if (!Number.isSafeInteger(requestedLamports) || !Number.isSafeInteger(availableLamports)) {
+    return null;
+  }
+  return {
+    requestedLamports,
+    availableLamports,
+    missingLamports: Math.max(0, requestedLamports - availableLamports),
+  };
 }
 
 type PipelineState =
@@ -136,7 +166,6 @@ export function NewProposalScreen({
   const [pipeline, setPipeline] = useState<PipelineState>({ status: 'idle' });
   const [preflight, setPreflight] = useState<ProposalCreationPreflightResult | null>(null);
   const [simulation, setSimulation] = useState<ProposalCreationSimulationResult | null>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createResult, setCreateResult] = useState<ProposalCreationSignSendResult | null>(null);
@@ -145,6 +174,10 @@ export function NewProposalScreen({
   const [postCreate, setPostCreate] = useState<'idle' | 'refreshing' | 'done' | 'failed'>('idle');
   /** Section technique repliable, FERMÉE par défaut. */
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  /** Sous-repli « Simulation logs », FERMÉ par défaut (second niveau). */
+  const [simulationLogsOpen, setSimulationLogsOpen] = useState(false);
+  /** Diagnostic brut d'une erreur de préflight, FERMÉ par défaut. */
+  const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
   /** Section explicative repliable, FERMÉE par défaut. */
   const [howItWorksOpen, setHowItWorksOpen] = useState(false);
   /** Section « More options » repliable, FERMÉE par défaut (buffer + Max). */
@@ -319,19 +352,6 @@ export function NewProposalScreen({
     }
   };
 
-  const reviewModel = useMemo(() => {
-    if (!reviewOpen || build.messageInstructions.length === 0) return null;
-    return modelFromInstructions(build.messageInstructions, {
-      isPreview: true,
-      multisigAddress: address,
-      network: 'devnet',
-      proposalIndex: build.transactionIndexNext ?? 0,
-      proposalStatus: 'Not created yet',
-      signerWallet: creator,
-      vaultAddress,
-    });
-  }, [address, build.messageInstructions, build.transactionIndexNext, creator, reviewOpen, vaultAddress]);
-
   const runCreate = async (freshSimulation?: ProposalCreationSimulationResult | null) => {
     const effectiveSimulation = freshSimulation ?? simulation;
     if (sendAttemptedRef.current || effectiveSimulation === null || preflight === null) return;
@@ -460,22 +480,26 @@ export function NewProposalScreen({
     );
   };
 
-  // Revue locale : l'opération du message (transfert SOL), pas la transaction
-  // de création. Aucun contexte de guard réel : la proposition n'existe pas.
-  // Le CTA « Create proposal » reste branché sur le MÊME handler explicite
-  // (onCreate : double confirmation puis wallet), la simulation a réellement
-  // réussi avant d'atteindre cet écran.
-  if (reviewOpen && reviewModel !== null) {
-    return (
-      <TransactionReviewScreen
-        guardContext={null}
-        model={reviewModel}
-        onBack={() => setReviewOpen(false)}
-        onCreate={onCreate}
-        simulationPassed={pipeline.status === 'ready'}
-      />
-    );
-  }
+  // Erreur de préflight « solde insuffisant » : détection purement UI (aucune
+  // décision métier) afin de ne jamais exposer de lamports au premier niveau.
+  const insufficientVaultBalance =
+    pipeline.status === 'error' ? parseInsufficientVaultBalance(pipeline.message) : null;
+
+  /** CTA secondaire « Edit details » : revient à la saisie, sans rien signer. */
+  const onEditDetails = () => {
+    setPipeline({ status: 'idle' });
+    setPreflight(null);
+    setSimulation(null);
+    setAdvancedOpen(false);
+    setSimulationLogsOpen(false);
+    setTroubleshootingOpen(false);
+  };
+
+  // CTA de création UNIQUE : visible tant que la création n'est pas vérifiée
+  // (ou qu'une reprise sans signature reste possible).
+  const createCtaVisible =
+    pipeline.status === 'ready' &&
+    (createResult === null || (attemptOutcome?.allowNewAttempt ?? false));
 
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
@@ -695,19 +719,74 @@ export function NewProposalScreen({
         </Text>
 
         {pipeline.status === 'error' ? (
-          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
-            <InfoText tone="error">Pipeline stopped before any signature</InfoText>
-            <InfoText tone="error">{pipeline.message}</InfoText>
-          </InfoBox>
+          insufficientVaultBalance !== null ? (
+            <>
+              {/* Message utilisateur en SOL — jamais « lamports » au premier niveau. */}
+              <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+                <InfoText tone="error">Insufficient vault balance</InfoText>
+                <InfoText tone="error">
+                  Requested: {formatSolAmount(insufficientVaultBalance.requestedLamports)}
+                </InfoText>
+                <InfoText tone="error">
+                  Available: {formatSolAmount(insufficientVaultBalance.availableLamports)}
+                </InfoText>
+                <InfoText tone="error">
+                  Missing: {formatSolAmount(insufficientVaultBalance.missingLamports)}
+                </InfoText>
+                <InfoText tone="error">Nothing was signed or sent.</InfoText>
+              </InfoBox>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Toggle troubleshooting details"
+                accessibilityState={{ expanded: troubleshootingOpen }}
+                onPress={() => setTroubleshootingOpen((previous) => !previous)}
+                style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
+              >
+                <Text style={styles.toggleText}>
+                  {troubleshootingOpen
+                    ? 'Hide troubleshooting details'
+                    : 'Troubleshooting details'}
+                </Text>
+              </Pressable>
+              {troubleshootingOpen ? (
+                <Card style={styles.block}>
+                  <Text style={styles.fieldNote}>Error name: InsufficientVaultBalance</Text>
+                  <Text selectable style={styles.monoValue}>
+                    Requested lamports: {insufficientVaultBalance.requestedLamports}
+                  </Text>
+                  <Text selectable style={styles.monoValue}>
+                    Available lamports: {insufficientVaultBalance.availableLamports}
+                  </Text>
+                  <Text selectable style={styles.monoValue}>
+                    Missing lamports: {insufficientVaultBalance.missingLamports}
+                  </Text>
+                  <Text selectable style={styles.fieldNote}>{pipeline.message}</Text>
+                </Card>
+              ) : null}
+            </>
+          ) : (
+            <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+              <InfoText tone="error">Pipeline stopped before any signature</InfoText>
+              <InfoText tone="error">{pipeline.message}</InfoText>
+            </InfoBox>
+          )
         ) : null}
 
         {simulation !== null && preflight !== null ? (
-          <View style={pipeline.status === 'ready' ? styles.successBox : styles.noticeBox}>
+          <View
+            accessibilityLabel={
+              pipeline.status === 'ready' ? 'Simulation succeeded' : 'Simulation did not pass'
+            }
+            style={pipeline.status === 'ready' ? styles.successBox : styles.noticeBox}
+          >
             <Text style={pipeline.status === 'ready' ? styles.successTitle : styles.noticeTitle}>
-              {pipeline.status === 'ready' ? 'Simulation succeeded' : 'Simulation did not pass'}
+              {pipeline.status === 'ready' ? 'Simulation passed' : 'Simulation did not pass'}
             </Text>
             <Text style={styles.fieldValue}>
               Proposal amount: {formatSolAmount(build.request?.lamports ?? 0)}
+            </Text>
+            <Text style={styles.fieldValue}>
+              Destination: {build.request?.destination ?? destination}
             </Text>
             <Text style={styles.fieldValue}>
               Estimated creation cost:{' '}
@@ -756,14 +835,30 @@ export function NewProposalScreen({
                   transaction.
                 </Text>
 
+                {/* SECOND niveau : les logs complets ne s'affichent qu'après un
+                    second tap. Aucun log n'est supprimé. */}
                 {simulation.logs.length > 0 ? (
                   <>
-                    <Text style={styles.fieldNote}>Simulation logs ({simulation.logs.length})</Text>
-                    {simulation.logs.slice(0, 12).map((log) => (
-                      <Text key={log} style={styles.monoValue}>
-                        {log}
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Toggle simulation logs"
+                      accessibilityState={{ expanded: simulationLogsOpen }}
+                      onPress={() => setSimulationLogsOpen((previous) => !previous)}
+                      style={({ pressed }) => [styles.toggle, pressed && styles.togglePressed]}
+                    >
+                      <Text style={styles.toggleText}>
+                        {simulationLogsOpen
+                          ? `Hide simulation logs (${simulation.logs.length})`
+                          : `Simulation logs (${simulation.logs.length})`}
                       </Text>
-                    ))}
+                    </Pressable>
+                    {simulationLogsOpen
+                      ? simulation.logs.map((log, position) => (
+                          <Text key={`simulation-log-${position}`} style={styles.monoValue}>
+                            {log}
+                          </Text>
+                        ))
+                      : null}
                   </>
                 ) : null}
               </View>
@@ -808,47 +903,26 @@ export function NewProposalScreen({
           </>
         ) : null}
 
-        {pipeline.status === 'ready' ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Review the transfer to be created"
-            onPress={() => setReviewOpen(true)}
-            style={({ pressed }) => [
-              styles.secondaryButton,
-              pressed && styles.secondaryPressed,
-            ]}
-          >
-            <Text style={styles.secondaryText}>Review the transfer</Text>
-          </Pressable>
-        ) : null}
-
-        {pipeline.status === 'ready' || createResult !== null ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{
-              busy: creating,
-              disabled: creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false)),
-            }}
-            disabled={creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false))}
-            onPress={onCreate}
-            style={({ pressed }) => [
-              styles.secondaryButton,
-              styles.createButton,
-              pressed && styles.secondaryPressed,
-              (creating || (createResult !== null && !(attemptOutcome?.allowNewAttempt ?? false))) &&
-                styles.disabled,
-            ]}
-          >
-            {creating ? (
-              <ActivityIndicator color={colors.text} />
-            ) : (
-              <Text style={styles.secondaryText}>
-                {createResult !== null && (attemptOutcome?.allowNewAttempt ?? false)
-                  ? 'Prepare again'
-                  : 'Create on Devnet'}
-              </Text>
-            )}
-          </Pressable>
+        {/* CTA PRINCIPAL unique « Create proposal » (handler réel existant) +
+            CTA secondaire « Edit details ». Aucune action redondante. */}
+        {createCtaVisible ? (
+          <>
+            <PillButton
+              accessibilityLabel="Create proposal"
+              busy={creating}
+              disabled={creating}
+              label="Create proposal"
+              onPress={onCreate}
+            />
+            {createResult === null ? (
+              <PillButton
+                accessibilityLabel="Edit details"
+                label="Edit details"
+                onPress={onEditDetails}
+                variant="secondary"
+              />
+            ) : null}
+          </>
         ) : null}
 
         {creating ? (

@@ -105,6 +105,18 @@ const STEP_COUNT = 5;
 // Marge de confort au-dessus du clavier (aucune dimension d'ecran codee).
 const FIELD_KEYBOARD_MARGIN = 24;
 
+/**
+ * Signature ABREGEE pour l'affichage courant. La signature COMPLÈTE n'est
+ * visible que dans le « Technical receipt » replié. Pure présentation.
+ */
+function shortenSignature(signature: string | null | undefined): string {
+  if (signature === null || signature === undefined || signature.length === 0) {
+    return 'unavailable';
+  }
+  if (signature.length <= 18) return signature;
+  return `${signature.slice(0, 8)}…${signature.slice(-8)}`;
+}
+
 type MeasurableInput = TextInput & {
   measureInWindow?: (
     callback: (x: number, y: number, width: number, height: number) => void,
@@ -148,6 +160,9 @@ export function CreateVaultScreen({
   // Section repliable des diagnostics sur Step 5 : ouverte uniquement par un
   // tap explicite, jamais une etape obligatoire du parcours.
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
+  // Reçu technique du succes : REPLIÉ par defaut. La signature COMPLÈTE n'apparait
+  // qu'ici, sur demande explicite ; l'ecran n'affiche qu'une version abregee.
+  const [receiptOpen, setReceiptOpen] = useState(false);
 
   // --- Creation reelle (devnet) : etat du flux d'envoi. Aucune execution
   // automatique : tout part d'un tap, puis d'une confirmation explicite.
@@ -267,10 +282,14 @@ export function CreateVaultScreen({
   for (const message of createResult?.validationErrors ?? []) technicalErrors.push(message);
   if (checkError !== null && !technicalErrors.includes(checkError)) technicalErrors.push(checkError);
   const hasDiagnostics =
-    technicalErrors.length > 0 ||
-    mwaReport !== null ||
-    signingStateLabel !== null ||
-    checkEvidence !== null;
+    // Apres une creation VERIFIEE, il n'y a aucun probleme : la section repliable
+    // reste absente (et « Signing state: Confirmed on-chain » n'est jamais affiche
+    // en plus de « Verified on-chain »).
+    !createdAndVerified &&
+    (technicalErrors.length > 0 ||
+      mwaReport !== null ||
+      signingStateLabel !== null ||
+      checkEvidence !== null);
 
   // --- Affichage du cout : TOUJOURS en SOL (jamais de lamports a l'ecran). ---
   const costTotalSol = creationCost === null ? null : lamportsToSolDisplay(creationCost.totalLamports);
@@ -321,6 +340,21 @@ export function CreateVaultScreen({
 
   // Recommandation affichee (2 of 2 / 2 of 3), ou null.
   const thresholdRecommendation = recommendationFor(members.length);
+
+  // Presets VISIBLES du wizard : le preset « 2 of 2 » n'est plus propose comme
+  // point d'entree. Custom couvre TOUJOURS 2-of-2, 1-of-2 et toutes les
+  // configurations deja valides (aucune capacite Squads retiree) ; « 2 of 2 »
+  // n'est jamais presente comme recommande ni avec une coche verte.
+  const visiblePresets = SETUP_PRESETS.filter((preset) => preset.type !== 'twoOfTwo');
+  // Surcouche d'AFFICHAGE uniquement (aucun module metier modifie).
+  const presetDetailOverride: Record<string, string> = {
+    recommended: '3 signers, 2 approvals needed. One unavailable signer does not block the vault.',
+  };
+
+  // Configuration EXACTEMENT 2-of-2 : risque de disponibilite affiche des que la
+  // configuration est atteinte (des l'etape Threshold), jamais comme recommande.
+  const isTwoOfTwo = members.length === 2 && threshold === 2;
+  const twoOfTwoAvailabilityRisk = isTwoOfTwo;
 
   // Valeurs attendues on-chain, préparées AVANT signature : utilisées à
   // l'identique par le read-back initial ET par « Check transaction again ».
@@ -1036,7 +1070,7 @@ export function CreateVaultScreen({
         {step === 1 ? (
           <View style={styles.block}>
             <Text style={styles.blockTitle}>Choose your setup</Text>
-            {SETUP_PRESETS.map((preset) => (
+            {visiblePresets.map((preset) => (
               <Pressable
                 accessibilityRole="button"
                 accessibilityState={{ selected: setupType === preset.type }}
@@ -1052,7 +1086,9 @@ export function CreateVaultScreen({
                   <Text style={styles.optionTitle}>{preset.title}</Text>
                   {setupType === preset.type ? <Text style={styles.optionCheck}>✓</Text> : null}
                 </View>
-                <Text style={styles.optionDetail}>{preset.detail}</Text>
+                <Text style={styles.optionDetail}>
+                  {presetDetailOverride[preset.type] ?? preset.detail}
+                </Text>
               </Pressable>
             ))}
 
@@ -1103,33 +1139,48 @@ export function CreateVaultScreen({
               </Text>
             )}
 
-            {/* Adresse du membre en cours d'ajout : le collage remplit le champ
-                UNIQUEMENT. Aucun membre ajoute, aucun role selectionne. */}
-            <AddressInput
-              inputRef={registerField('pendingAddress')}
-              label="Public address"
-              onBlur={onFieldBlur}
-              onChangeText={setPendingAddress}
-              onFocus={onFieldFocus('pendingAddress')}
-              placeholder="Solana public address"
-              testID="member-pending-address"
-              value={pendingAddress}
-            />
+            {/* Formulaire d'ajout d'un signer : chaque champ dans SON PROPRE
+                conteneur, ordre vertical STRICT (adresse -> label -> bouton).
+                Aucune position absolue, hauteur automatique, CTA sous les champs,
+                atteignable au scroll (voir styles.fieldBlock). */}
 
-            <Text style={styles.fieldLabel}>Label</Text>
-            <TextInput
-              autoCapitalize="words"
-              onChangeText={setPendingLabel}
-              onBlur={onFieldBlur}
-              onFocus={onFieldFocus('pendingLabel')}
-              placeholder="Ledger at home"
-              placeholderTextColor={colors.textMuted}
-              ref={registerField('pendingLabel')}
-              style={styles.input}
-              value={pendingLabel}
-            />
+            {/* 1) Signer address — champ partage avec « Paste » integre. Le collage
+                remplit le champ UNIQUEMENT. Aucun membre ajoute, aucun role. */}
+            <View style={styles.fieldBlock}>
+              <AddressInput
+                inputRef={registerField('pendingAddress')}
+                label="Public address"
+                onBlur={onFieldBlur}
+                onChangeText={setPendingAddress}
+                onFocus={onFieldFocus('pendingAddress')}
+                placeholder="Solana public address"
+                testID="member-pending-address"
+                value={pendingAddress}
+              />
+            </View>
 
-            <PillButton label="Add signer" onPress={addPendingMember} variant="secondary" />
+            {/* 2) Signer label — conteneur separe, label separe du champ. */}
+            <View style={styles.fieldBlock}>
+              <Text style={styles.fieldLabel}>Signer label</Text>
+              <TextInput
+                autoCapitalize="words"
+                onChangeText={setPendingLabel}
+                onBlur={onFieldBlur}
+                onFocus={onFieldFocus('pendingLabel')}
+                placeholder="Ledger at home"
+                placeholderTextColor={colors.textMuted}
+                ref={registerField('pendingLabel')}
+                style={styles.input}
+                value={pendingLabel}
+              />
+            </View>
+
+            {/* 3) roles/permissions : absents du formulaire d'ajout aujourd'hui. */}
+
+            {/* 4) « Add signer » SOUS les champs, dans son propre conteneur. */}
+            <View style={styles.fieldBlock}>
+              <PillButton label="Add signer" onPress={addPendingMember} variant="secondary" />
+            </View>
 
             {pendingError !== null ? (
               <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
@@ -1247,7 +1298,9 @@ export function CreateVaultScreen({
             <Text style={styles.fieldValue}>
               {threshold} of {members.length} approvals required.
             </Text>
-            {thresholdRecommendation !== null ? (
+            {/* « 2 of 2 » n'est JAMAIS presente comme recommande : la
+                recommandation d'affichage n'est rendue que pour 2 of 3 (3 membres). */}
+            {thresholdRecommendation !== null && members.length !== 2 ? (
               <InfoBox glyph="★" style={styles.infoBox} tone="success">
                 <InfoText tone="success">{thresholdRecommendation.label}</InfoText>
                 <InfoText>{thresholdRecommendation.detail}</InfoText>
@@ -1261,6 +1314,19 @@ export function CreateVaultScreen({
                   {'To continue with this setting, confirm explicitly: "'}
                   {LOW_SECURITY_THRESHOLD_CONFIRM}
                   {'".'}
+                </InfoText>
+              </InfoBox>
+            ) : null}
+            {/* EXACTEMENT 2-of-2 : alerte de disponibilite affichee IMMEDIATEMENT
+                (des l'etape Threshold), sans bloquer ni ecraser le choix. */}
+            {twoOfTwoAvailabilityRisk ? (
+              <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+                <InfoText tone="warning">Availability risk</InfoText>
+                <InfoText tone="warning">
+                  If either signer loses access, the vault may become permanently unusable.
+                </InfoText>
+                <InfoText tone="warning">
+                  Use this setup only if both signers have reliable recovery plans.
                 </InfoText>
               </InfoBox>
             ) : null}
@@ -1336,6 +1402,19 @@ export function CreateVaultScreen({
                 {threshold} of {members.length}
               </Text>
 
+              {/* Version COMPACTE de l'alerte 2-of-2 conservee sur la Review finale. */}
+              {twoOfTwoAvailabilityRisk ? (
+                <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+                  <InfoText tone="warning">Availability risk</InfoText>
+                  <InfoText tone="warning">
+                    If either signer loses access, the vault may become permanently unusable.
+                  </InfoText>
+                  <InfoText tone="warning">
+                    Use this setup only if both signers have reliable recovery plans.
+                  </InfoText>
+                </InfoBox>
+              ) : null}
+
               <Text style={styles.fieldLabel}>Planned permissions</Text>
               <Text style={styles.fieldValue}>
                 Permissions will be configured during creation.
@@ -1407,26 +1486,24 @@ export function CreateVaultScreen({
 
               {/* ETAT 1 — avant tentative : verdict de preparation
                   (createReadiness) + recapitulatif deja affiche ci-dessus.
+                  Quand tout est pret, le statut est une PETITE ligne/badge (jamais
+                  un gros bloc adjacent au bouton). Sinon, un bandeau d'action.
                   Masque pendant la creation (ETAT 2) et apres succes. */}
               {vaultVisibleState !== 'awaiting-wallet' ? (
-                <InfoBox
-                  glyph={canCreate ? '✓' : '⚠'}
-                  style={styles.noticeBox}
-                  tone={canCreate ? 'success' : 'warning'}
-                >
-                  <InfoText tone={canCreate ? 'success' : 'warning'}>
-                    {createReadiness.userMessage}
-                  </InfoText>
-                  {!canCreate ? (
+                canCreate ? (
+                  <View style={styles.readyBadge}>
+                    <Text style={styles.readyBadgeText}>
+                      ✓ {createReadiness.userMessage}
+                    </Text>
+                  </View>
+                ) : (
+                  <InfoBox glyph="⚠" style={styles.noticeBox} tone="warning">
+                    <InfoText tone="warning">{createReadiness.userMessage}</InfoText>
                     <InfoText tone="warning">{createReadiness.recommendedAction}</InfoText>
-                  ) : null}
-                  {!canCreate ? (
                     <InfoText tone="warning">{createBlockedReason.message}</InfoText>
-                  ) : null}
-                  {!canCreate ? (
                     <InfoText tone="warning">{createBlockedReason.action}</InfoText>
-                  ) : null}
-                </InfoBox>
+                  </InfoBox>
+                )
               ) : null}
 
               {/* ETAT 2 — creation en cours : progression uniquement. */}
@@ -1452,6 +1529,9 @@ export function CreateVaultScreen({
                     variant="primary"
                   />
 
+                  <Text style={styles.hint}>
+                    Your wallet will ask you to sign on Devnet.
+                  </Text>
                   <Text style={styles.hint}>
                     Nothing is sent on-chain before the final confirmation.
                   </Text>
@@ -1558,42 +1638,85 @@ export function CreateVaultScreen({
               </>
             ) : null}
 
-            {/* ETAT D — succes : creation confirmee ET multisig relu/verifie. */}
+            {/* ETAT D — succes : creation confirmee ET multisig relu/verifie.
+                Le libelle d'accessibilite porte la formulation historique
+                « Vault created and verified. » ; a l'ecran, le succes est
+                decompose en « ✓ Vault created » puis « Verified on-chain ». */}
             {createdAndVerified ? (
-              <InfoBox glyph="✓" style={styles.successBox} tone="success">
-                <InfoText tone="success">Vault created and verified.</InfoText>
-                <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-                <Text selectable style={styles.fieldValue}>
-                  {createResult?.readBack?.address}
-                </Text>
-                <Text style={styles.fieldLabel}>Main vault address</Text>
-                <Text selectable style={styles.fieldValue}>
-                  {mainVaultAddress ?? 'unavailable'}
-                </Text>
-                <Text style={styles.fieldLabel}>Signature</Text>
-                <Text selectable style={styles.fieldValue}>{createResult?.signature}</Text>
-                <Text style={styles.fieldLabel}>Threshold</Text>
-                <Text style={styles.fieldValue}>
-                  {createResult?.readBack?.threshold} of {createResult?.readBack?.memberCount}
-                </Text>
-                <Text style={styles.fieldLabel}>Members</Text>
-                <Text style={styles.fieldValue}>{createResult?.readBack?.memberCount}</Text>
-                <PillButton
-                  accessibilityLabel="Open the created vault"
-                  label="Open vault"
-                  onPress={() => {
-                    const address = createResult?.readBack?.address ?? null;
-                    if (address !== null) onOpenVault({ address, vaultName });
-                  }}
-                  variant="secondary"
-                />
-                <PillButton
-                  accessibilityLabel="Go to inbox"
-                  label="Go to Inbox"
-                  onPress={onGoToInbox}
-                  variant="secondary"
-                />
-              </InfoBox>
+              <View accessibilityLabel="Vault created and verified." accessibilityRole="text">
+                <Card style={styles.successBox}>
+                  <Text style={styles.successHeading}>✓ Vault created</Text>
+                  <View style={styles.verifiedBadge}>
+                    <Text style={styles.verifiedBadgeText}>Verified on-chain</Text>
+                  </View>
+
+                  <Text style={styles.fieldLabel}>Main vault address</Text>
+                  <Text selectable style={styles.fieldValue}>
+                    {mainVaultAddress ?? 'unavailable'}
+                  </Text>
+                  <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+                  <Text selectable style={styles.fieldValue}>
+                    {createResult?.readBack?.address}
+                  </Text>
+                  <Text style={styles.fieldLabel}>Threshold</Text>
+                  <Text style={styles.fieldValue}>
+                    {createResult?.readBack?.threshold} of {createResult?.readBack?.memberCount}
+                  </Text>
+                  <Text style={styles.fieldLabel}>Members</Text>
+                  <Text style={styles.fieldValue}>{createResult?.readBack?.memberCount}</Text>
+                  <Text style={styles.fieldLabel}>Signature</Text>
+                  <Text style={styles.fieldValue}>
+                    {shortenSignature(createResult?.signature)}
+                  </Text>
+
+                  {/* CTA principal unique : « Open vault ». « Go to Inbox » est un
+                      lien secondaire (jamais trois gros boutons concurrents). */}
+                  <View style={styles.successActions}>
+                    <PillButton
+                      accessibilityLabel="Open the created vault"
+                      label="Open vault"
+                      onPress={() => {
+                        const address = createResult?.readBack?.address ?? null;
+                        if (address !== null) onOpenVault({ address, vaultName });
+                      }}
+                      variant="primary"
+                    />
+                    <Pressable
+                      accessibilityRole="button"
+                      onPress={onGoToInbox}
+                      style={({ pressed }) => [styles.successLink, pressed && styles.pressed]}
+                    >
+                      <Text style={styles.successLinkText}>Go to Inbox</Text>
+                    </Pressable>
+                  </View>
+
+                  {/* Reçu technique REPLIÉ par defaut : la signature COMPLÈTE n'est
+                      visible qu'ici, jamais en clair dans le parcours. */}
+                  <Pressable
+                    accessibilityLabel="Technical receipt"
+                    accessibilityRole="button"
+                    onPress={() => setReceiptOpen((open) => !open)}
+                    style={({ pressed }) => [styles.receiptToggle, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.receiptToggleText}>
+                      {receiptOpen ? 'Hide technical receipt' : 'Technical receipt'}
+                    </Text>
+                  </Pressable>
+                  {receiptOpen ? (
+                    <View style={styles.detailBox}>
+                      <Text selectable style={styles.detailText}>
+                        Signature: {createResult?.signature}
+                      </Text>
+                      <Text selectable style={styles.detailText}>
+                        Main vault: {mainVaultAddress ?? 'unavailable'}
+                      </Text>
+                      <Text selectable style={styles.detailText}>
+                        Multisig configuration: {createResult?.readBack?.address ?? 'unavailable'}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Card>
+              </View>
             ) : null}
 
             {/* ETAT E — transaction CONFIRMEE mais configuration NON conforme
@@ -1895,6 +2018,75 @@ const styles = StyleSheet.create({
   },
   successBox: {
     marginTop: spacing.lg,
+  },
+  // Fond de champ : chaque champ du formulaire signer dans SON PROPRE conteneur.
+  // Aucune position absolue, hauteur automatique, espacement vertical coherent.
+  fieldBlock: {
+    alignSelf: 'stretch',
+    marginTop: spacing.md,
+  },
+  // Statut « Ready » compact (petite ligne/badge, jamais un gros bloc).
+  readyBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+  },
+  readyBadgeText: {
+    color: colors.success,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  successHeading: {
+    color: colors.success,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+  },
+  verifiedBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+  },
+  verifiedBadgeText: {
+    color: colors.success,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  successActions: {
+    alignSelf: 'stretch',
+    marginTop: spacing.lg,
+  },
+  // Lien secondaire « Go to Inbox » : jamais un troisieme gros bouton.
+  successLink: {
+    alignSelf: 'center',
+    borderRadius: radii.pill,
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  successLinkText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  receiptToggle: {
+    alignSelf: 'flex-start',
+    borderRadius: radii.pill,
+    marginTop: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  receiptToggleText: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    fontWeight: '700',
   },
   summaryBox: {
     marginTop: spacing.md,

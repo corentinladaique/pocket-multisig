@@ -601,3 +601,7 @@ existants (`msig.load`, `setVaultCreationOpen`, `setInboxOpen`, `onboarding.open
 `onDisconnect`, `onResetWalletSession`). Le déplacement doit se limiter à la
 présentation ; aucun handler, aucun RPC, aucune navigation fonctionnelle ne
 doit être modifié par cette répartition.
+
+### Future
+
+- Future setting: persist Hide balances and add optional shake-to-hide if a supported sensor API is already available.

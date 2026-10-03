@@ -27,7 +27,12 @@ import { confirmSignature } from '../solana/confirmSignature';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import { colors, radii, spacing, typography } from '../ui/theme';
 import { Card, DevnetPill, InfoBox, InfoText, PillButton } from '../ui/v2/primitives';
-import { estimateRemainingBalance, formatSol, describeTransferSource } from '../wallet/vaultBalance';
+import {
+  estimateRemainingBalance,
+  formatSol,
+  describeTransferSource,
+  lamportsToSolDisplay,
+} from '../wallet/vaultBalance';
 
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
 import {
@@ -766,6 +771,9 @@ export function ProposalDetailsScreen({
   // « Confirmed on-chain » : uniquement sur une preuve réelle.
   const confirmedOnchain =
     executionResult?.verified === true || effectiveProposalStatus === 'Executed';
+  // Statut wallet « déjà approuvé » : information, jamais un bouton, et jamais
+  // affiché dans l'état terminal exécuté.
+  const showApprovedStatus = actionState !== 'executed' && walletAlreadyApproved;
 
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
@@ -795,7 +803,7 @@ export function ProposalDetailsScreen({
             {summary === null ? 'Transaction' : summary.action}
           </Text>
           <Text style={styles.heroAmount}>
-            {amountLamports === null ? 'Amount unavailable' : `${formatSol(amountLamports)} SOL`}
+            {amountLamports === null ? 'Amount unavailable' : lamportsToSolDisplay(amountLamports)}
           </Text>
           <Text style={styles.heroCaption}>To</Text>
           <Text selectable style={styles.monoValue}>
@@ -824,24 +832,36 @@ export function ProposalDetailsScreen({
           ))}
         </View>
 
-        {/* --- Statut utilisateur réel + progression on-chain. --- */}
-        <Card style={styles.statusCard}>
-          <Text style={styles.statusTitle}>{userStatusTitle}</Text>
-          <Text style={styles.statusDetail}>{progress.collectedLabel}</Text>
-          <Text style={styles.fieldNote}>{decision.stateLabel}</Text>
-        </Card>
-
-        {/* --- Statut du wallet : INFORMATION, jamais un bouton. --- */}
-        {actionState !== 'executed' && walletAlreadyApproved ? (
-          <View
-            accessibilityLabel="Approved by you"
-            accessibilityRole="text"
-            accessible
-            style={styles.successBox}
-          >
-            <Text style={styles.successText}>{PROPOSAL_ACTION_LABELS.approvedByYou}</Text>
-            <Text style={styles.fieldNote}>{PROPOSAL_ACTION_LABELS.approvedByYouDetail}</Text>
-          </View>
+        {/* --- Carte principale UNIQUE : statut utilisateur, progression on-chain
+            et statut du wallet fusionnés (aucune répétition). Masquée dans
+            l'état terminal où la carte « Executed » fait seule foi. --- */}
+        {actionState !== 'executed' ? (
+          <Card style={styles.statusCard}>
+            <Text style={styles.statusTitle}>{userStatusTitle}</Text>
+            <Text style={styles.statusDetail}>{progress.collectedLabel}</Text>
+            {/* Statut du wallet : INFORMATION, jamais un bouton. */}
+            {showApprovedStatus ? (
+              <View
+                accessibilityLabel="Approved by you"
+                accessibilityRole="text"
+                accessible
+                style={styles.successBox}
+              >
+                <Text style={styles.fieldNote}>{PROPOSAL_ACTION_LABELS.approvedByYouDetail}</Text>
+              </View>
+            ) : null}
+            {progress.waitingLabel !== null ? (
+              <Text style={styles.fieldNote}>{progress.waitingLabel}</Text>
+            ) : null}
+            {!progress.reached ? (
+              <Text style={styles.fieldNote}>
+                {progress.remaining === 1
+                  ? 'Execution becomes available after one more approval.'
+                  : executionNotAvailableDetail(progress.remaining)}
+              </Text>
+            ) : null}
+            <Text style={styles.fieldNote}>{decision.stateLabel}</Text>
+          </Card>
         ) : null}
 
         {/* --- CTA Approve : uniquement si les guards l'autorisent. --- */}
@@ -946,15 +966,7 @@ export function ProposalDetailsScreen({
           </View>
         ) : null}
 
-        {/* --- Progression des approbations : source on-chain uniquement. --- */}
-        {actionState !== 'executed' ? (
-          <Card style={styles.progressCard}>
-            <Text style={styles.progressLabel}>{progress.collectedLabel}</Text>
-            <Text style={styles.fieldNote}>
-              {progress.waitingLabel ?? PROPOSAL_ACTION_LABELS.thresholdReached}
-            </Text>
-          </Card>
-        ) : null}
+        {/* --- Progression : fusionnée dans la carte principale (aucun doublon). --- */}
 
         {/* --- Execute : uniquement quand les guards l'autorisent. --- */}
         {executeState === 'available' ? (
@@ -982,10 +994,9 @@ export function ProposalDetailsScreen({
             </>
           )
         ) : executeState === 'unavailable-threshold' ? (
-          <InfoBox glyph="•" style={styles.infoBox}>
-            <InfoText>{PROPOSAL_ACTION_LABELS.executeUnavailableTitle}</InfoText>
-            <InfoText>{executionNotAvailableDetail(progress.remaining)}</InfoText>
-          </InfoBox>
+          // Raison déjà portée par la carte principale (« Waiting for N more
+          // approval(s). » + « Execution becomes available… ») : aucun bloc séparé.
+          null
         ) : executeState === 'no-permission' ? (
           <InfoBox glyph="•" style={styles.infoBox}>
             <InfoText>{PROPOSAL_ACTION_LABELS.executeNoPermissionTitle}</InfoText>
@@ -999,7 +1010,7 @@ export function ProposalDetailsScreen({
             <Text style={styles.executedMeta}>{PROPOSAL_ACTION_LABELS.executed}</Text>
             <Text style={styles.fieldNote}>Proposal #{index}</Text>
             <Text style={styles.executedAmount}>
-              {amountLamports === null ? 'Amount unavailable' : `${formatSol(amountLamports)} SOL`}
+              {amountLamports === null ? 'Amount unavailable' : lamportsToSolDisplay(amountLamports)}
             </Text>
             <Text style={styles.fieldNote}>Destination</Text>
             <Text selectable style={styles.monoValue}>
@@ -1119,13 +1130,12 @@ export function ProposalDetailsScreen({
             void runDecode();
           }}
           style={({ pressed }) => [
-            styles.button,
-            styles.secondary,
+            styles.inlineAction,
             pressed && styles.secondaryPressed,
             decoding && styles.disabled,
           ]}
         >
-          <Text style={styles.secondaryText}>
+          <Text style={styles.inlineActionText}>
             {decoding ? 'Refreshing…' : 'Refresh proposal'}
           </Text>
         </Pressable>
@@ -1156,6 +1166,12 @@ export function ProposalDetailsScreen({
                 <Text style={styles.fieldLabel}>Action</Text>
                 <Text style={styles.fieldValue}>{summary.action}</Text>
                 <Text selectable style={styles.monoValue}>Amount: {summary.amount}</Text>
+                {/* Valeur technique exacte (9 décimales, non arrondie) : le montant
+                    compact reste la seule information de premier niveau. */}
+                <Text selectable style={styles.monoValue}>
+                  Exact amount:{' '}
+                  {amountLamports === null ? 'unavailable' : `${formatSol(amountLamports)} SOL`}
+                </Text>
                 <Text style={styles.fieldLabel}>Destination</Text>
                 <Text selectable style={styles.monoValue}>
                   {fullDestination ?? summary.destination}
@@ -1246,7 +1262,7 @@ export function ProposalDetailsScreen({
           accessibilityLabel="Back to proposals"
           label="Back to proposals"
           onPress={onBack}
-          variant="secondary"
+          variant={executed ? 'primary' : 'secondary'}
         />
       </ScrollView>
     </KeyboardAvoidingView>
