@@ -921,7 +921,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     flexGrow: 1,
     padding: 24,
-    paddingBottom: 96,
+    // Assez d'espace sous le contenu pour que MEMO et « Review proposal »
+    // restent atteignables par scroll quand le clavier est ouvert.
+    paddingBottom: 160,
   },
   badge: {
     backgroundColor: '#eef2ff',

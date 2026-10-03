@@ -61,6 +61,9 @@ export function MultisigDetailsScreen({
   const [openProposal, setOpenProposal] = useState<ProposalView | null>(null);
   // Creation d'une nouvelle proposition (transfert SOL simple).
   const [newProposalOpen, setNewProposalOpen] = useState(false);
+  // Détails purement techniques (config authority, rent collector, program) :
+  // repliés par défaut, jamais supprimés.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const { account } = useMobileWallet();
   const walletAddress = account === undefined ? null : account.address.toString();
 
@@ -376,28 +379,49 @@ export function MultisigDetailsScreen({
               </View>
             ))}
 
-            <Text style={styles.fieldLabel}>Config authority</Text>
-            <Text selectable style={styles.fieldValue}>{view.configAuthority}</Text>
-            <Text style={styles.fieldNote}>
-              {view.configAuthority === FROZEN_AUTHORITY
-                ? 'Frozen: only the members can change the configuration, through a proposal.'
-                : 'Controlled multisig: this key can change members and threshold directly.'}
-            </Text>
+            {/* Détails purement techniques : repliés par défaut pour garder le
+                premier niveau lisible (nom, solde, threshold, membres, actions).
+                Replier n'est pas supprimer : tout reste consultable et les
+                adresses restent sélectionnables/copiables. */}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: advancedOpen }}
+              accessibilityLabel="Toggle advanced details"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              onPress={() => setAdvancedOpen((previous) => !previous)}
+              style={styles.detailsToggle}
+            >
+              <Text style={styles.detailsToggleText}>
+                {advancedOpen ? '▾ Advanced details' : '▸ Advanced details'}
+              </Text>
+            </Pressable>
 
-            <Text style={styles.fieldLabel}>Rent collector</Text>
-            <Text selectable style={styles.fieldValue}>
-              {view.rentCollector ?? 'none'}
-            </Text>
-            <Text style={styles.fieldNote}>
-              {view.rentCollector === null
-                ? 'Rent reclamation is turned off.'
-                : 'Rent of closed transactions is reclaimed by this address.'}
-            </Text>
+            {advancedOpen ? (
+              <View style={styles.detailsBody}>
+                <Text style={styles.fieldLabel}>Config authority</Text>
+                <Text selectable style={styles.fieldValue}>{view.configAuthority}</Text>
+                <Text style={styles.fieldNote}>
+                  {view.configAuthority === FROZEN_AUTHORITY
+                    ? 'Frozen: only the members can change the configuration, through a proposal.'
+                    : 'Controlled multisig: this key can change members and threshold directly.'}
+                </Text>
 
-            <Text style={styles.fieldLabel}>Program</Text>
-            <Text selectable style={styles.fieldValue}>
-              {multisig.PROGRAM_ID.toString()}
-            </Text>
+                <Text style={styles.fieldLabel}>Rent collector</Text>
+                <Text selectable style={styles.fieldValue}>
+                  {view.rentCollector ?? 'none'}
+                </Text>
+                <Text style={styles.fieldNote}>
+                  {view.rentCollector === null
+                    ? 'Rent reclamation is turned off.'
+                    : 'Rent of closed transactions is reclaimed by this address.'}
+                </Text>
+
+                <Text style={styles.fieldLabel}>Program</Text>
+                <Text selectable style={styles.fieldValue}>
+                  {multisig.PROGRAM_ID.toString()}
+                </Text>
+              </View>
+            ) : null}
 
             <Pressable
               accessibilityRole="button"
@@ -423,7 +447,11 @@ export function MultisigDetailsScreen({
           accessibilityRole="button"
           accessibilityLabel="Back to inbox"
           onPress={onBack}
-          style={[styles.button, styles.secondary]}
+          style={({ pressed }) => [
+            styles.button,
+            styles.secondary,
+            pressed && styles.secondaryPressed,
+          ]}
         >
           <Text style={styles.secondaryText}>Back</Text>
         </Pressable>
@@ -574,4 +602,33 @@ const styles = StyleSheet.create({
       fontSize: 22,
       fontWeight: '700',
     },
-  });
+  // Section repliable « Advanced details » (fermée par défaut).
+  detailsToggle: {
+    alignItems: 'center',
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 24,
+    minHeight: 48,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  detailsToggleText: {
+    color: '#374151',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  detailsBody: {
+    borderColor: '#e5e7eb',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 8,
+    padding: 12,
+  },
+  // Etat appuye distinct de disabled pour les actions secondaires (Back).
+  secondaryPressed: {
+    backgroundColor: '#e5e7eb',
+  },
+});

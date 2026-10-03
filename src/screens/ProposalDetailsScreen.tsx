@@ -1170,7 +1170,12 @@ export function ProposalDetailsScreen({
             onPress={() => {
               void runDecode();
             }}
-            style={[styles.button, styles.secondary, decoding && styles.disabled]}
+            style={({ pressed }) => [
+              styles.button,
+              styles.secondary,
+              pressed && styles.secondaryPressed,
+              decoding && styles.disabled,
+            ]}
           >
             <Text style={styles.secondaryText}>
               {decoding ? 'Refreshing…' : 'Refresh proposal'}
@@ -1375,6 +1380,10 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderWidth: 1,
     marginTop: 24,
+  },
+  // Etat appuye distinct de disabled pour l'action secondaire Refresh.
+  secondaryPressed: {
+    backgroundColor: '#e5e7eb',
   },
   // Execute : action irreversible, visuellement distincte d'Approve.
   executeButton: {

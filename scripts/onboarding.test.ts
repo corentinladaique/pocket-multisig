@@ -48,16 +48,19 @@ const allText = ONBOARDING_SCREENS.flatMap((lesson) => [
 ]).join('\n');
 
 check('1. Learn visible sans wallet, avant Load multisig', () => {
-  assert.ok(HOME.includes('Learn about multisig'), 'bouton present');
-  assert.ok(HOME.includes('styles.helpBox'), 'zone Learn dediee');
-  const learn = HOME.indexOf('Learn about multisig');
+  assert.ok(HOME.includes('Learn how multisig works'), 'surface Learn presente');
+  assert.ok(HOME.includes('styles.learnSurface'), 'zone Learn dediee, une seule surface');
+  const learn = HOME.indexOf('Learn how multisig works');
   assert.ok(learn < HOME.indexOf('Load multisig'), 'Learn doit preceder Load multisig');
   assert.ok(learn > HOME.indexOf('Connect wallet'), 'zone visible au niveau du prompt Connect');
 });
 
 check('2. Learn reste disponible apres chargement (zone permanente)', () => {
-  assert.ok(HOME.split('Learn about multisig').length - 1 >= 1);
-  assert.ok(!/msig\.status === 'loaded'[\s\S]{0,200}Learn about multisig/.test(HOME.split('learnZone')[0] ?? '') === true);
+  assert.ok(HOME.split('Learn how multisig works').length - 1 >= 1);
+  assert.ok(
+    !/msig\.status === 'loaded'[\s\S]{0,200}Learn how multisig works/.test(HOME),
+    'Learn hors du bloc dashboard charge',
+  );
 });
 
 check('3/4. Next desactive sans reponse, multi-selection vide bloquee', () => {

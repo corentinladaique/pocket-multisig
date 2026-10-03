@@ -668,14 +668,18 @@ export function ConnectScreen() {
           <Text style={styles.walletLabel}>{walletIdentity?.label ?? 'Wallet without label'}</Text>
           <Text style={styles.address}>{shortenAddress(account.address.toString())}</Text>
           <Text style={styles.fullAddress}>{account.address.toString()}</Text>
-          <Text style={styles.hint}>
-            Icon supplied by the wallet: {walletIdentity !== null && walletIdentity.iconUri !== null ? 'yes' : 'no'} ·
-            label supplied: {walletIdentity !== null && walletIdentity.label !== null ? 'yes' : 'no'}
-          </Text>
-          {walletIdentity !== null && walletIdentity.iconUri !== null ? (
-            <Text selectable style={styles.diagnosticsText}>
-              Icon URI: {walletIdentity.iconUri}
-            </Text>
+          {__DEV__ ? (
+            <>
+              <Text style={styles.hint}>
+                Icon supplied by the wallet: {walletIdentity !== null && walletIdentity.iconUri !== null ? 'yes' : 'no'} ·
+                label supplied: {walletIdentity !== null && walletIdentity.label !== null ? 'yes' : 'no'}
+              </Text>
+              {walletIdentity !== null && walletIdentity.iconUri !== null ? (
+                <Text selectable style={styles.diagnosticsText}>
+                  Icon URI: {walletIdentity.iconUri}
+                </Text>
+              ) : null}
+            </>
           ) : null}
           <Pressable
             accessibilityRole="button"
@@ -724,48 +728,52 @@ export function ConnectScreen() {
       )}
 
       {/* Apprentissage : accessible IMMEDIATEMENT, sans wallet connecte, sans
-          multisig charge et sans reseau. Aucune donnee wallet n'est touchee. */}
-      <View style={styles.helpBox}>
-        <Text style={styles.fieldLabel}>Learn</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Learn about multisig"
-          onPress={onboarding.open}
-          style={[styles.button, styles.secondary]}
-        >
-          <Text style={styles.secondaryText}>Learn about multisig</Text>
-        </Pressable>
-        {/* Reset onboarding est retire de Home : il reviendra dans
-            Help & Security / Settings via le futur menu principal. */}
-      </View>
+          multisig charge et sans reseau. Aucune donnee wallet n'est touchee.
+          Une SEULE surface cliquable (plus de double contenant). */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Learn how multisig works"
+        onPress={onboarding.open}
+        style={({ pressed }) => [
+          styles.learnSurface,
+          pressed && styles.learnSurfacePressed,
+        ]}
+      >
+        <Text style={styles.learnSurfaceText}>Learn how multisig works</Text>
+      </Pressable>
 
       {phase === 'connecting' ? (
         <Text style={styles.hint}>Opening the wallet…</Text>
       ) : null}
 
-      <View style={styles.rpcBox}>
-        <Text style={styles.rpcLine}>Network: Devnet</Text>
-        <Text style={styles.rpcLine}>
-          RPC:{' '}
-          <Text
-            style={[
-              styles.rpcValue,
-              rpcStatus === 'online' && styles.rpcOnline,
-              rpcStatus === 'offline' && styles.rpcOffline,
-            ]}
-          >
-            {rpcStatus === 'checking' ? 'Checking…' : rpcStatus === 'online' ? 'Online' : 'Offline'}
+      {/* Diagnostics réseau : DEV uniquement. En release, l'état RPC reste
+          consultable dans la section « Details » repliable, pas au premier
+          niveau du Home. */}
+      {__DEV__ ? (
+        <View style={styles.rpcBox}>
+          <Text style={styles.rpcLine}>Network: Devnet</Text>
+          <Text style={styles.rpcLine}>
+            RPC:{' '}
+            <Text
+              style={[
+                styles.rpcValue,
+                rpcStatus === 'online' && styles.rpcOnline,
+                rpcStatus === 'offline' && styles.rpcOffline,
+              ]}
+            >
+              {rpcStatus === 'checking' ? 'Checking…' : rpcStatus === 'online' ? 'Online' : 'Offline'}
+            </Text>
           </Text>
-        </Text>
-        {rpcStatus === 'offline' ? (
-          <>
-            {rpcDetail ? <Text style={styles.rpcDetail}>{rpcDetail}</Text> : null}
-            <Pressable accessibilityRole="button" onPress={retryRpc} style={styles.retry}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
-          </>
-        ) : null}
-      </View>
+          {rpcStatus === 'offline' ? (
+            <>
+              {rpcDetail ? <Text style={styles.rpcDetail}>{rpcDetail}</Text> : null}
+              <Pressable accessibilityRole="button" onPress={retryRpc} style={styles.retry}>
+                <Text style={styles.retryText}>Retry</Text>
+              </Pressable>
+            </>
+          ) : null}
+        </View>
+      ) : null}
 
       {account ? (
         <View onLayout={onMultisigBlockLayout} style={styles.msigBlock}>
@@ -929,10 +937,11 @@ export function ConnectScreen() {
                 accessibilityLabel="Refresh proposals from the chain"
                 disabled={proposals.status === 'loading'}
                 onPress={proposals.retry}
-                style={[
+                style={({ pressed }) => [
                   styles.button,
                   styles.secondary,
                   styles.sideButton,
+                  pressed && styles.secondaryPressed,
                   proposals.status === 'loading' && styles.disabled,
                 ]}
               >
@@ -1081,7 +1090,12 @@ export function ConnectScreen() {
         accessibilityRole="button"
         accessibilityLabel="Open multisig inbox"
         onPress={() => setInboxOpen(true)}
-        style={[styles.button, styles.secondary, styles.sideButton]}
+        style={({ pressed }) => [
+          styles.button,
+          styles.secondary,
+          styles.sideButton,
+          pressed && styles.secondaryPressed,
+        ]}
       >
         <Text style={styles.secondaryText}>Inbox</Text>
       </Pressable>
@@ -1154,7 +1168,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ffffff',
     flexGrow: 1,
-    justifyContent: 'center',
+    // Contenu ancre en haut : pas de centrage artificiel d'un ecran long
+    // (le Home connecte est long et se remplissait par le haut de toute facon).
+    justifyContent: 'flex-start',
     padding: 24,
     // Assez d'espace sous le contenu pour que le bouton "Load multisig" et le
     // bouton "Clear" restent atteignables quand le clavier est ouvert.
@@ -1337,6 +1353,12 @@ const styles = StyleSheet.create({
   },
   secondary: {
     backgroundColor: '#f3f4f6',
+    borderColor: '#cbd5e1',
+    borderWidth: 1,
+  },
+  // Etat appuye : retroaction visuelle distincte de l'etat disabled (opacite).
+  secondaryPressed: {
+    backgroundColor: '#e5e7eb',
   },
   // Entrees laterales : assistant de creation de vault et inbox locale.
   sideButton: {
@@ -1479,12 +1501,26 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     height: SAFE_TOP_PADDING.paddingTop,
   },
-  helpBox: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
+  // Surface unique d'apprentissage : un seul contenant cliquable, style
+  // secondaire explicite (bordure + libelle bleu), pas d'imbrication.
+  learnSurface: {
+    alignItems: 'center',
+    alignSelf: 'stretch',
+    backgroundColor: '#ffffff',
+    borderColor: '#cbd5e1',
     borderRadius: 10,
     borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
+    justifyContent: 'center',
+    marginTop: 16,
+    minHeight: 48,
+    paddingHorizontal: 24,
+  },
+  learnSurfacePressed: {
+    backgroundColor: '#eef2ff',
+  },
+  learnSurfaceText: {
+    color: '#1a56db',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

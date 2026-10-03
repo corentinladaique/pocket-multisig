@@ -42,6 +42,7 @@ files=(
   scripts/simulate-proposal-creation.test.ts
   scripts/sol-cost-display.test.ts
   scripts/transaction-review-read-only.test.ts
+  scripts/ui-release-review.test.ts
   scripts/vault-balance.test.ts
   scripts/vault-draft.test.ts
   scripts/vault-name-required.test.ts

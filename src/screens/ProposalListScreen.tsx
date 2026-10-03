@@ -127,7 +127,12 @@ export function ProposalListScreen({
           accessibilityLabel="Refresh proposals from the chain"
           disabled={busy}
           onPress={onPressRefresh}
-          style={[styles.button, styles.secondary, busy && styles.disabled]}
+          style={({ pressed }) => [
+            styles.button,
+            styles.secondary,
+            pressed && styles.secondaryPressed,
+            busy && styles.disabled,
+          ]}
         >
           <Text style={styles.secondaryText}>{busy ? 'Refreshing…' : 'Refresh'}</Text>
         </Pressable>
@@ -361,6 +366,10 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderWidth: 1,
     marginTop: 24,
+  },
+  // Etat appuye distinct de disabled pour l'action secondaire Refresh.
+  secondaryPressed: {
+    backgroundColor: '#e5e7eb',
   },
   secondaryText: {
     color: '#101317',

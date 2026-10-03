@@ -107,11 +107,11 @@ check('16bis. Learn retire du dashboard charge, mais ouvert avant connexion', ()
     1,
     'un seul acces Learn : celui d avant connexion wallet',
   );
-  const learnIndex = HOME.indexOf('Learn about multisig');
+  const learnIndex = HOME.indexOf('Learn how multisig works');
   const dashboardIndex = HOME.indexOf('Open this multisig in the shared detail screen');
   assert.ok(learnIndex > -1 && dashboardIndex > -1 && learnIndex < dashboardIndex, 'Learn hors dashboard');
   const dashboard = HOME.slice(dashboardIndex);
-  assert.ok(!dashboard.includes('Learn about multisig'), 'Learn absent du dashboard charge');
+  assert.ok(!dashboard.includes('Learn how multisig works'), 'Learn absent du dashboard charge');
   assert.ok(HOME.includes('onboarding.open'), 'la fonction interne d ouverture reste presente');
 });
 
