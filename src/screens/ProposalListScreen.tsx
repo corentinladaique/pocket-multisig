@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -12,16 +12,18 @@ import {
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 
+import { summarizeOperation, useProposals, type ProposalView } from '../squads/proposals';
 import {
-  computeProposalDecision,
-  summarizeOperation,
-  useProposals,
-  type ProposalView,
-} from '../squads/proposals';
+  classifyProposal,
+  proposalStatusLabel,
+  type ProposalFilterGroup,
+} from '../squads/proposalFilters';
 import type { TransactionReviewModel } from '../types/transactionReview';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { DevnetPill, InfoBox, InfoText } from '../ui/v2/primitives';
 
 /**
- * Liste des propositions d'un multisig : LECTURE SEULE.
+ * Liste des propositions d'un multisig : LECTURE SEULE, theme UI V2.
  *
  * Aucun appel RPC propre : tout passe par `useProposals` / `loadProposals`, qui
  * dérivent les PDA localement et font un seul `getMultipleAccountsInfo`.
@@ -30,11 +32,30 @@ import type { TransactionReviewModel } from '../types/transactionReview';
  * Le résumé d'opération n'est affiché que si un modèle DÉJÀ décodé est fourni
  * par l'appelant (`decodedModelFor`) : la liste ne déclenche donc aucune lecture
  * supplémentaire pour décoder les transactions.
+ *
+ * Les filtres To do / Open / Done sont LOCAUX (fonctions pures de
+ * `proposalFilters`) : aucun RPC, aucun wallet, aucune transaction.
  */
+
+const FILTERS: readonly { key: ProposalFilterGroup; label: string }[] = [
+  { key: 'todo', label: 'To do' },
+  { key: 'open', label: 'Open' },
+  { key: 'done', label: 'Done' },
+];
+
+const EMPTY_STATE: Record<ProposalFilterGroup, { title: string; body?: string }> = {
+  todo: {
+    title: 'Nothing waiting',
+    body: 'Proposals that need your action will appear here.',
+  },
+  open: { title: 'No open proposals' },
+  done: { title: 'No completed proposals yet' },
+};
 
 export function ProposalListScreen({
   address,
   decodedModelFor,
+  executingMembers = [],
   onBack,
   onOpenProposal,
   onRefresh,
@@ -49,6 +70,8 @@ export function ProposalListScreen({
   address: string;
   /** Modèles déjà en mémoire uniquement (aucun appel réseau ici). */
   decodedModelFor?: (index: number) => TransactionReviewModel | null;
+  /** Adresses des membres porteurs du droit d'exécution (filtre To do). */
+  executingMembers?: readonly string[];
   onBack: () => void;
   /** Ouvre le détail d'une proposition (lecture seule). */
   onOpenProposal?: (proposal: ProposalView) => void;
@@ -71,6 +94,9 @@ export function ProposalListScreen({
   const { account } = useMobileWallet();
   const walletAddress = account === undefined ? null : account.address.toString();
   const walletCanApprove = walletAddress !== null && votingMembers.includes(walletAddress);
+  const walletCanExecute = walletAddress !== null && executingMembers.includes(walletAddress);
+
+  const [filter, setFilter] = useState<ProposalFilterGroup>('todo');
 
   const proposals = useProposals(address, transactionIndex, staleTransactionIndex, refreshNonce);
   const busy = refreshing || proposals.status === 'loading';
@@ -96,6 +122,31 @@ export function ProposalListScreen({
     return () => subscription.remove();
   }, [onBack]);
 
+  // Classement LOCAL : aucune I/O, aucune valeur inventée.
+  const rows = (proposals.list?.proposals ?? []).map((proposal) => {
+    const input = {
+      index: proposal.index,
+      status: proposal.status,
+      approvals: proposal.approvals,
+      threshold,
+      approvedAddresses: proposal.approvedAddresses,
+      walletAddress,
+      walletCanApprove,
+      walletCanExecute,
+    };
+    const group = classifyProposal(input);
+    const statusLabel = proposalStatusLabel(input);
+    const summary = summarizeOperation(decodedModelFor?.(proposal.index) ?? null);
+    return { proposal, group, statusLabel, summary };
+  });
+
+  const counts: Record<ProposalFilterGroup, number> = {
+    todo: rows.filter((row) => row.group === 'todo').length,
+    open: rows.filter((row) => row.group === 'open').length,
+    done: rows.filter((row) => row.group === 'done').length,
+  };
+  const visible = rows.filter((row) => row.group === filter);
+
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
@@ -103,148 +154,149 @@ export function ProposalListScreen({
         keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
       >
-        <Text style={styles.badge}>DEVNET · READ ONLY</Text>
-        <Text style={styles.title}>
-          {vaultName !== null && vaultName !== undefined && vaultName.length > 0
-            ? `${vaultName} · Proposals`
-            : 'Proposals'}
-        </Text>
-        <Text style={styles.subtitle}>
-          Proposals are derived from the multisig index. Nothing is created, voted or executed
-          here.
-        </Text>
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to multisig details"
+            onPress={onBack}
+            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <DevnetPill />
+        </View>
+
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>
+            {vaultName !== null && vaultName !== undefined && vaultName.length > 0
+              ? `${vaultName} · Proposals`
+              : 'Proposals'}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh proposals from the chain"
+            disabled={busy}
+            onPress={onPressRefresh}
+            style={({ pressed }) => [
+              styles.inlineAction,
+              pressed && styles.secondaryPressed,
+            ]}
+          >
+            <Text style={styles.inlineActionText}>{busy ? 'Refreshing…' : 'Refresh'}</Text>
+          </Pressable>
+        </View>
+
+        {/* Filtres locaux : To do / Open / Done. */}
+        <View style={styles.filterRow}>
+          {FILTERS.map((entry) => {
+            const active = entry.key === filter;
+            return (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={`Show ${entry.label} proposals`}
+                key={entry.key}
+                onPress={() => setFilter(entry.key)}
+                style={({ pressed }) => [
+                  styles.filterPill,
+                  active && styles.filterPillActive,
+                  pressed && !active && styles.filterPillPressed,
+                ]}
+              >
+                <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                  {entry.label} {counts[entry.key]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
 
         {busy ? (
           <View style={styles.centerBlock}>
-            <ActivityIndicator color="#1a56db" />
-            <Text style={styles.hint}>Refreshing proposals…</Text>
+            <ActivityIndicator color={colors.mint} />
+            <Text style={styles.note}>Refreshing proposals…</Text>
           </View>
         ) : null}
 
-        {/* Relecture explicite : en lecture seule, aucun wallet, aucune signature. */}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Refresh proposals from the chain"
-          disabled={busy}
-          onPress={onPressRefresh}
-          style={({ pressed }) => [
-            styles.button,
-            styles.secondary,
-            pressed && styles.secondaryPressed,
-            busy && styles.disabled,
-          ]}
-        >
-          <Text style={styles.secondaryText}>{busy ? 'Refreshing…' : 'Refresh'}</Text>
-        </Pressable>
-
+        {/* Liste périmée conservée (jamais supprimée en silence). */}
         {proposals.stale && proposals.list !== null ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>
-              Showing the last successfully read list. Refresh failed: {proposals.error ?? 'unknown error'}
-            </Text>
-          </View>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+            <InfoText tone="warning">
+              Showing the last successfully read list. Refresh failed:{' '}
+              {proposals.error ?? 'unknown error'}
+            </InfoText>
+          </InfoBox>
         ) : null}
 
         {proposals.status === 'error' ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>
-              {proposals.error ?? 'Reading proposals failed.'}
-            </Text>
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+            <InfoText tone="error">{proposals.error ?? 'Reading proposals failed.'}</InfoText>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Retry reading proposals"
               onPress={proposals.retry}
-              style={styles.retry}
+              style={styles.inlineAction}
             >
-              <Text style={styles.retryText}>Retry</Text>
+              <Text style={styles.inlineActionText}>Retry</Text>
             </Pressable>
-          </View>
+          </InfoBox>
         ) : null}
 
         {proposals.status === 'loaded' ? (
           <View style={styles.block}>
-            <Text style={styles.summaryLine}>
-              {proposals.list?.proposals.length ?? 0} proposal(s) · {threshold} approval(s) needed
-              · indexes 1..{transactionIndex}
-            </Text>
-            <Text style={styles.fieldNote}>
-              Dates are not stored on-chain: no creation date is available for a proposal.
-            </Text>
-
-            {proposals.list !== null && proposals.list.proposals.length === 0 ? (
+            {visible.length === 0 ? (
               <View style={styles.emptyBox}>
-                <Text style={styles.emptyTitle}>No proposal yet</Text>
-                <Text style={styles.emptyText}>
-                  This multisig has no transaction indexed between 1 and {transactionIndex}.
-                </Text>
+                <Text style={styles.emptyTitle}>{EMPTY_STATE[filter].title}</Text>
+                {EMPTY_STATE[filter].body !== undefined ? (
+                  <Text style={styles.emptyText}>{EMPTY_STATE[filter].body}</Text>
+                ) : null}
               </View>
             ) : null}
 
-            {(proposals.list?.proposals ?? []).map((proposal) => {
-              const decision = computeProposalDecision({
-                index: proposal.index,
-                status: proposal.status,
-                approvedAddresses: proposal.approvedAddresses,
-                threshold,
-                walletAddress,
-                walletCanApprove,
-              });
-              const model = decodedModelFor?.(proposal.index) ?? null;
-              const summary = summarizeOperation(model);
-              return (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Open proposal ${proposal.index}`}
-                  disabled={onOpenProposal === undefined}
-                  key={proposal.index}
-                  onPress={() => onOpenProposal?.(proposal)}
-                  style={styles.entryCard}
-                >
-                  <Text style={styles.entryIndex}>Proposal #{proposal.index}</Text>
-                  <Text style={styles.entryMeta}>
-                    {decision.stateLabel} · status {proposal.status}
-                  </Text>
-                  <Text style={styles.entryMeta}>
-                    {decision.approvals} of {decision.threshold} approvals
-                  </Text>
-                  <Text style={styles.entryOperation}>
+            {visible.map(({ proposal, statusLabel, summary }) => (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Open proposal ${proposal.index}`}
+                disabled={onOpenProposal === undefined}
+                key={proposal.index}
+                onPress={() => onOpenProposal?.(proposal)}
+                style={({ pressed }) => [styles.entryCard, pressed && styles.entryCardPressed]}
+              >
+                <View style={styles.entryIndexChip}>
+                  <Text style={styles.entryIndexText}>#{proposal.index}</Text>
+                </View>
+                <View style={styles.entryBody}>
+                  <Text style={styles.entryTitle}>
                     {summary === null
-                      ? 'Operation not decoded yet'
-                      : `${summary.amount} · Devnet · to ${summary.destination}`}
+                      ? 'Details available after opening'
+                      : `${summary.amount} → ${summary.destination}`}
                   </Text>
-                  {summary === null ? (
-                    <Text style={styles.fieldNote}>
-                      The operation summary appears once the proposal review is opened.
-                    </Text>
-                  ) : null}
-                </Pressable>
-              );
-            })}
+                  <Text style={styles.entryMeta}>
+                    {proposal.approvals} of {threshold} approvals
+                  </Text>
+                </View>
+                <View style={styles.entryBadge}>
+                  <Text style={styles.entryBadgeText}>{statusLabel}</Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </Pressable>
+            ))}
 
             {proposals.list !== null && proposals.list.unreadable > 0 ? (
-              <Text style={styles.fieldNote}>
+              <Text style={styles.note}>
                 {proposals.list.unreadable} derived account(s) absent or unreadable (config
                 transactions and batches are not indexed here).
               </Text>
             ) : null}
 
             {__DEV__ ? (
-              <Text style={styles.fieldNote}>
+              <Text style={styles.note}>
                 RPC calls used for this list: {proposals.list?.rpcCalls ?? 0} (one
                 getMultipleAccountsInfo).
               </Text>
             ) : null}
           </View>
         ) : null}
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to multisig details"
-          onPress={onBack}
-          style={[styles.button, styles.secondary]}
-        >
-          <Text style={styles.secondaryText}>Back</Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -252,160 +304,186 @@ export function ProposalListScreen({
 
 const styles = StyleSheet.create({
   keyboardAvoider: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   scrollView: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    padding: 24,
-    paddingBottom: 96,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
   },
-  badge: {
-    backgroundColor: '#e8f0fe',
-    borderRadius: 999,
-    color: '#1a56db',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backButtonPressed: {
+    backgroundColor: colors.surface,
+  },
+  backGlyph: {
+    color: colors.text,
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  titleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
-    textAlign: 'center',
+    color: colors.text,
+    flexShrink: 1,
+    fontSize: typography.screenTitle - 10,
+    fontWeight: '800',
   },
-  subtitle: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginBottom: 12,
-    marginTop: 4,
-    textAlign: 'center',
+  inlineAction: {
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  inlineActionText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  secondaryPressed: {
+    backgroundColor: colors.surface,
+  },
+  filterRow: {
+    flexDirection: 'row',
+    marginTop: spacing.lg,
+  },
+  filterPill: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    marginRight: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  filterPillActive: {
+    backgroundColor: colors.text,
+    borderColor: colors.text,
+  },
+  filterPillPressed: {
+    backgroundColor: colors.surface,
+  },
+  filterText: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  filterTextActive: {
+    color: colors.onLight,
   },
   centerBlock: {
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   block: {
     alignSelf: 'stretch',
-  },
-  summaryLine: {
-    color: '#111827',
-    fontSize: 13,
-    fontWeight: '700',
-    marginTop: 4,
+    marginTop: spacing.md,
   },
   entryCard: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
     borderWidth: 1,
-    marginTop: 10,
-    padding: 14,
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+    padding: spacing.md,
   },
-  entryIndex: {
-    color: '#111827',
-    fontSize: 16,
-    fontWeight: '800',
+  entryCardPressed: {
+    backgroundColor: colors.surfaceElevated,
+  },
+  entryIndexChip: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 36,
+    justifyContent: 'center',
+    marginRight: spacing.md,
+    width: 44,
+  },
+  entryIndexText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  entryBody: {
+    flex: 1,
+  },
+  entryTitle: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
   },
   entryMeta: {
-    color: '#4b5563',
-    fontSize: 13,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
     marginTop: 2,
   },
-  entryOperation: {
-    color: '#101317',
-    fontSize: 13,
+  entryBadge: {
+    backgroundColor: colors.successSoft,
+    borderRadius: radii.pill,
+    marginLeft: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  entryBadgeText: {
+    color: colors.success,
+    fontSize: typography.micro,
     fontWeight: '700',
-    marginTop: 8,
+  },
+  chevron: {
+    color: colors.textMuted,
+    fontSize: 22,
+    marginLeft: spacing.sm,
   },
   emptyBox: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
     borderStyle: 'dashed',
     borderWidth: 1,
-    marginTop: 10,
-    padding: 14,
+    marginTop: spacing.sm,
+    padding: spacing.lg,
   },
   emptyTitle: {
-    color: '#111827',
-    fontSize: 15,
+    color: colors.text,
+    fontSize: typography.bodySmall,
     fontWeight: '800',
   },
   emptyText: {
-    color: '#4b5563',
-    fontSize: 13,
-    marginTop: 6,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
   },
-  fieldNote: {
-    color: '#6b7280',
-    fontSize: 12,
-    marginTop: 6,
+  infoBox: {
+    marginTop: spacing.md,
   },
-  button: {
-    alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    justifyContent: 'center',
-    marginTop: 16,
-    minHeight: 48,
-    paddingHorizontal: 24,
-    width: '100%',
-  },
-  secondary: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    marginTop: 24,
-  },
-  // Etat appuye distinct de disabled pour l'action secondaire Refresh.
-  secondaryPressed: {
-    backgroundColor: '#e5e7eb',
-  },
-  secondaryText: {
-    color: '#101317',
-    fontSize: 15,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  hint: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginTop: 8,
-  },
-  errorBox: {
-    alignSelf: 'stretch',
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
-  },
-  errorText: {
-    color: '#991b1b',
-    fontSize: 13,
-  },
-  retry: {
-    alignItems: 'center',
-    marginTop: 12,
-    paddingVertical: 8,
-  },
-  retryText: {
-    color: '#1a56db',
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  disabled: {
-    opacity: 0.5,
+  note: {
+    color: colors.textMuted,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
   },
 });

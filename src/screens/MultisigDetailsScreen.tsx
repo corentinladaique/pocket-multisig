@@ -21,16 +21,22 @@ import { connection } from '../solana/connection';
 import { loadMultisig, MultisigLookupError, type MultisigView } from '../squads/multisig';
 import { loadSingleProposalView, type ProposalView } from '../squads/proposals';
 import type { TransactionReviewModel } from '../types/transactionReview';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import { Card, DevnetPill, InfoBox, InfoText, ListRow, PillButton } from '../ui/v2/primitives';
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { ProposalListScreen } from './ProposalListScreen';
 import { NewProposalScreen } from './NewProposalScreen';
+import { ReceiveScreen } from './ReceiveScreen';
 
 /**
- * Detail d'un multisig : LECTURE SEULE.
+ * Detail d'un multisig (Vault Details) : LECTURE SEULE, theme UI V2.
  *
  * Un seul appel RPC (le `getAccountInfo` de `loadMultisig`, déjà utilisé
  * ailleurs) plus la dérivation locale du vault PDA par le SDK. Aucune création,
  * aucune signature, aucune proposition, aucun envoi.
+ *
+ * Receive reutilise le ReceiveScreen existant avec EXCLUSIVEMENT
+ * `view.vaultAddress` (Main vault PDA index 0). Aucun faucet, aucun wallet.
  */
 
 type LoadState =
@@ -40,6 +46,19 @@ type LoadState =
 
 /** Pubkey::default() : le multisig est autonome, aucune autorite d'admin. */
 const FROZEN_AUTHORITY = '11111111111111111111111111111111';
+
+/** Adresse abregée pour les listes (les details gardent l'adresse complète). */
+function shortenAddress(address: string): string {
+  return address.length <= 10 ? address : `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+/** Badge lisible pour un role effectivement lu on-chain. */
+function roleBadge(role: string): string | null {
+  if (role === 'Initiate') return 'Can initiate';
+  if (role === 'Vote') return 'Can vote';
+  if (role === 'Execute') return 'Can execute';
+  return null;
+}
 
 export function MultisigDetailsScreen({
   address,
@@ -61,6 +80,8 @@ export function MultisigDetailsScreen({
   const [openProposal, setOpenProposal] = useState<ProposalView | null>(null);
   // Creation d'une nouvelle proposition (transfert SOL simple).
   const [newProposalOpen, setNewProposalOpen] = useState(false);
+  // Vue Receive SOL (informative) : reutilise le ReceiveScreen du Groupe 1.
+  const [receiveOpen, setReceiveOpen] = useState(false);
   // Détails purement techniques (config authority, rent collector, program) :
   // repliés par défaut, jamais supprimés.
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -184,7 +205,7 @@ export function MultisigDetailsScreen({
   useEffect(() => {
     if (vaultAddress === null) return;
     refreshBalance(vaultAddress);
-  }, [vaultAddress, proposalsOpen, openProposal, newProposalOpen, refreshBalance]);
+  }, [vaultAddress, proposalsOpen, openProposal, newProposalOpen, receiveOpen, refreshBalance]);
 
   useEffect(() => {
     load();
@@ -206,6 +227,25 @@ export function MultisigDetailsScreen({
       : view.members
           .filter((member) => member.roles.includes('Vote'))
           .map((member) => member.address);
+  // Membres porteurs du droit d'execution : filtre « To do » des propositions.
+  const executingMembers =
+    view === null
+      ? []
+      : view.members
+          .filter((member) => member.roles.includes('Execute'))
+          .map((member) => member.address);
+
+  // Role REEL du wallet connecte, s'il est membre (sinon Observer).
+  const walletRoles =
+    view === null || walletAddress === null
+      ? null
+      : (view.members.find((member) => member.address === walletAddress)?.roles ?? null);
+  const walletIsMember = walletRoles !== null;
+
+  // Receive SOL : vue informative, adresse = Main vault PDA index 0 uniquement.
+  if (receiveOpen && view !== null) {
+    return <ReceiveScreen address={view.vaultAddress} onBack={() => setReceiveOpen(false)} />;
+  }
 
   // Creation d'une proposition : ecran dedie, retour vers la liste apres succes.
   if (newProposalOpen && view !== null) {
@@ -276,6 +316,7 @@ export function MultisigDetailsScreen({
       <ProposalListScreen
         address={view.address}
         decodedModelFor={decodedModelFor}
+        executingMembers={executingMembers}
         onBack={() => setProposalsOpen(false)}
         onOpenProposal={(proposal) => setOpenProposal(proposal)}
         onRefresh={reloadFromChain}
@@ -290,6 +331,8 @@ export function MultisigDetailsScreen({
     );
   }
 
+  const vaultIsEmpty = balanceView.title === 'Main vault not funded';
+
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
@@ -297,92 +340,185 @@ export function MultisigDetailsScreen({
         keyboardShouldPersistTaps="handled"
         style={styles.scrollView}
       >
-        <Text style={styles.badge}>DEVNET · READ ONLY</Text>
+        <View style={styles.headerRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Back to inbox"
+            onPress={onBack}
+            style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          >
+            <Text style={styles.backGlyph}>‹</Text>
+          </Pressable>
+          <DevnetPill />
+        </View>
+
         <Text style={styles.title}>
           {vaultName !== null && vaultName !== undefined && vaultName.length > 0
             ? vaultName
-            : 'Multisig'}
+            : 'Main vault'}
         </Text>
-        <Text style={styles.subtitle}>Read from devnet. Nothing can be changed here.</Text>
+        {view !== null ? (
+          <Text style={styles.subtitle}>
+            Threshold {view.threshold} of {view.members.length} signers
+          </Text>
+        ) : null}
 
         {state.status === 'loading' ? (
           <View style={styles.centerBlock}>
-            <ActivityIndicator color="#1a56db" />
-            <Text style={styles.hint}>Reading the multisig account…</Text>
+            <ActivityIndicator color={colors.mint} />
+            <Text style={styles.note}>Reading the multisig account…</Text>
           </View>
         ) : null}
 
         {state.status === 'error' ? (
-          <View style={styles.errorBox}>
-            <Text style={styles.errorText}>{state.message}</Text>
+          <InfoBox glyph="⚠" style={styles.errorBox} tone="error">
+            <InfoText tone="error">{state.message}</InfoText>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Retry reading the multisig"
               onPress={load}
-              style={styles.retry}
+              style={styles.inlineAction}
             >
-              <Text style={styles.retryText}>Retry</Text>
+              <Text style={styles.inlineActionText}>Retry</Text>
             </Pressable>
-          </View>
+          </InfoBox>
         ) : null}
 
         {view !== null ? (
           <View style={styles.block}>
-            {/* Information de premier niveau : le solde du vault, visible même
-                sans aucune proposition ouverte. */}
-            <Text style={styles.fieldLabel}>{balanceView.title}</Text>
-            {balanceView.sol !== null ? (
-              <Text selectable style={styles.balanceValue}>
-                {balanceView.sol} SOL
-              </Text>
+            {/* BALANCE CARD — « Main vault », solde reel, petite action Refresh. */}
+            <Card elevated style={styles.balanceCard}>
+              <Text style={styles.cardLabel}>Main vault</Text>
+              {balanceView.sol !== null ? (
+                <Text selectable style={styles.balanceValue}>
+                  {balanceView.sol} SOL
+                </Text>
+              ) : null}
+              {balanceView.title !== 'Main vault' && balanceView.sol === null ? (
+                <Text style={styles.balanceNote}>{balanceView.title}</Text>
+              ) : null}
+              {balanceView.stale ? <Text style={styles.note}>stale</Text> : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh the vault balance"
+                disabled={vaultBalance?.status === 'loading'}
+                onPress={() => {
+                  refreshBalance(view.vaultAddress);
+                }}
+                style={({ pressed }) => [
+                  styles.inlineAction,
+                  pressed && styles.inlineActionPressed,
+                ]}
+              >
+                <Text style={styles.inlineActionText}>
+                  {vaultBalance?.status === 'loading' ? 'Refreshing…' : 'Refresh balance'}
+                </Text>
+              </Pressable>
+            </Card>
+
+            {/* VAULT VIDE — avertissement honnete, sans pretendre que la
+                creation d'une proposition est impossible (elle reste permise). */}
+            {vaultIsEmpty ? (
+              <InfoBox glyph="⚠" style={styles.emptyBox} tone="warning">
+                <InfoText tone="warning">The vault is empty.</InfoText>
+                <InfoText tone="warning">
+                  Receive Devnet SOL before executing a transfer.
+                </InfoText>
+              </InfoBox>
             ) : null}
-            {balanceView.stale ? <Text style={styles.fieldNote}>stale</Text> : null}
-            <Text style={styles.fieldNote}>{balanceView.hint}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Refresh the vault balance"
-              disabled={vaultBalance?.status === 'loading'}
-              onPress={() => {
-                refreshBalance(view.vaultAddress);
-              }}
-              style={styles.retry}
-            >
-              <Text style={styles.retryText}>
-                {vaultBalance?.status === 'loading' ? 'Refreshing…' : 'Refresh balance'}
-              </Text>
-            </Pressable>
 
-            <Text style={styles.fieldLabel}>Main vault</Text>
-            <Text selectable style={styles.fieldValue}>{view.vaultAddress}</Text>
-            <Text style={styles.fieldNote}>
-              This account holds the funds controlled by the multisig.
-            </Text>
+            {/* ACTIONS — Receive / New proposal (+ acces Proposals reel). */}
+            <View style={styles.actionRow}>
+              <View style={styles.actionItem}>
+                <PillButton
+                  accessibilityLabel="Receive SOL into the Main vault"
+                  label="Receive"
+                  onPress={() => setReceiveOpen(true)}
+                />
+              </View>
+              <View style={styles.actionItem}>
+                <PillButton
+                  accessibilityLabel="Create a new proposal"
+                  label="New proposal"
+                  onPress={() => setNewProposalOpen(true)}
+                  variant="secondary"
+                />
+              </View>
+            </View>
 
-            <Text style={styles.fieldLabel}>Multisig configuration</Text>
-            <Text selectable style={styles.fieldValue}>{view.address}</Text>
-            <Text style={styles.fieldNote}>
-              Stores members, roles and threshold. Do not send funds to this address.
-            </Text>
+            <ListRow
+              accessibilityLabel="Open proposals list"
+              glyph="≡"
+              onPress={() => setProposalsOpen(true)}
+              subtitle={`${view.transactionIndex} indexed transaction(s)`}
+              title="Proposals"
+              trailing={<Text style={styles.chevron}>›</Text>}
+            />
 
-            <Text style={styles.fieldLabel}>Threshold</Text>
-            <Text style={styles.fieldValue}>
-              {view.threshold} of {view.members.length}
-            </Text>
+            {/* SIGNERS — compteur, adresses reelles, roles reels. */}
+            <Text style={styles.sectionTitle}>Signers · {view.members.length}</Text>
+            {view.members.map((member, index) => {
+              const isYou = walletAddress !== null && member.address === walletAddress;
+              const badges = member.roles
+                .map(roleBadge)
+                .filter((badge): badge is string => badge !== null);
+              return (
+                <View key={member.address} style={styles.memberRow}>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>{index + 1}</Text>
+                  </View>
+                  <View style={styles.memberBody}>
+                    <Text style={styles.memberTitle}>
+                      {shortenAddress(member.address)}
+                      {isYou ? ' (you)' : ''}
+                    </Text>
+                    <Text selectable style={styles.memberAddress}>
+                      {member.address}
+                    </Text>
+                    <View style={styles.badgeRow}>
+                      {badges.length > 0 ? (
+                        badges.map((badge) => (
+                          <View key={badge} style={styles.roleBadge}>
+                            <Text style={styles.roleBadgeText}>{badge}</Text>
+                          </View>
+                        ))
+                      ) : (
+                        <View style={styles.roleBadgeMuted}>
+                          <Text style={styles.roleBadgeMutedText}>No permission</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
 
-            <Text style={styles.fieldLabel}>Members ({view.members.length})</Text>
-            {view.members.map((member) => (
-              <View key={member.address} style={styles.memberCard}>
-                <Text selectable style={styles.memberAddress}>{member.address}</Text>
-                <Text style={styles.memberRoles}>
-                  {member.roles.length > 0 ? member.roles.join(' + ') : 'No permission'}
+            {/* METRIQUES — Members / Threshold / My role (Observer si non membre). */}
+            <View style={styles.metricsRow}>
+              <View style={styles.metric}>
+                <Text style={styles.metricLabel}>Members</Text>
+                <Text style={styles.metricValue}>{view.members.length}</Text>
+              </View>
+              <View style={styles.metric}>
+                <Text style={styles.metricLabel}>Threshold</Text>
+                <Text style={styles.metricValue}>{view.threshold}</Text>
+              </View>
+              <View style={styles.metric}>
+                <Text style={styles.metricLabel}>My role</Text>
+                <Text style={styles.metricValue}>
+                  {walletIsMember
+                    ? walletRoles.length > 0
+                      ? walletRoles.join(' · ')
+                      : 'No permission'
+                    : 'Observer'}
                 </Text>
               </View>
-            ))}
+            </View>
+            {!walletIsMember ? (
+              <Text style={styles.note}>This wallet is not a multisig member.</Text>
+            ) : null}
 
-            {/* Détails purement techniques : repliés par défaut pour garder le
-                premier niveau lisible (nom, solde, threshold, membres, actions).
-                Replier n'est pas supprimer : tout reste consultable et les
-                adresses restent sélectionnables/copiables. */}
+            {/* DETAILS TECHNIQUES (replies) : verdicts prouves + identifiants bruts. */}
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: advancedOpen }}
@@ -398,6 +534,18 @@ export function MultisigDetailsScreen({
 
             {advancedOpen ? (
               <View style={styles.detailsBody}>
+                <Text style={styles.detailsHeading}>Raw identifiers</Text>
+
+                <Text style={styles.fieldLabel}>Main vault address</Text>
+                <Text selectable style={styles.fieldValue}>{view.vaultAddress}</Text>
+                <Text style={styles.fieldNote}>
+                  This account holds the funds controlled by the multisig.
+                </Text>
+
+                <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+                <Text selectable style={styles.fieldValue}>{view.address}</Text>
+                <Text style={styles.fieldNote}>Do not send funds to this address.</Text>
+
                 <Text style={styles.fieldLabel}>Config authority</Text>
                 <Text selectable style={styles.fieldValue}>{view.configAuthority}</Text>
                 <Text style={styles.fieldNote}>
@@ -416,45 +564,14 @@ export function MultisigDetailsScreen({
                     : 'Rent of closed transactions is reclaimed by this address.'}
                 </Text>
 
-                <Text style={styles.fieldLabel}>Program</Text>
+                <Text style={styles.fieldLabel}>Program ID</Text>
                 <Text selectable style={styles.fieldValue}>
                   {multisig.PROGRAM_ID.toString()}
                 </Text>
               </View>
             ) : null}
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open proposals list"
-              onPress={() => setProposalsOpen(true)}
-              style={[styles.button, styles.secondary, styles.proposalsButton]}
-            >
-              <Text style={styles.secondaryText}>Proposals</Text>
-            </Pressable>
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Create a new proposal"
-              onPress={() => setNewProposalOpen(true)}
-              style={[styles.button, styles.secondary, styles.proposalsButton]}
-            >
-              <Text style={styles.secondaryText}>New Proposal</Text>
-            </Pressable>
           </View>
         ) : null}
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Back to inbox"
-          onPress={onBack}
-          style={({ pressed }) => [
-            styles.button,
-            styles.secondary,
-            pressed && styles.secondaryPressed,
-          ]}
-        >
-          <Text style={styles.secondaryText}>Back</Text>
-        </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -462,173 +579,258 @@ export function MultisigDetailsScreen({
 
 const styles = StyleSheet.create({
   keyboardAvoider: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   scrollView: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    padding: 24,
-    paddingBottom: 96,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
   },
-  badge: {
-    backgroundColor: '#e8f0fe',
-    borderRadius: 999,
-    color: '#1a56db',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 8,
-    overflow: 'hidden',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  backButton: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  backButtonPressed: {
+    backgroundColor: colors.surface,
+  },
+  backGlyph: {
+    color: colors.text,
+    fontSize: 24,
+    lineHeight: 26,
   },
   title: {
-    fontSize: 22,
-    fontWeight: '700',
+    color: colors.text,
+    fontSize: typography.screenTitle - 6,
+    fontWeight: '800',
   },
   subtitle: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginBottom: 12,
-    marginTop: 4,
-    textAlign: 'center',
+    color: colors.textSecondary,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.xs,
   },
   centerBlock: {
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   block: {
     alignSelf: 'stretch',
+    marginTop: spacing.md,
   },
-  fieldLabel: {
-    color: '#6b7280',
-    fontSize: 11,
-    marginTop: 14,
+  balanceCard: {
+    marginTop: spacing.md,
+  },
+  cardLabel: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
     textTransform: 'uppercase',
   },
-  fieldValue: {
-    color: '#101317',
-    fontFamily: 'monospace',
-    fontSize: 12,
-    marginTop: 2,
+  balanceValue: {
+    color: colors.text,
+    fontSize: 40,
+    fontWeight: '800',
+    marginTop: spacing.xs,
   },
-  fieldNote: {
-    color: '#6b7280',
-    fontSize: 12,
-    marginTop: 4,
+  balanceNote: {
+    color: colors.warning,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+    marginTop: spacing.xs,
   },
-  memberCard: {
-    backgroundColor: '#f9fafb',
-    borderColor: '#e5e7eb',
-    borderRadius: 10,
+  emptyBox: {
+    marginTop: spacing.md,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    marginTop: spacing.lg,
+  },
+  actionItem: {
+    flex: 1,
+    marginHorizontal: spacing.xs,
+  },
+  chevron: {
+    color: colors.textMuted,
+    fontSize: 22,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+    marginTop: spacing.xl,
+  },
+  memberRow: {
+    alignItems: 'flex-start',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
     borderWidth: 1,
-    marginTop: 8,
-    padding: 12,
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+    padding: spacing.md,
+  },
+  memberAvatar: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    height: 36,
+    justifyContent: 'center',
+    marginRight: spacing.md,
+    width: 36,
+  },
+  memberAvatarText: {
+    color: colors.mint,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+  },
+  memberBody: {
+    flex: 1,
+  },
+  memberTitle: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
   },
   memberAddress: {
-    color: '#101317',
+    color: colors.textMuted,
     fontFamily: 'monospace',
-    fontSize: 12,
+    fontSize: typography.micro,
+    marginTop: 2,
   },
-  memberRoles: {
-    color: '#065f46',
-    fontSize: 12,
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.sm,
+  },
+  roleBadge: {
+    backgroundColor: colors.successSoft,
+    borderRadius: radii.pill,
+    marginRight: spacing.xs,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+  },
+  roleBadgeText: {
+    color: colors.success,
+    fontSize: typography.micro,
     fontWeight: '700',
-    marginTop: 4,
   },
-  button: {
-    alignItems: 'center',
-    backgroundColor: '#1a56db',
-    borderRadius: 10,
-    justifyContent: 'center',
-    marginTop: 16,
-    minHeight: 48,
-    paddingHorizontal: 24,
-    width: '100%',
+  roleBadgeMuted: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radii.pill,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
   },
-  secondary: {
-    backgroundColor: '#f3f4f6',
-    borderColor: '#d1d5db',
-    borderWidth: 1,
-    marginTop: 24,
-  },
-  // Acces a la liste des propositions (lecture seule).
-  proposalsButton: {
-    borderColor: '#1a56db',
-    marginTop: 20,
-  },
-  secondaryText: {
-    color: '#101317',
-    fontSize: 15,
+  roleBadgeMutedText: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
     fontWeight: '700',
-    textAlign: 'center',
   },
-  hint: {
-    color: '#6b7280',
-    fontSize: 13,
-    marginTop: 8,
+  metricsRow: {
+    flexDirection: 'row',
+    marginTop: spacing.lg,
+  },
+  metric: {
+    flex: 1,
+    marginHorizontal: spacing.xs,
+  },
+  metricLabel: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    textTransform: 'uppercase',
+  },
+  metricValue: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+    marginTop: spacing.xs,
+  },
+  note: {
+    color: colors.textMuted,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
+  },
+  inlineAction: {
+    alignSelf: 'flex-start',
+    borderRadius: radii.pill,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  inlineActionPressed: {
+    backgroundColor: colors.surface,
+  },
+  inlineActionText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
+    fontWeight: '700',
   },
   errorBox: {
-    alignSelf: 'stretch',
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
-    borderRadius: 10,
-    borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
+    marginTop: spacing.md,
   },
-  errorText: {
-    color: '#991b1b',
-    fontSize: 13,
-  },
-  retry: {
-    alignItems: 'center',
-    marginTop: 12,
-    paddingVertical: 8,
-  },
-  retryText: {
-      color: '#1a56db',
-      fontSize: 14,
-      fontWeight: '700',
-    },
-    balanceValue: {
-      color: '#101317',
-      fontSize: 22,
-      fontWeight: '700',
-    },
-  // Section repliable « Advanced details » (fermée par défaut).
   detailsToggle: {
     alignItems: 'center',
-    borderColor: '#d1d5db',
+    borderColor: colors.divider,
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 24,
+    marginTop: spacing.xl,
     minHeight: 48,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: spacing.lg - 2,
+    paddingVertical: spacing.md,
   },
   detailsToggleText: {
-    color: '#374151',
-    fontSize: 13,
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
     fontWeight: '700',
   },
   detailsBody: {
-    borderColor: '#e5e7eb',
+    borderColor: colors.divider,
     borderRadius: 8,
     borderWidth: 1,
-    marginTop: 8,
-    padding: 12,
+    marginTop: spacing.sm,
+    padding: spacing.md,
   },
-  // Etat appuye distinct de disabled pour les actions secondaires (Back).
-  secondaryPressed: {
-    backgroundColor: '#e5e7eb',
+  detailsHeading: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    fontWeight: '800',
+    marginBottom: spacing.sm,
+  },
+  fieldLabel: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    marginTop: spacing.md,
+    textTransform: 'uppercase',
+  },
+  fieldValue: {
+    color: colors.text,
+    fontFamily: 'monospace',
+    fontSize: typography.micro + 1,
+    marginTop: 2,
+  },
+  fieldNote: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: spacing.xs,
   },
 });

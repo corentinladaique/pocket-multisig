@@ -46,6 +46,7 @@ files=(
   scripts/ui-release-review.test.ts
   scripts/ui-v2.test.ts
   scripts/ui-v2-corrections.test.ts
+  scripts/ui-v2-group2.test.ts
   scripts/vault-balance.test.ts
   scripts/vault-draft.test.ts
   scripts/vault-name-required.test.ts

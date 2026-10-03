@@ -207,12 +207,11 @@ check('27. Les etats disabled et busy restent distincts', () => {
   assert.ok(PRIM.includes('accessibilityState={{ busy, disabled: inactive }}'), 'etats annonces');
 });
 
-check('28. Aucun ecran hors Groupe 1 n est migre vers UI V2', () => {
+check('28. Aucun ecran hors Groupes 1-2 n est migre vers UI V2', () => {
+  // MultisigDetailsScreen et ProposalListScreen ont ete migres par le Groupe 2.
   const others = [
     'NewProposalScreen',
-    'MultisigDetailsScreen',
     'ProposalDetailsScreen',
-    'ProposalListScreen',
     'CreateVaultScreen',
     'TransactionReviewScreen',
     'OnboardingScreen',

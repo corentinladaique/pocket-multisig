@@ -141,7 +141,8 @@ check('15. Refresh disponible utilise un style secondaire, pas disabled', () => 
   assert.ok(LIST.includes('pressed && styles.secondaryPressed'));
   assert.ok(PD.includes('pressed && styles.secondaryPressed'));
   // Les actions disponibles gardent un style secondaire reel (bordure).
-  assert.ok(LIST.includes("borderColor: '#d1d5db'"));
+  // Groupe 2 : ProposalListScreen est passe au theme sombre -> bordure par token.
+  assert.ok(LIST.includes('colors.divider'), 'bordure secondaire via le theme V2');
   assert.ok(PD.includes("borderColor: '#d1d5db'"));
 });
 
