@@ -32,6 +32,7 @@ files=(
   scripts/navigation-refresh.test.ts
   scripts/new-proposal-ux.test.ts
   scripts/onboarding.test.ts
+  scripts/onboarding-answers.test.ts
   scripts/operation-state.test.ts
   scripts/proposal-creation-preflight.test.ts
   scripts/proposal-detail-decode.test.ts

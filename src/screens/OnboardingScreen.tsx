@@ -3,22 +3,23 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { screensForLevel } from '../onboarding/content';
 import {
-  DEFAULT_PROFILE,
-  GOAL_LABELS,
-  isQuestComplete,
-  LEARNING_GOALS,
-  LEVEL_LABELS,
-  LEARNING_LEVELS,
+  buildProfile,
+  EMPTY_ANSWERS,
+  GOAL_OPTIONS,
+  isAnswersComplete,
+  LEVEL_OPTIONS,
+  selectGoal,
+  selectLevel,
+  SIGNING_MEAN_OPTIONS,
+  toggleSigningMean,
+  type OnboardingAnswers,
+} from '../onboarding/answers';
+import {
   personalizedSummary,
   SIGNING_MEAN_COMPATIBILITY,
   SIGNING_MEAN_DESCRIPTIONS,
-  SIGNING_MEAN_LABELS,
-  SIGNING_MEANS,
   totalSteps,
-  type LearningGoal,
-  type LearningLevel,
   type LearningProfile,
-  type SigningMean,
 } from '../onboarding/profile';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 
@@ -28,6 +29,11 @@ import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
  *
  * Étape unique de profil (3 questions) puis les leçons du niveau choisi ; le
  * compteur « Step X of Y » utilise le parcours réellement sélectionné.
+ *
+ * Chaque option porte une identité STABLE (`option.id`), un libellé et SA
+ * propre valeur : `onPress` enregistre `option.value`. Aucune option n'est
+ * présélectionnée : ouvrir l'écran ne choisit jamais à la place de
+ * l'utilisateur, et aucune réponse ne retombe silencieusement sur la première.
  */
 export function OnboardingScreen({
   initialProfile,
@@ -39,41 +45,35 @@ export function OnboardingScreen({
   onFinish: (profile: LearningProfile) => void;
 }) {
   const [step, setStep] = useState(0);
-  const [profile, setProfile] = useState<LearningProfile>(
-    initialProfile.onboardingCompleted ? DEFAULT_PROFILE : initialProfile,
+  // Réponses RÉELLEMENT choisies dans cette session. `null` = pas encore
+  // répondu : rien n'est affiché comme sélectionné tant que l'utilisateur n'a
+  // pas touché l'option. Réouverture depuis Home ⇒ questions à zéro.
+  const [answers, setAnswers] = useState<OnboardingAnswers>(() =>
+    initialProfile.onboardingCompleted
+      ? { ...EMPTY_ANSWERS }
+      : {
+          goal: initialProfile.goal,
+          level: null,
+          signingMeans: [...initialProfile.signingMeans],
+        },
   );
-  // Rien n'est présélectionné : tant que l'utilisateur n'a pas choisi, la
-  // sélection est absente et le bouton Next reste désactivé.
-  const [touched, setTouched] = useState(false);
 
+  // Le niveau n'est JAMAIS pré-rempli : il ne sert au parcours (nombre d'étapes
+  // et contenu) qu'après un choix explicite.
+  const profile = useMemo(() => buildProfile(answers, false), [answers]);
   const lessons = useMemo(() => screensForLevel(profile.level), [profile.level]);
   const lastStep = totalSteps(profile.level, lessons.length) - 1;
-  const profileComplete = isQuestComplete(profile);
+  const complete = isAnswersComplete(answers);
   const summaryLines = useMemo(() => personalizedSummary(profile), [profile]);
 
-  const canAdvance = step === 0 ? profileComplete : true;
+  const canAdvance = step === 0 ? complete : true;
   const isLast = step === lastStep;
 
   const onNext = () => setStep((previous) => Math.min(previous + 1, lastStep));
   const onBack = () => setStep((previous) => Math.max(previous - 1, 0));
 
-  const pickLevel = (level: LearningLevel) => {
-    setTouched(true);
-    setProfile((previous) => ({ ...previous, level }));
-  };
-  const pickGoal = (goal: LearningGoal) => {
-    setTouched(true);
-    setProfile((previous) => ({ ...previous, goal }));
-  };
-  const toggleMean = (mean: SigningMean) => {
-    setTouched(true);
-    setProfile((previous) => ({
-      ...previous,
-      signingMeans: previous.signingMeans.includes(mean)
-        ? previous.signingMeans.filter((entry) => entry !== mean)
-        : [...previous.signingMeans, mean],
-    }));
-  };
+  // Profil transmis à Finish/Skip : construit depuis les réponses choisies.
+  const publishProfile = () => buildProfile(answers, true);
 
   const lesson = step >= 1 ? lessons[step - 1] : null;
 
@@ -91,53 +91,72 @@ export function OnboardingScreen({
         {step === 0 ? (
           <View style={styles.block}>
             <Text style={styles.fieldLabel}>How familiar are you with multisig?</Text>
-            {LEARNING_LEVELS.map((level) => (
-              <Pressable
-                accessibilityRole="button"
-                key={level}
-                onPress={() => pickLevel(level)}
-                style={[styles.option, profile.level === level && touched && styles.optionSelected]}
-              >
-                <Text style={styles.optionText}>{LEVEL_LABELS[level]}</Text>
-              </Pressable>
-            ))}
+            {LEVEL_OPTIONS.map((option) => {
+              const selected = answers.level === option.value;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={option.label}
+                  accessibilityState={{ selected }}
+                  key={option.id}
+                  onPress={() => setAnswers((previous) => selectLevel(previous, option))}
+                  style={[styles.option, selected && styles.optionSelected]}
+                >
+                  <View style={styles.optionRow}>
+                    <Text style={styles.optionText}>{option.label}</Text>
+                    {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                  </View>
+                </Pressable>
+              );
+            })}
 
             <Text style={styles.fieldLabel}>What do you want to do?</Text>
-            {LEARNING_GOALS.map((goal) => (
-              <Pressable
-                accessibilityRole="button"
-                key={goal}
-                onPress={() => pickGoal(goal)}
-                style={[styles.option, profile.goal === goal && styles.optionSelected]}
-              >
-                <Text style={styles.optionText}>{GOAL_LABELS[goal]}</Text>
-              </Pressable>
-            ))}
+            {GOAL_OPTIONS.map((option) => {
+              const selected = answers.goal === option.value;
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={option.label}
+                  accessibilityState={{ selected }}
+                  key={option.id}
+                  onPress={() => setAnswers((previous) => selectGoal(previous, option))}
+                  style={[styles.option, selected && styles.optionSelected]}
+                >
+                  <View style={styles.optionRow}>
+                    <Text style={styles.optionText}>{option.label}</Text>
+                    {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                  </View>
+                </Pressable>
+              );
+            })}
 
             <Text style={styles.fieldLabel}>Which signing methods can you use?</Text>
-            {SIGNING_MEANS.map((mean) => (
-              <Pressable
-                accessibilityRole="button"
-                key={mean}
-                onPress={() => toggleMean(mean)}
-                style={[
-                  styles.option,
-                  profile.signingMeans.includes(mean) && styles.optionSelected,
-                ]}
-              >
-                <Text style={styles.optionText}>{SIGNING_MEAN_LABELS[mean]}</Text>
-                <Text style={styles.optionNote}>{SIGNING_MEAN_DESCRIPTIONS[mean]}</Text>
-                {mean === 'hardware-wallet' || mean === 'seed-vault' ? (
-                  <Text style={styles.optionNote}>
-                    {SIGNING_MEAN_COMPATIBILITY[mean]}
-                  </Text>
-                ) : null}
-              </Pressable>
-            ))}
+            {SIGNING_MEAN_OPTIONS.map((option) => {
+              const selected = answers.signingMeans.includes(option.value);
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={option.label}
+                  accessibilityState={{ selected }}
+                  key={option.id}
+                  onPress={() => setAnswers((previous) => toggleSigningMean(previous, option))}
+                  style={[styles.option, selected && styles.optionSelected]}
+                >
+                  <View style={styles.optionRow}>
+                    <Text style={styles.optionText}>{option.label}</Text>
+                    {selected ? <Text style={styles.optionCheck}>✓</Text> : null}
+                  </View>
+                  <Text style={styles.optionNote}>{SIGNING_MEAN_DESCRIPTIONS[option.value]}</Text>
+                  {option.value === 'hardware-wallet' || option.value === 'seed-vault' ? (
+                    <Text style={styles.optionNote}>
+                      {SIGNING_MEAN_COMPATIBILITY[option.value]}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
 
-            {!profileComplete ? (
-              <Text style={styles.warning}>Choose an option to continue.</Text>
-            ) : null}
+            {!complete ? <Text style={styles.warning}>Choose an option to continue.</Text> : null}
           </View>
         ) : null}
 
@@ -173,7 +192,7 @@ export function OnboardingScreen({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Skip onboarding"
-            onPress={() => onSkip(profile)}
+            onPress={() => onSkip(publishProfile())}
             style={[styles.button, styles.secondary]}
           >
             <Text style={styles.secondaryText}>Skip</Text>
@@ -192,7 +211,7 @@ export function OnboardingScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Finish onboarding"
-              onPress={() => onFinish(profile)}
+              onPress={() => onFinish(publishProfile())}
               style={styles.button}
             >
               <Text style={styles.buttonText}>Finish</Text>
@@ -260,9 +279,12 @@ const styles = StyleSheet.create({
     padding: 12,
     width: '100%',
   },
+  // Coche en plus du style : l'etat selectionne ne depend pas de la couleur seule.
+  optionCheck: { color: '#1a56db', fontSize: 16, fontWeight: '800', marginLeft: 8 },
   optionNote: { color: '#6b7280', fontSize: 12, marginTop: 4 },
+  optionRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   optionSelected: { backgroundColor: '#e8f0fe', borderColor: '#1a56db', borderWidth: 2 },
-  optionText: { color: '#101317', fontSize: 15 },
+  optionText: { color: '#101317', flexShrink: 1, fontSize: 15 },
   paragraph: { color: '#101317', fontSize: 15, marginTop: 8 },
   progress: { color: '#4b5563', fontSize: 13, marginTop: 6 },
   screen: { backgroundColor: '#ffffff', flex: 1, width: '100%' },
