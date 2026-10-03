@@ -233,6 +233,27 @@ check('16. Advanced transaction details replié par défaut', () => {
   assert.ok(TECH.includes('const [rawOpen, setRawOpen] = useState(false)'), 'Raw transaction data non replié');
 });
 
+check('17. progression : une seule formulation d attente, sans duplication', () => {
+  // P1-C : la carte principale ne repete plus l attente trois fois.
+  assert.ok(
+    !DETAILS.includes('{progress.waitingLabel}'),
+    'plus de ligne d attente dupliquee',
+  );
+  assert.ok(!DETAILS.includes('decision.stateLabel'), 'plus de duplication stateLabel');
+  // L information utile reste : progression + seuil + attente d execution.
+  assert.ok(DETAILS.includes('{progress.collectedLabel}'), 'progression conservee');
+  assert.ok(
+    DETAILS.includes('Execution becomes available after one more approval.'),
+    'attente d execution conservee',
+  );
+  assert.ok(
+    DETAILS.includes('executionNotAvailableDetail(progress.remaining)'),
+    'raison multi-approbations conservee',
+  );
+  // Le statut « Approved by you » reste affiche une seule fois.
+  assert.equal((DETAILS.match(/PROPOSAL_ACTION_LABELS\.approvedByYouDetail/g) ?? []).length, 1);
+});
+
 setTimeout(() => {
   console.log(`\n${passed} test(s) OK`);
   if (process.exitCode === 1) process.exit(1);

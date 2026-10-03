@@ -20,6 +20,11 @@ import {
   PROPOSAL_CREATION_EXPLAINERS,
 } from '../squads/buildProposalCreation';
 import {
+  hasInvalidDestinationError,
+  INVALID_DESTINATION_MESSAGE,
+  proposalCreationErrorMessage,
+} from '../ui/proposalCreationMessages';
+import {
   runProposalCreationPreflight,
   type ProposalCreationPreflightResult,
 } from '../squads/proposalCreationPreflight';
@@ -263,6 +268,13 @@ export function NewProposalScreen({
 
   const canRunPipeline =
     creator.length > 0 && build.errors.length === 0 && pipeline.status !== 'working';
+
+  /**
+   * Destination « tentee » : tant que le champ est vide, aucune erreur de
+   * destination n'est presentee (le builder produit deja une erreur nommee des
+   * le premier rendu, mais elle reste invisible avant toute saisie).
+   */
+  const destinationAttempted = destination.trim().length > 0;
 
   /**
    * Max : relit le solde CONFIRMÉ du Main vault, puis fige un montant exact en
@@ -680,19 +692,16 @@ export function NewProposalScreen({
               .filter((error) => !/lamports/i.test(error))
               .map((error) => (
                 <InfoText key={error} tone="error">
-                  · {error}
+                  · {proposalCreationErrorMessage(error)}
                 </InfoText>
               ))}
           </InfoBox>
         ) : null}
-        {/* Une seule indication de montant manquant, près du champ. Les autres
-            raisons de blocage restent visibles si elles existent. */}
-        {build.errors.length > 0 &&
-        !amountAttempted &&
-        build.errors.some((error) => !/lamports/i.test(error)) ? (
-          <Text style={styles.fieldNote}>
-            {build.errors.filter((error) => !/lamports/i.test(error))[0]}
-          </Text>
+        {/* Une seule indication de montant manquant, près du champ. La raison
+            « destination » n'apparait qu'APRES une saisie (jamais a vide) et
+            sous forme de message utilisateur (jamais de code interne). */}
+        {!amountAttempted && destinationAttempted && hasInvalidDestinationError(build.errors) ? (
+          <Text style={styles.fieldNote}>{INVALID_DESTINATION_MESSAGE}</Text>
         ) : null}
 
         <Pressable

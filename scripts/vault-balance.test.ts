@@ -6,6 +6,7 @@ import {
   describeVaultBalance,
   estimateRemainingBalance,
   formatSol,
+  formatSolBalance,
 } from '../src/wallet/vaultBalance';
 
 /**
@@ -60,7 +61,7 @@ check('2. solde affiche sans aucune proposition ouverte', () => {
     "la lecture du solde ne doit pas dependre d'une proposition ouverte",
   );
   const view = describeVaultBalance({ addressMatches: true, lamports: 2 * SOL, status: 'loaded' });
-  assert.equal(view.sol, '2.000000000');
+  assert.equal(view.sol, '2');
 });
 
 check('3. 0.1 SOL au vault, 0.02 SOL proposes : reste 0.08 SOL', () => {
@@ -97,7 +98,7 @@ check('5. echec RPC : solde indisponible ou stale, jamais un ecran en echec', ()
     status: 'error',
     stale: true,
   });
-  assert.equal(stale.sol, '1.000000000');
+  assert.equal(stale.sol, '1');
   assert.equal(stale.stale, true);
 
   const source = readFileSync('src/screens/MultisigDetailsScreen.tsx', 'utf8');
@@ -185,6 +186,34 @@ check('formatage SOL : 9 decimales exactes', () => {
   assert.equal(formatSol(0), '0.000000000');
   assert.equal(formatSol(1), '0.000000001');
   assert.equal(formatSol(1_234_567_890), '1.234567890');
+});
+
+check('solde affiche : arrondi lisible, jamais un faux zero', () => {
+  // P1-A : un solde n'est plus rendu en precision brute illisible.
+  assert.equal(formatSolBalance(399_999_952), '0.4');
+  assert.equal(formatSolBalance(389_999_952), '0.39');
+  assert.equal(formatSolBalance(2_000_000_000), '2');
+  assert.equal(formatSolBalance(1_000_000_000), '1');
+  assert.equal(formatSolBalance(0), '0');
+  // Un tres petit montant non nul ne devient JAMAIS 0.
+  assert.equal(formatSolBalance(48), '0.000000048');
+  assert.equal(formatSolBalance(1), '0.000000001');
+  // Valeur exacte conservee malgre l'arrondi d'affichage.
+  assert.equal(formatSolBalance(1_234_567_890), '1.234568');
+  // Home et Vault Details partagent la meme regle via describeVaultBalance.
+  assert.equal(
+    describeVaultBalance({ addressMatches: true, lamports: 399_999_952, status: 'loaded' }).sol,
+    '0.4',
+  );
+  assert.equal(
+    describeVaultBalance({ addressMatches: true, lamports: 48, status: 'loaded' }).sol,
+    '0.000000048',
+  );
+  // Aucune valeur interne n'est modifiee : les lamports restent exacts.
+  assert.equal(
+    describeVaultBalance({ addressMatches: true, lamports: 399_999_952, status: 'loaded' }).lamports,
+    399_999_952,
+  );
 });
 
 setTimeout(() => {

@@ -5,6 +5,11 @@ import {
   buildProposalCreation,
   PROPOSAL_CREATION_EXPLAINERS,
 } from '../src/squads/buildProposalCreation';
+import {
+  hasInvalidDestinationError,
+  INVALID_DESTINATION_MESSAGE,
+  proposalCreationErrorMessage,
+} from '../src/ui/proposalCreationMessages';
 import { computeMaxTransfer } from '../src/vault/maxTransfer';
 import { parseSolToLamports } from '../src/vault/solAmount';
 
@@ -137,6 +142,42 @@ check('10. bloc technique replié par défaut', () => {
   assert.ok(PROPOSAL.includes('PROPOSAL_CREATION_EXPLAINERS'), 'explications importées');
   assert.equal(PROPOSAL_CREATION_EXPLAINERS.length, 3);
   assert.ok(PROPOSAL.includes('explainers.map((warning) => ('));
+});
+
+check('11. destination vide : aucune erreur rendue, code interne jamais affiche', () => {
+  // La validation REELLE reste active (le builder produit toujours l erreur).
+  const empty = buildProposalCreation({
+    creator: CREATOR,
+    destination: '',
+    lamports: 20_000_000,
+    memo: null,
+    multisigPda: MULTISIG,
+    transactionIndex: 0,
+  });
+  assert.ok(hasInvalidDestinationError(empty.errors), 'la validation destination reste presente');
+  assert.equal(empty.readyForBuild, false, 'un build sans destination reste refuse');
+  // L ecran ne presente l erreur qu apres une saisie (garde destinationAttempted).
+  assert.ok(PROPOSAL.includes('const destinationAttempted = destination.trim().length > 0;'));
+  assert.ok(
+    PROPOSAL.includes('!amountAttempted && destinationAttempted && hasInvalidDestinationError(build.errors)'),
+    'l erreur destination est conditionnee a une saisie',
+  );
+  // Aucun code interne n est rendu : le vocabulaire passe par la traduction.
+  assert.ok(!PROPOSAL.includes('InvalidDestination:'), 'aucun code interne dans l ecran');
+  assert.ok(!PROPOSAL.includes('· {error}'), 'aucun code brut rendu tel quel');
+  assert.ok(PROPOSAL.includes('proposalCreationErrorMessage(error)'));
+});
+
+check('12. destination invalide : message utilisateur simple, CTA toujours protege', () => {
+  assert.equal(
+    proposalCreationErrorMessage('InvalidDestination: destination is not a valid public address.'),
+    'Enter a valid Solana address.',
+  );
+  assert.equal(INVALID_DESTINATION_MESSAGE, 'Enter a valid Solana address.');
+  assert.ok(PROPOSAL.includes('{INVALID_DESTINATION_MESSAGE}'), 'message utilisateur rendu');
+  // CTA toujours protege tant que la validation reelle n est pas satisfaite.
+  assert.ok(PROPOSAL.includes('disabled={!canRunPipeline}'));
+  assert.ok(PROPOSAL.includes('build.errors.length === 0 && pipeline.status !=='));
 });
 
 setTimeout(() => {

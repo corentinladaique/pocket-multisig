@@ -36,7 +36,6 @@ import {
 
 import { useWalletGuard, type ReviewGuardContext } from '../wallet/useWalletGuard';
 import {
-  computeProposalDecision,
   loadProposalReview,
   summarizeOperation,
   type ProposalStatusKind,
@@ -132,7 +131,6 @@ export function ProposalDetailsScreen({
   threshold,
   vaultTransactionAddress,
   walletAddress,
-  walletCanApprove,
 }: {
   address: string;
   /** Modèle déjà décodé, aucune lecture déclenchée ici. */
@@ -682,15 +680,6 @@ export function ProposalDetailsScreen({
     return () => subscription.remove();
   }, [onBack]);
 
-  const decision = computeProposalDecision({
-    index,
-    status: proposal.status,
-    approvedAddresses: proposal.approvedAddresses,
-    threshold,
-    walletAddress,
-    walletCanApprove,
-  });
-
   const summary = summarizeOperation(model);
   // Adresse de destination COMPLETE, telle que décodée : l'abréviation des
   // cartes compactes ne permet pas de vérifier où part l'argent.
@@ -850,9 +839,6 @@ export function ProposalDetailsScreen({
                 <Text style={styles.fieldNote}>{PROPOSAL_ACTION_LABELS.approvedByYouDetail}</Text>
               </View>
             ) : null}
-            {progress.waitingLabel !== null ? (
-              <Text style={styles.fieldNote}>{progress.waitingLabel}</Text>
-            ) : null}
             {!progress.reached ? (
               <Text style={styles.fieldNote}>
                 {progress.remaining === 1
@@ -860,7 +846,6 @@ export function ProposalDetailsScreen({
                   : executionNotAvailableDetail(progress.remaining)}
               </Text>
             ) : null}
-            <Text style={styles.fieldNote}>{decision.stateLabel}</Text>
           </Card>
         ) : null}
 

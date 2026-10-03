@@ -96,7 +96,7 @@ check('6. erreur RPC : dernier solde du meme vault conserve, marque stale', () =
     status: 'error',
     stale: true,
   });
-  assert.equal(stale.sol, '1.000000000');
+  assert.equal(stale.sol, '1');
   assert.equal(stale.stale, true);
   assert.ok(HOME.includes('setHomeBalanceError(true)'));
   // V2 : action de relecture compacte (petite action inline, pas une ligne pleine).

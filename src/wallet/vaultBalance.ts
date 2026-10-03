@@ -11,7 +11,10 @@ export const LAMPORTS_PER_SOL = 1_000_000_000;
 export type BalanceStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
 export type VaultBalanceView = {
-  /** Solde affichable en SOL, 9 décimales, ou `null` si non lisible. */
+  /**
+   * Solde affichable en SOL (arrondi lisible, jamais ramene a 0 s'il est non
+   * nul), ou `null` si non lisible. La valeur exacte reste dans `lamports`.
+   */
   sol: string | null;
   /** Lamports bruts : destinés à Technical details uniquement. */
   lamports: number | null;
@@ -25,6 +28,16 @@ export type VaultBalanceView = {
 
 /** 1 SOL = 1e9 lamports, en arithmetique ENTIERE (aucun flottant imprecis). */
 const LAMPORTS_PER_SOL_BIGINT = 1_000_000_000n;
+
+/**
+ * Nombre de decimales AFFICHEES au plus pour un solde utilisateur. Sert
+ * uniquement a la lisibilite : aucune valeur interne n'est modifiee.
+ */
+const BALANCE_DISPLAY_DECIMALS = 6;
+/** Multiple de lamports correspondant a la derniere decimale affichee (10^3). */
+const BALANCE_ROUND_STEP = 10n ** BigInt(9 - BALANCE_DISPLAY_DECIMALS);
+/** Demi-pas, pour un arrondi "au plus proche" en arithmetique ENTIERE. */
+const BALANCE_ROUND_HALF = BALANCE_ROUND_STEP / 2n;
 
 /** Convertit une entree lamports en bigint ; refuse un number non entier sur. */
 function toSafeLamportsBigInt(lamports: number | bigint): bigint {
@@ -89,6 +102,32 @@ export function formatSol(lamports: number): string {
   return solStringFromLamports(toSafeLamportsBigInt(lamports), false);
 }
 
+/**
+ * Affichage LISIBLE d'un solde utilisateur, en SOL, sans suffixe.
+ *
+ * REGLES :
+ * - arithmetique ENTIERE (bigint) : aucun flottant, aucune valeur modifiee ;
+ * - arrondi au plus proche a 6 decimales au plus (0.399999952 -> 0.4) ;
+ * - un montant STRICTEMENT non nul n'est JAMAIS ramene a 0 : si l'arrondi
+ *   effacerait le montant (ex. 0.000000048), la valeur exacte est conservee ;
+ * - zeros finaux retires.
+ *
+ * Cas : 399_999_952 -> '0.4' ; 389_999_952 -> '0.39' ; 48 -> '0.000000048' ;
+ * 0 -> '0' ; 2_000_000_000 -> '2'.
+ *
+ * Aucune valeur transactionnelle n'est lue ni modifiee : chaine d'affichage.
+ */
+export function formatSolBalance(lamports: number | bigint): string {
+  const value = toSafeLamportsBigInt(lamports);
+  if (value === 0n) return '0';
+  const negative = value < 0n;
+  const absolute = negative ? -value : value;
+  const rounded = ((absolute + BALANCE_ROUND_HALF) / BALANCE_ROUND_STEP) * BALANCE_ROUND_STEP;
+  // Garde anti-zero : un montant non nul ne s'affiche jamais « 0 ».
+  const effective = rounded === 0n ? absolute : rounded;
+  return solStringFromLamports(negative ? -effective : effective, true);
+}
+
 export function describeVaultBalance(input: {
   addressMatches: boolean;
   lamports: number | null;
@@ -126,7 +165,7 @@ export function describeVaultBalance(input: {
       hint: 'This Main vault holds no SOL: transfer proposals will be refused or cannot be executed until it is funded.',
       lamports: 0,
       notFunded: true,
-      sol: formatSol(0),
+      sol: formatSolBalance(0),
       stale,
       title: 'Main vault not funded',
     };
@@ -139,7 +178,7 @@ export function describeVaultBalance(input: {
         '',
     lamports: input.lamports,
     notFunded: false,
-    sol: formatSol(input.lamports),
+    sol: formatSolBalance(input.lamports),
     stale,
     title: 'Vault balance',
   };
