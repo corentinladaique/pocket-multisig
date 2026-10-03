@@ -25,6 +25,7 @@ files=(
   scripts/max-transfer.test.ts
   scripts/multisig-creation-build.test.ts
   scripts/multisig-creation-readback.test.ts
+  scripts/multisig-keyboard-load.test.ts
   scripts/multisig-registry-storage.test.ts
   scripts/multisig-registry.test.ts
   scripts/mwa-diagnostics.test.ts

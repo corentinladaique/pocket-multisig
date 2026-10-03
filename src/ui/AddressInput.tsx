@@ -1,5 +1,12 @@
 import { useState, type Ref } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  type TextInputProps,
+} from 'react-native';
 
 import {
   ADDRESS_FIELD_HINT,
@@ -32,6 +39,8 @@ export function AddressInput({
   inputRef,
   onFocus,
   onBlur,
+  onSubmitEditing,
+  returnKeyType,
 }: {
   value: string;
   onChangeText: (next: string) => void;
@@ -44,6 +53,10 @@ export function AddressInput({
   inputRef?: Ref<TextInput>;
   onFocus?: () => void;
   onBlur?: () => void;
+  /** Touche Entree du clavier : reutilise le meme handler que le bouton hote. */
+  onSubmitEditing?: () => void;
+  /** Apparence de la touche Entree (ex. « go »). */
+  returnKeyType?: TextInputProps['returnKeyType'];
 }) {
   const [error, setError] = useState<string | null>(null);
 
@@ -78,8 +91,10 @@ export function AddressInput({
             onChangeText(next);
           }}
           onFocus={onFocus}
+          onSubmitEditing={onSubmitEditing}
           placeholder={placeholder}
           ref={inputRef}
+          returnKeyType={returnKeyType}
           style={[styles.input, styles.rowInput, error !== null && styles.inputError]}
           testID={testID}
           value={value}

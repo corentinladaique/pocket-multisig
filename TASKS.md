@@ -580,3 +580,24 @@ Migré dans le hotfix des montants : `src/screens/NewProposalScreen.tsx`
   une confirmation MODALE dédiée « Use 1 of 2 anyway » avant de pouvoir créer
   le vault. Aujourd'hui, l'avertissement est affiché et la configuration reste
   créable ; aucun threshold on-chain n'est modifié silencieusement.
+
+### Backlog — répartition de la section « More » (UI V2, Groupe 1)
+
+La section repliable « More » du Home V2 (voir `src/screens/ConnectScreen.tsx`)
+existe de façon TEMPORAIRE pour le Groupe 1. Elle regroupe aujourd'hui :
+Add existing multisig (+ loader manuel), Create a vault, Inbox, Learn,
+Disconnect, Reset wallet session.
+
+À RÉPARTIR lors de l'arrivée de la navigation V2, sans lancer le refactor
+maintenant :
+
+- « Add existing multisig » et « Create a vault » → écran **Multisigs** ;
+- « Inbox » → écran **Inbox** ;
+- « Learn » → écran **Account** (ou Help & Security) ;
+- « Disconnect » / « Reset wallet session » → écran **Account**.
+
+Aucune logique métier n'est dupliquée : ces entrées réutilisent les handlers
+existants (`msig.load`, `setVaultCreationOpen`, `setInboxOpen`, `onboarding.open`,
+`onDisconnect`, `onResetWalletSession`). Le déplacement doit se limiter à la
+présentation ; aucun handler, aucun RPC, aucune navigation fonctionnelle ne
+doit être modifié par cette répartition.

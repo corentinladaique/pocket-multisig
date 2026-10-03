@@ -332,6 +332,21 @@ export function ConnectScreen() {
     );
   }, [account]);
 
+  /**
+   * Point d'entrée UNIQUE de chargement manuel d'un multisig, partagé par le
+   * bouton de chargement ET la touche Entrée du clavier (onSubmitEditing).
+   *
+   * - réutilise la validation locale existante de `msig.load` (saisie vide ou
+   *   invalide → aucun RPC, l'erreur est posée par le hook) ;
+   * - réutilise l'état `loading` existant ;
+   * - empêche tout appel concurrent : un tap/Entrée pendant le chargement est ignoré ;
+   * - n'ajoute aucun RPC, aucun wallet, aucune transaction.
+   */
+  const onLoadMultisig = useCallback(() => {
+    if (msig.status === 'loading') return;
+    msig.load(multisigInput);
+  }, [msig, multisigInput]);
+
   // Ce que le wallet a réellement fourni lors de l'autorisation : labels et
   // icône sont facultatifs dans le protocole, donc on affiche aussi leur absence.
   const walletIdentity =
@@ -933,7 +948,9 @@ export function ConnectScreen() {
                     onBlur={onMultisigInputBlur}
                     onChangeText={setMultisigInput}
                     onFocus={onMultisigInputFocus}
+                    onSubmitEditing={onLoadMultisig}
                     placeholder="Multisig address"
+                    returnKeyType="go"
                     value={multisigInput}
                   />
                   <PillButton
@@ -941,7 +958,7 @@ export function ConnectScreen() {
                     busy={msig.status === 'loading'}
                     disabled={msig.status === 'loading'}
                     label="Load multisig"
-                    onPress={() => msig.load(multisigInput)}
+                    onPress={onLoadMultisig}
                     variant="primary"
                   />
                   {msig.status === 'loading' ? (
