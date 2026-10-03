@@ -6,6 +6,7 @@ import {
   parsePastedAddress,
   pasteErrorMessage,
 } from './addressPaste';
+import { readClipboardText } from './clipboard';
 
 /**
  * Champ d'adresse Solana partage, avec bouton « Paste » EXPLICITE.
@@ -17,16 +18,9 @@ import {
  *   ailleurs que dans le champ demande ;
  * - une valeur invalide est refusee sans correction ni troncature.
  *
- * API presse-papiers : module Clipboard embarque dans le coeur de React Native
- * 0.86, importe par son chemin interne car le typage public ne expose plus les
- * methodes. Aucune dependance ajoutee, aucun rebuild natif necessaire.
+ * API presse-papiers : centralisee dans `./clipboard` (module Clipboard du coeur
+ * de React Native). Aucune dependance ajoutee, aucun rebuild natif necessaire.
  */
-type ClipboardApi = { getString(): Promise<string> };
-
-const clipboardModule = require('react-native/Libraries/Components/Clipboard/Clipboard') as {
-  default?: ClipboardApi;
-} & ClipboardApi;
-const Clipboard: ClipboardApi = clipboardModule.default ?? clipboardModule;
 
 export function AddressInput({
   value,
@@ -54,12 +48,7 @@ export function AddressInput({
   const [error, setError] = useState<string | null>(null);
 
   const onPaste = async () => {
-    let raw: string | null = null;
-    try {
-      raw = await Clipboard.getString();
-    } catch {
-      raw = null;
-    }
+    const raw = await readClipboardText();
     if (raw === null) {
       setError(pasteErrorMessage({ ok: false, reason: 'empty' }));
       return;

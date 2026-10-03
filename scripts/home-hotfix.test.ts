@@ -42,8 +42,9 @@ check('1. Main vault : une seule explication, pas de doublon', () => {
     status: 'loaded',
   });
   assert.equal(view.hint, '', 'le module ne doit plus fournir dexplication en plus des ecrans');
-  const occurrences = HOME.split('This account holds the funds controlled by the multisig.').length - 1;
-  assert.equal(occurrences, 1, `explication presente ${occurrences} fois`);
+  // V2 : le nom du vault est le titre unique de la carte Vault (pas de doublon).
+  const occurrences = HOME.split("{homeVaultName ?? 'Main vault'}").length - 1;
+  assert.equal(occurrences, 1, `titre du vault present ${occurrences} fois`);
 });
 
 check('2. Main vault : aucune zone vide issue dune donnee absente', () => {
@@ -51,7 +52,7 @@ check('2. Main vault : aucune zone vide issue dune donnee absente', () => {
     HOME.includes('{homeBalanceView.hint.length > 0 ? ('),
     "l'explication conditionnelle doit etre omise si vide",
   );
-  assert.ok(HOME.includes('MAIN VAULT'), 'le bloc doit etre titré en clair');
+  assert.ok(HOME.includes('Main vault address'), 'le bloc vault doit etre titré en clair');
   assert.ok(HOME.includes('styles.balanceValue'), 'le solde doit etre mis en avant');
 });
 
@@ -166,11 +167,11 @@ check('8. safe area : bandeau Devnet protege par la source partagee', () => {
 });
 
 check('9. CTA Review proposal avant les details techniques', () => {
-  const actions = HOME.indexOf('Actions required');
+  const actions = HOME.indexOf('To do');
   const technical = HOME.indexOf('Technical details');
   assert.ok(actions > 0 && technical > 0, 'les deux sections doivent exister');
-  assert.ok(actions < technical, 'le CTA doit precede les informations techniques');
-  assert.ok(HOME.includes('Review proposal #{priorityIndex}'));
+  assert.ok(actions < technical, 'la section d action doit preceder les informations techniques');
+  assert.ok(HOME.includes('Full review'), "l action d ouverture de la revue reste presente");
 });
 
 check('10. aucun chargement automatique ne sollicite le wallet', () => {

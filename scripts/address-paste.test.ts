@@ -31,6 +31,7 @@ function check(name: string, run: () => void): void {
 
 const INPUT = readFileSync('src/ui/AddressInput.tsx', 'utf8');
 const PASTE = readFileSync('src/ui/addressPaste.ts', 'utf8');
+const CLIPBOARD = readFileSync('src/ui/clipboard.ts', 'utf8');
 const HOME = readFileSync('src/screens/ConnectScreen.tsx', 'utf8');
 const PROPOSAL = readFileSync('src/screens/NewProposalScreen.tsx', 'utf8');
 const VAULT = readFileSync('src/screens/CreateVaultScreen.tsx', 'utf8');
@@ -116,10 +117,12 @@ check('13/14/15. presse-papiers lu uniquement apres un tap', () => {
   assert.ok(INPUT.includes('onPress={() => {') && INPUT.includes('void onPaste();'));
   assert.ok(INPUT.includes('const onPaste = async () => {'));
   assert.ok(!/useEffect/.test(INPUT), 'aucun effet: rien n est lu au montage');
-  assert.ok(!/onFocus[\s\S]{0,80}getString/.test(INPUT), 'aucune lecture au focus');
+  assert.ok(!/onFocus[\s\S]{0,80}readClipboardText/.test(INPUT), 'aucune lecture au focus');
   assert.ok(!/setInterval|setTimeout|addListener/.test(INPUT), 'aucune surveillance');
-  const getStringCalls = INPUT.split('Clipboard.getString()').length - 1;
-  assert.equal(getStringCalls, 1, 'une seule lecture, dans le onPress');
+  const reads = INPUT.split('readClipboardText()').length - 1;
+  assert.equal(reads, 1, 'une seule lecture, dans le onPaste');
+  const getStringCalls = CLIPBOARD.split('Clipboard.getString()').length - 1;
+  assert.equal(getStringCalls, 1, 'une seule lecture, centralisee dans clipboard.ts');
 });
 
 check('16/17/18. aucun RPC, aucun wallet, aucune signature', () => {
@@ -143,11 +146,20 @@ check('20. Clipboard importe dans un seul fichier', () => {
     ['NewProposalScreen', PROPOSAL],
     ['CreateVaultScreen', VAULT],
   ] as const) {
-    assert.ok(!source.includes('Clipboard'), `${name} ne doit pas importer Clipboard`);
+    assert.ok(
+      !source.includes('Libraries/Components/Clipboard'),
+      `${name} ne doit pas acceder au module Clipboard directement`,
+    );
   }
-  assert.ok(INPUT.includes("require('react-native/Libraries/Components/Clipboard/Clipboard')"));
-  assert.ok(!/\bany\b/.test(INPUT), 'aucun any dans l API publique');
-  assert.ok(INPUT.includes('deprecie') || INPUT.includes('deprecated') || INPUT.includes('React Native\n * 0.86'));
+  // Le presse-papiers est centralise dans src/ui/clipboard.ts (un seul fichier).
+  assert.ok(
+    !INPUT.includes('react-native/Libraries/Components/Clipboard'),
+    'AddressInput ne touche plus le module directement',
+  );
+  assert.ok(INPUT.includes("from './clipboard'"), 'AddressInput importe le helper centralise');
+  assert.ok(CLIPBOARD.includes("require('react-native/Libraries/Components/Clipboard/Clipboard')"));
+  assert.ok(!/\bany\b/.test(CLIPBOARD), 'aucun any dans l API publique');
+  assert.ok(CLIPBOARD.includes('React Native'));
 });
 
 check('21/22. saisie manuelle fonctionnelle et efface l erreur', () => {

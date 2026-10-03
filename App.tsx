@@ -4,6 +4,7 @@ import { MobileWalletProvider, type WalletAuthorization } from '@wallet-ui/react
 
 import { APP_IDENTITY, DEVNET_CHAIN, DEVNET_ENDPOINT, createMemoryCache } from './src/config';
 import { ConnectScreen } from './src/screens/ConnectScreen';
+import { colors } from './src/ui/theme';
 
 // Cache en mémoire seule : aucune autorisation ne survit au redémarrage
 // (voir src/config.ts). Devnet uniquement, aucune navigation à ce stade.
@@ -17,16 +18,13 @@ export default function App() {
       endpoint={DEVNET_ENDPOINT}
       identity={APP_IDENTITY}
     >
-      {/* Fond blanc au niveau racine : les écrans sont tous clairs, donc la
-          bande réservée sous la barre de statut (inset haut) reste blanche au
-          lieu de laisser apparaître le fond de fenêtre sombre du thème.
+      {/* Fond sombre au niveau racine (thème UI V2 « Seeker style ») : la bande
+          réservée sous la barre de statut reste cohérente avec les écrans.
           Correction purement JS : aucun fichier natif n'est modifié. */}
       <View style={styles.root}>
         <ConnectScreen />
-        {/* Contenu sombre sur fond clair : lisible sur les écrans blancs.
-            La couleur de fond de la barre est fournie par styles.root ; un
-            statusBarColor natif n'est pas nécessaire. */}
-        <StatusBar style="dark" />
+        {/* Contenu clair sur fond sombre : lisible sur les écrans V2. */}
+        <StatusBar style="light" />
       </View>
     </MobileWalletProvider>
   );
@@ -34,7 +32,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: {
-    backgroundColor: '#ffffff',
+    backgroundColor: colors.background,
     flex: 1,
   },
 });

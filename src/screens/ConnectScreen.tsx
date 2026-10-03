@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
-  ActivityIndicator,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -27,7 +26,7 @@ import type { TransactionReviewModel } from '../types/transactionReview';
 import { useRpcHealth } from '../solana/useRpcHealth';
 import { useMultisigLookup } from '../squads/useMultisigLookup';
 import type { MultisigRegistryEntry } from '../vault/multisigRegistry';
-import { computeProposalDecision, summarizeDecisions, summarizeOperation, loadProposalReview,
+import { computeProposalDecision, summarizeOperation, loadProposalReview,
   useProposals,
   type ProposalReviewResult, } from '../squads/proposals';
 import { TransactionReviewScreen } from './TransactionReviewScreen';
@@ -35,6 +34,7 @@ import { CreateVaultScreen } from './CreateVaultScreen';
 import { MultisigDetailsScreen } from './MultisigDetailsScreen';
 import { MultisigInboxScreen } from './MultisigInboxScreen';
 import { OnboardingScreen } from './OnboardingScreen';
+import { ReceiveScreen } from './ReceiveScreen';
 import { AddressInput } from '../ui/AddressInput';
 import { useOnboarding } from '../onboarding/useOnboarding';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
@@ -42,6 +42,17 @@ import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
+import { COPIED_MESSAGE, COPY_FAILED_MESSAGE, copyToClipboard } from '../ui/clipboard';
+import { colors, radii, spacing, typography } from '../ui/theme';
+import {
+  AddressRow,
+  Card,
+  DevnetPill,
+  InfoBox,
+  InfoText,
+  ListRow,
+  PillButton,
+} from '../ui/v2/primitives';
 
 // Marge conservee entre le haut du bloc multisig (label + champ + bouton Load
 // multisig) et le haut de la zone visible : uniquement une valeur de confort,
@@ -74,6 +85,31 @@ function toReadableError(error: unknown): string {
   return `Échec de la connexion : ${raw}`;
 }
 
+/** Tuile d'action principale du Home V2 (Receive / Propose / Signers). Présentation seule. */
+function HomeAction({
+  accessibilityLabel,
+  glyph,
+  label,
+  onPress,
+}: {
+  accessibilityLabel?: string;
+  glyph: string;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel ?? label}
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionTile, pressed && styles.actionTilePressed]}
+    >
+      <Text style={styles.actionGlyph}>{glyph}</Text>
+      <Text style={styles.actionLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export function ConnectScreen() {
   const { account, connect, connectAnd, disconnect, store } = useMobileWallet();
   const { detail: rpcDetail, retry: retryRpc, status: rpcStatus } = useRpcHealth();
@@ -88,6 +124,12 @@ export function ConnectScreen() {
   const [review, setReview] = useState<ProposalReviewResult | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Vue Receive SOL (Groupe 1) : informative, lecture seule.
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  // Loader manuel d'un multisig existant : replié par défaut (secondaire).
+  const [addMultisigOpen, setAddMultisigOpen] = useState(false);
+  // Retour de copie de l'adresse du wallet.
+  const [walletCopyFeedback, setWalletCopyFeedback] = useState<string | null>(null);
   // Assistant local de configuration de vault (aucun RPC, aucune signature).
   const [vaultCreationOpen, setVaultCreationOpen] = useState(false);
   // Inbox des multisigs connus (registre local uniquement, aucun RPC).
@@ -177,15 +219,6 @@ export function ConnectScreen() {
         );
   const inboxDecisions = decisions.filter((entry) => entry.kind !== 'none');
   const priorityIndex = inboxDecisions[0]?.index ?? null;
-  const decisionSummary = summarizeDecisions(decisions);
-  const inboxHeading =
-    decisionSummary.attention > 0
-      ? 'Needs your attention'
-      : decisionSummary.approved > 0
-        ? 'Approved proposals'
-        : decisionSummary.approvedByYou > 0
-          ? 'Approved by you'
-          : 'Proposals';
 
   // Modele deja en memoire pour un index donne : la revue ouverte, ou le
   // prechargement de la boite de reception. Aucun appel reseau ici.
@@ -289,6 +322,18 @@ export function ConnectScreen() {
   }, [connectAnd, disconnect, store]);
 
   const busy = phase !== 'idle';
+
+  /**
+   * Copie de l'adresse du wallet connecté. Réutilise le mécanisme presse-papiers
+   * existant (module Clipboard du coeur RN, cf. src/ui/clipboard.ts). Aucun
+   * wallet, aucun RPC : simple écriture locale avec retour utilisateur.
+   */
+  const onCopyWallet = useCallback(() => {
+    if (account === undefined) return;
+    setWalletCopyFeedback(
+      copyToClipboard(account.address.toString()) ? COPIED_MESSAGE : COPY_FAILED_MESSAGE,
+    );
+  }, [account]);
 
   // Ce que le wallet a réellement fourni lors de l'autorisation : labels et
   // icône sont facultatifs dans le protocole, donc on affiche aussi leur absence.
@@ -484,6 +529,13 @@ export function ConnectScreen() {
     [account, msig.view, proposals.list],
   );
 
+  // Receive SOL (Groupe 1) : vue informative. N'ouvre aucun wallet, ne prépare
+  // aucune transaction, ne fait aucun RPC. L'adresse vient de msig.view
+  // (Main vault PDA index 0, déjà dérivée) — jamais d'une valeur inventée.
+  if (receiveOpen) {
+    return <ReceiveScreen address={viewVaultAddress} onBack={() => setReceiveOpen(false)} />;
+  }
+
   // Revue d'une proposition réelle : prioritaire sur les previews de dev.
   // Onboarding : premiere utilisation (ou reouverture depuis Home). Cet ecran ne
   // connecte aucun wallet, ne signe rien et ne fait aucun appel reseau.
@@ -659,474 +711,446 @@ export function ConnectScreen() {
         ref={scrollViewRef}
         style={styles.scrollView}
       >
-      <Text style={styles.badge}>DEVNET</Text>
-      <Text style={styles.title}>Pocket Multisig</Text>
-
-      {account ? (
-        <View style={styles.card}>
-          <Text style={styles.label}>Wallet connecté</Text>
-          <Text style={styles.walletLabel}>{walletIdentity?.label ?? 'Wallet without label'}</Text>
-          <Text style={styles.address}>{shortenAddress(account.address.toString())}</Text>
-          <Text style={styles.fullAddress}>{account.address.toString()}</Text>
-          {__DEV__ ? (
-            <>
-              <Text style={styles.hint}>
-                Icon supplied by the wallet: {walletIdentity !== null && walletIdentity.iconUri !== null ? 'yes' : 'no'} ·
-                label supplied: {walletIdentity !== null && walletIdentity.label !== null ? 'yes' : 'no'}
-              </Text>
-              {walletIdentity !== null && walletIdentity.iconUri !== null ? (
-                <Text selectable style={styles.diagnosticsText}>
-                  Icon URI: {walletIdentity.iconUri}
-                </Text>
-              ) : null}
-            </>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            disabled={busy}
-            onPress={onDisconnect}
-            style={[styles.button, styles.secondary, busy && styles.disabled]}
-          >
-            {phase === 'disconnecting' ? (
-              <ActivityIndicator color="#101317" />
-            ) : (
-              <Text style={styles.secondaryText}>Disconnect</Text>
-            )}
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Reset the mobile wallet adapter session"
-            disabled={busy}
-            onPress={() => {
-              void onResetWalletSession();
-            }}
-            style={[styles.button, styles.secondary, busy && styles.disabled]}
-          >
-            <Text style={styles.secondaryText}>Reset wallet session</Text>
-          </Pressable>
-          <Text style={styles.hint}>
-            Clears the local authorization and revokes the session on the wallet when possible.
-            Nothing is signed and no transaction is sent.
-          </Text>
-          {resetReport !== null ? (
-            <Text style={styles.diagnosticsText}>{resetReport}</Text>
-          ) : null}
+      <View style={styles.headerRow}>
+        <View style={styles.logoTile}>
+          <Text style={styles.logoGlyph}>◈</Text>
         </View>
-      ) : (
-        <Pressable
-          accessibilityRole="button"
-          disabled={busy}
-          onPress={onConnect}
-          style={[styles.button, busy && styles.disabled]}
-        >
+        <DevnetPill />
+      </View>
+
+      {account === undefined ? (
+        <>
+          <Text style={styles.heroTitle}>Pocket Multisig</Text>
+          <Text style={styles.heroTagline}>
+            Shared vaults on Solana.{'\n'}Everyone signs, nobody trusts alone.
+          </Text>
+
+          <View style={styles.valueList}>
+            <ListRow glyph="👥" title="Create a shared vault" subtitle="2 or more signers" />
+            <ListRow
+              glyph="✓"
+              title="Propose, approve, execute"
+              subtitle="Each step signed in your wallet"
+            />
+            <ListRow
+              glyph="🔒"
+              title="Keys stay in your wallet"
+              subtitle="Seed Vault, Solflare, Ledger"
+            />
+          </View>
+
+          <PillButton
+            accessibilityLabel="Connect wallet"
+            busy={phase === 'connecting'}
+            disabled={busy}
+            label="Connect wallet"
+            onPress={onConnect}
+          />
+          <Text style={styles.footerNote}>Devnet · nothing real is at stake</Text>
           {phase === 'connecting' ? (
-            <ActivityIndicator color="#ffffff" />
-          ) : (
-            <Text style={styles.buttonText}>Connect wallet</Text>
-          )}
-        </Pressable>
-      )}
+            <Text style={styles.footerNote}>Opening the wallet…</Text>
+          ) : null}
+          {error !== null ? (
+            <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
+              <InfoText tone="error">{error}</InfoText>
+            </InfoBox>
+          ) : null}
+          {error !== null || (__DEV__ && mwaReport !== null) ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Retry connecting the wallet"
+              onPress={onConnect}
+              style={styles.retry}
+            >
+              <Text style={styles.retryTextV2}>Retry</Text>
+            </Pressable>
+          ) : null}
+          {__DEV__ && mwaReport !== null ? (
+            <View style={styles.devBlock}>
+              <Text style={styles.devText}>MWA diagnostics</Text>
+              <Text style={styles.devText}>Step: {mwaReport.step}</Text>
+              <Text style={styles.devText}>
+                Protocol code: {mwaReport.code ?? 'none returned'}
+              </Text>
+              <Text style={styles.devText}>
+                Error type: {mwaReport.name ?? 'not an Error instance'}
+              </Text>
+              <Text style={styles.devText}>Message: {mwaReport.message}</Text>
+              {mwaReport.data !== null ? (
+                <Text style={styles.devText}>Data: {mwaReport.data}</Text>
+              ) : null}
+              <Text style={styles.devText}>{mwaReport.hint}</Text>
+            </View>
+          ) : null}
+        </>
+      ) : null}
 
       {/* Apprentissage : accessible IMMEDIATEMENT, sans wallet connecte, sans
           multisig charge et sans reseau. Aucune donnee wallet n'est touchee.
-          Une SEULE surface cliquable (plus de double contenant). */}
+          Une SEULE surface cliquable (pas de double contenant). */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Learn how multisig works"
         onPress={onboarding.open}
-        style={({ pressed }) => [
-          styles.learnSurface,
-          pressed && styles.learnSurfacePressed,
-        ]}
+        style={({ pressed }) => [styles.learnSurface, pressed && styles.learnSurfacePressed]}
       >
         <Text style={styles.learnSurfaceText}>Learn how multisig works</Text>
       </Pressable>
 
-      {phase === 'connecting' ? (
-        <Text style={styles.hint}>Opening the wallet…</Text>
-      ) : null}
-
-      {/* Diagnostics réseau : DEV uniquement. En release, l'état RPC reste
-          consultable dans la section « Details » repliable, pas au premier
-          niveau du Home. */}
+      {/* Diagnostics réseau : DEV uniquement. En release, aucun niveau RPC au
+          premier niveau des écrans V2. */}
       {__DEV__ ? (
-        <View style={styles.rpcBox}>
-          <Text style={styles.rpcLine}>Network: Devnet</Text>
-          <Text style={styles.rpcLine}>
-            RPC:{' '}
-            <Text
-              style={[
-                styles.rpcValue,
-                rpcStatus === 'online' && styles.rpcOnline,
-                rpcStatus === 'offline' && styles.rpcOffline,
-              ]}
-            >
-              {rpcStatus === 'checking' ? 'Checking…' : rpcStatus === 'online' ? 'Online' : 'Offline'}
-            </Text>
+        <View style={styles.devBlock}>
+          <Text style={styles.devText}>
+            Network: Devnet · RPC: {rpcStatus}
           </Text>
-          {rpcStatus === 'offline' ? (
-            <>
-              {rpcDetail ? <Text style={styles.rpcDetail}>{rpcDetail}</Text> : null}
-              <Pressable accessibilityRole="button" onPress={retryRpc} style={styles.retry}>
-                <Text style={styles.retryText}>Retry</Text>
-              </Pressable>
-            </>
-          ) : null}
-        </View>
-      ) : null}
-
-      {account ? (
-        <View onLayout={onMultisigBlockLayout} style={styles.msigBlock}>
-          <Text style={styles.msigHeading}>Multisig (read only)</Text>
-          {/* Load multisig : le collage remplit le champ UNIQUEMENT. Aucun
-              chargement automatique, aucun RPC, aucun wallet. */}
-          <AddressInput
-            disabled={msig.status === 'loading'}
-            inputRef={multisigInputRef}
-            label="Multisig address"
-            onBlur={onMultisigInputBlur}
-            onChangeText={setMultisigInput}
-            onFocus={onMultisigInputFocus}
-            placeholder="Multisig address"
-            value={multisigInput}
-          />
+          {rpcDetail !== null ? <Text style={styles.devText}>{rpcDetail}</Text> : null}
           <Pressable
             accessibilityRole="button"
-            disabled={msig.status === 'loading'}
-            onPress={() => msig.load(multisigInput)}
-            style={[styles.button, msig.status === 'loading' && styles.disabled]}
+            accessibilityLabel="Retry the RPC health check"
+            onPress={retryRpc}
+            style={styles.retry}
           >
-            {msig.status === 'loading' ? (
-              <ActivityIndicator color="#ffffff" />
-            ) : (
-              <Text style={styles.buttonText}>Load multisig</Text>
-            )}
+            <Text style={styles.retryTextV2}>Retry</Text>
           </Pressable>
-          {msig.status === 'loading' ? <Text style={styles.hint}>Lecture…</Text> : null}
+        </View>
+      ) : null}
 
-          {msig.status === 'error' && msig.error ? (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorText}>{msig.error}</Text>
-              <Pressable accessibilityRole="button" onPress={msig.retry} style={styles.retry}>
-                <Text style={styles.retryText}>Retry</Text>
-              </Pressable>
+      {account === undefined ? null : (
+        <View onLayout={onMultisigBlockLayout} style={styles.homeBody}>
+          {/* CARTE VAULT — données réelles uniquement, aucune valeur codée en dur. */}
+          <Card elevated style={styles.vaultCard}>
+            <View style={styles.vaultCardTop}>
+              <Text style={styles.vaultName}>{homeVaultName ?? 'Main vault'}</Text>
+              {view !== null ? (
+                <View style={styles.memberBadge}>
+                  <Text style={styles.memberBadgeText}>
+                    {`MULTISIG · ${view.threshold} OF ${view.members.length}`}
+                  </Text>
+                </View>
+              ) : null}
             </View>
-          ) : null}
-
-          {msig.status === 'loaded' && msig.view ? (
-            <View style={styles.msigResult}>
-              <Text style={styles.inboxHeading}>{inboxHeading}</Text>
-              <Text style={styles.inboxCount}>{inboxDecisions.length}</Text>
-
-              {/* Tableau de bord du multisig ACTIF : identité, statut du wallet,
-                  Main vault, configuration et actions attendues. Aucun label
-                  local n'est transmis : tout reste sur l'appareil. */}
-              <Text style={styles.fieldLabel}>Active multisig</Text>
-              <Text style={styles.fieldValue}>{homeVaultName ?? 'Unnamed multisig'}</Text>
-              <Text selectable style={styles.hint}>
-                {msig.view.address}
+            {view === null ? (
+              <Text style={styles.vaultCopy}>
+                No multisig loaded yet. Add an existing multisig below, or create a vault.
               </Text>
-
-              <Text style={styles.fieldLabel}>Wallet status</Text>
-              <Text style={styles.fieldValue}>
-                {homeIsMember ? 'My multisig' : 'Observed multisig · Read only'}
-              </Text>
-              {homeIsMember ? (
-                <Text style={styles.hint}>Roles read on-chain: {homeWalletRoles.join(' · ')}</Text>
-              ) : (
-                <Text style={styles.hint}>
-                  This is public on-chain information. Your connected wallet has no permissions in
-                  this multisig.
-                </Text>
-              )}
-
-              {/* Main vault : le SOLDE est l'information principale du bloc, une
-                  seule explication, aucune zone vide. */}
-              <Text style={styles.fieldLabel}>MAIN VAULT</Text>
-              {homeBalanceView.sol !== null ? (
+            ) : (
+              <>
                 <Text selectable style={styles.balanceValue}>
-                  {homeBalanceView.sol} SOL
+                  {homeBalanceView.sol !== null ? `${homeBalanceView.sol} SOL` : '0 SOL'}
                 </Text>
-              ) : null}
-              {homeBalanceView.title === 'Main vault not funded' ? (
-                <Text style={styles.balanceNote}>Main vault not funded</Text>
-              ) : null}
-              {homeBalanceView.title === 'Balance unavailable' ? (
-                <Text style={styles.balanceNote}>Balance unavailable</Text>
-              ) : null}
-              <Text selectable style={styles.hint}>
-                {msig.view.vaultAddress}
-              </Text>
-              <Text style={styles.hint}>
-                This account holds the funds controlled by the multisig.
-              </Text>
-              {homeBalanceView.stale ? <Text style={styles.hint}>stale</Text> : null}
-              {homeBalanceView.hint.length > 0 ? (
-                <Text style={styles.hint}>{homeBalanceView.hint}</Text>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Refresh the Main vault balance"
-                disabled={homeBalance?.status === 'loading'}
-                onPress={() => {
-                  refreshHomeBalance(viewVaultAddress ?? '');
-                }}
-                style={styles.retry}
-              >
-                <Text style={styles.retryText}>
-                  {homeBalance?.status === 'loading'
-                    ? 'Loading vault balance…'
-                    : homeBalanceError
-                      ? 'Retry balance'
-                      : 'Refresh balance'}
+                {homeBalanceView.title === 'Main vault not funded' ? (
+                  <Text style={styles.balanceNote}>Main vault not funded</Text>
+                ) : null}
+                {homeBalanceView.title === 'Balance unavailable' ? (
+                  <Text style={styles.balanceNote}>Balance unavailable</Text>
+                ) : null}
+                {homeBalanceView.stale ? (
+                  <Text style={styles.vaultCopySmall}>stale</Text>
+                ) : null}
+                {homeBalanceView.hint.length > 0 ? (
+                  <Text style={styles.vaultCopySmall}>{homeBalanceView.hint}</Text>
+                ) : null}
+                <Text style={styles.vaultCopy}>
+                  {homeIsMember
+                    ? `My multisig · ${homeWalletRoles.join(' · ')}`
+                    : 'Observed multisig · Read only'}
                 </Text>
-              </Pressable>
-
-              {/* Action prioritaire : placée juste après le solde, avant tout
-                  détail technique, pour éviter un long scroll. */}
-              <Text style={styles.fieldLabel}>Actions required</Text>
-              <Text style={styles.hint}>
-                {homeNeedsVote} proposal(s) waiting for your vote · {homeReadyToExecute} ready to
-                execute
-              </Text>
-              {priorityIndex !== null ? (
+                {!homeIsMember ? (
+                  <Text style={styles.vaultCopySmall}>
+                    This is public on-chain information. Your connected wallet has no permissions in
+                    this multisig.
+                  </Text>
+                ) : null}
+                <AddressRow
+                  address={shortenAddress(view.vaultAddress)}
+                  label="Main vault address"
+                />
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Review proposal ${priorityIndex}`}
+                  accessibilityLabel="Refresh the Main vault balance"
+                  disabled={homeBalance?.status === 'loading'}
                   onPress={() => {
-                    setOpenDecisionIndex(priorityIndex);
+                    refreshHomeBalance(viewVaultAddress ?? '');
                   }}
-                  style={[styles.button, styles.secondary, styles.sideButton]}
+                  style={styles.retry}
                 >
-                  <Text style={styles.secondaryText}>Review proposal #{priorityIndex}</Text>
-                </Pressable>
-              ) : null}
-
-              <Text style={styles.fieldLabel}>Technical details</Text>
-              <Text style={styles.hint}>
-                Threshold {msig.view.threshold} of {msig.view.members.length} member(s). Multisig
-                configuration: {msig.view.address}
-              </Text>
-
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Open this multisig in the shared detail screen"
-                onPress={() => setManualDetailsOpen(true)}
-                style={[styles.button, styles.secondary, styles.sideButton]}
-              >
-                <Text style={styles.secondaryText}>Open multisig</Text>
-              </Pressable>
-
-              {/* Apprentissage : la reouverture reste accessible AVANT connexion
-                  wallet (helpBox). Elle est retiree du dashboard charge. */}
-              {onboarding.storageFailed ? (
-                <Text style={styles.hint}>
-                  Your answers could not be saved on this device: the app keeps working with the
-                  default learning mode, and nothing is sent anywhere.
-                </Text>
-              ) : null}
-
-              {proposals.status === 'loading' ? (
-                <Text style={styles.hint}>Reading…</Text>
-              ) : null}
-
-              {/* Relecture en lecture seule : le dernier état lisible est conservé
-                  si le réseau échoue, et aucun wallet n'est sollicité. */}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Refresh proposals from the chain"
-                disabled={proposals.status === 'loading'}
-                onPress={proposals.retry}
-                style={({ pressed }) => [
-                  styles.button,
-                  styles.secondary,
-                  styles.sideButton,
-                  pressed && styles.secondaryPressed,
-                  proposals.status === 'loading' && styles.disabled,
-                ]}
-              >
-                <Text style={styles.secondaryText}>
-                  {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh proposals'}
-                </Text>
-              </Pressable>
-
-              {proposals.status === 'loaded' && inboxDecisions.length === 0 ? (
-                <Text style={styles.hint}>No proposals yet</Text>
-              ) : null}
-
-              {inboxDecisions.map((decision) => {
-                const model = decodedModelFor(decision.index);
-                const summary = summarizeOperation(model);
-                const operationLine =
-                  summary === null
-                    ? inboxDecodeError !== null
-                      ? 'Operation details unavailable'
-                      : inboxDecoding
-                        ? 'Loading operation…'
-                        : 'Operation details unavailable'
-                    : summary.action;
-                const detailLine =
-                  summary === null
-                    ? 'Open View details'
-                    : `${summary.amount} · Devnet · to ${summary.destination}`;
-                return (
-                  <View key={decision.index} style={styles.decisionCard}>
-                    <Text style={styles.decisionAction}>{operationLine}</Text>
-                    <Text style={styles.decisionMeta}>{detailLine}</Text>
-                    <Text style={styles.decisionMeta}>
-                      {decision.approvals} of {decision.threshold} approvals
-                    </Text>
-                    <Text style={styles.decisionState}>{decision.stateLabel}</Text>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Open proposal ${decision.index} in the shared detail screen`}
-                      onPress={() => {
-                        setOpenDecisionIndex(decision.index);
-                      }}
-                      style={styles.retry}
-                    >
-                      <Text style={styles.proposalAction}>Review proposal</Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Open the full transaction review of proposal ${decision.index}`}
-                      onPress={() => {
-                        void openProposalReview(decision.index);
-                      }}
-                      style={styles.retry}
-                    >
-                      <Text style={styles.proposalAction}>
-                        {reviewLoading ? 'Loading…' : 'Full review'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                );
-              })}
-
-              {reviewError !== null ? <Text style={styles.rpcDetail}>{reviewError}</Text> : null}
-              {proposals.status === 'loaded' && (proposals.list?.unreadable ?? 0) > 0 ? (
-                <Text style={styles.rpcDetail}>
-                  {proposals.list?.unreadable} compte(s) illisible(s) ignoré(s)
-                </Text>
-              ) : null}
-              {proposals.status === 'error' && proposals.error ? (
-                <View style={styles.errorBox}>
-                  <Text style={styles.errorText}>{proposals.error}</Text>
-                  <Pressable accessibilityRole="button" onPress={proposals.retry} style={styles.retry}>
-                    <Text style={styles.retryText}>Retry</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-
-              {/* Details secondaires : replies par defaut, sans duplication du resume. */}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded: detailsOpen }}
-                accessibilityLabel="Toggle multisig details"
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                onPress={() => setDetailsOpen((previous) => !previous)}
-                style={styles.detailsToggle}
-              >
-                <Text style={styles.detailsToggleText}>
-                  {detailsOpen ? '▾ Details' : '▸ Details'}
-                </Text>
-              </Pressable>
-
-              {detailsOpen ? (
-                <View style={styles.detailsBody}>
-                  <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-                  <Text selectable style={styles.fieldValue}>{msig.view.address}</Text>
-
-                  <Text style={styles.fieldLabel}>Vault address (index 0)</Text>
-                  <Text selectable style={styles.fieldValue}>{msig.view.vaultAddress}</Text>
-
-                  <Text style={styles.fieldLabel}>Threshold</Text>
-                  <Text style={styles.fieldValue}>
-                    {msig.view.threshold} / {msig.view.members.length}
+                  <Text style={styles.retryTextV2}>
+                    {homeBalance?.status === 'loading'
+                      ? 'Loading vault balance…'
+                      : homeBalanceError
+                        ? 'Retry balance'
+                        : 'Refresh balance'}
                   </Text>
+                </Pressable>
+              </>
+            )}
+          </Card>
 
-                  <Text style={styles.fieldLabel}>Members ({msig.view.members.length})</Text>
-                  {msig.view.members.map((member) => (
-                    <Text key={member.address} selectable style={styles.memberLine}>
-                      {member.address}
-                      {member.roles.length > 0 ? `  ·  ${member.roles.join(' + ')}` : ''}
-                    </Text>
-                  ))}
+          {/* ACTIONS PRINCIPALES — Receive / Propose / Signers, handlers existants. */}
+          <View style={styles.actionRow}>
+            <HomeAction
+              glyph="↓"
+              label="Receive"
+              onPress={() => setReceiveOpen(true)}
+            />
+            <HomeAction
+              glyph="↗"
+              label="Propose"
+              onPress={() => setManualDetailsOpen(true)}
+            />
+            <HomeAction
+              accessibilityLabel="Open this multisig in the shared detail screen"
+              glyph="👥"
+              label="Signers"
+              onPress={() => setManualDetailsOpen(true)}
+            />
+          </View>
 
-                  <Text style={styles.fieldLabel}>Network</Text>
-                  <Text style={styles.fieldValue}>Devnet</Text>
-                  <Text style={styles.rpcLine}>RPC: {rpcStatus}</Text>
-                  {rpcDetail ? <Text style={styles.rpcDetail}>{rpcDetail}</Text> : null}
+          {/* TO DO — propositions réellement actionnables, trois au maximum. */}
+          <Text style={styles.sectionTitle}>To do</Text>
+          {proposals.status === 'loading' ? (
+            <Text style={styles.vaultCopySmall}>Reading…</Text>
+          ) : null}
+          {inboxDecisions.length === 0 && proposals.status === 'loaded' ? (
+            <Text style={styles.emptyNote}>Nothing waiting</Text>
+          ) : null}
+          {inboxDecisions.slice(0, 3).map((decision) => {
+            const model = decodedModelFor(decision.index);
+            const summary = summarizeOperation(model);
+            return (
+              <Card key={decision.index} style={styles.todoCard}>
+                <ListRow
+                  accessibilityLabel={`Open proposal ${decision.index} in the shared detail screen`}
+                  glyph="↗"
+                  onPress={() => {
+                    setOpenDecisionIndex(decision.index);
+                  }}
+                  subtitle={
+                    summary === null
+                      ? inboxDecodeError !== null
+                        ? 'Operation details unavailable'
+                        : inboxDecoding
+                          ? 'Loading operation…'
+                          : `${decision.stateLabel} · ${decision.approvals} of ${decision.threshold} approvals`
+                      : `${summary.amount} · ${decision.stateLabel} · ${decision.approvals} of ${decision.threshold} approvals`
+                  }
+                  title={`Proposal #${decision.index}`}
+                />
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open the full transaction review of proposal ${decision.index}`}
+                  onPress={() => {
+                    void openProposalReview(decision.index);
+                  }}
+                  style={styles.retry}
+                >
+                  <Text style={styles.retryTextV2}>
+                    {reviewLoading ? 'Loading…' : 'Full review'}
+                  </Text>
+                </Pressable>
+              </Card>
+            );
+          })}
+          {reviewError !== null ? <Text style={styles.vaultCopySmall}>{reviewError}</Text> : null}
+          {proposals.status === 'loaded' && (proposals.list?.unreadable ?? 0) > 0 ? (
+            <Text style={styles.vaultCopySmall}>
+              {proposals.list?.unreadable} compte(s) illisible(s) ignoré(s)
+            </Text>
+          ) : null}
+          {proposals.status === 'error' && proposals.error ? (
+            <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
+              <InfoText tone="error">{proposals.error}</InfoText>
+            </InfoBox>
+          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Refresh proposals from the chain"
+            disabled={proposals.status === 'loading'}
+            onPress={proposals.retry}
+            style={({ pressed }) => [styles.retry, pressed && styles.secondaryPressed]}
+          >
+            <Text style={styles.retryTextV2}>
+              {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh proposals'}
+            </Text>
+          </Pressable>
 
+          {/* YOUR WALLET — label et adresse réels, copie via le mécanisme existant. */}
+          <Text style={styles.sectionTitle}>Your wallet</Text>
+          <Card style={styles.walletCard}>
+            <Text style={styles.walletLabel}>
+              {walletIdentity?.label ?? 'Wallet without label'}
+            </Text>
+            <Text style={styles.walletAddress}>{shortenAddress(account.address.toString())}</Text>
+            <PillButton
+              accessibilityLabel="Copy the wallet address"
+              glyph="⧉"
+              label="Copy address"
+              onPress={onCopyWallet}
+              variant="secondary"
+            />
+            {walletCopyFeedback !== null ? (
+              <Text style={styles.copyFeedback}>{walletCopyFeedback}</Text>
+            ) : null}
+          </Card>
+
+          {/* ACTIONS SECONDAIRES — ne dominent plus Home, handlers existants. */}
+          <Text style={styles.sectionTitle}>Manage</Text>
+          <PillButton
+            accessibilityLabel="Add an existing multisig"
+            disabled={msig.status === 'loading'}
+            label="Add existing multisig"
+            onPress={() => setAddMultisigOpen((previous) => !previous)}
+            variant="secondary"
+          />
+          {addMultisigOpen ? (
+            <View style={styles.loaderBlock}>
+              <AddressInput
+                disabled={msig.status === 'loading'}
+                inputRef={multisigInputRef}
+                label="Multisig address"
+                onBlur={onMultisigInputBlur}
+                onChangeText={setMultisigInput}
+                onFocus={onMultisigInputFocus}
+                placeholder="Multisig address"
+                value={multisigInput}
+              />
+              <PillButton
+                accessibilityLabel="Load multisig"
+                busy={msig.status === 'loading'}
+                disabled={msig.status === 'loading'}
+                label="Load multisig"
+                onPress={() => msig.load(multisigInput)}
+                variant="primary"
+              />
+              {msig.status === 'loading' ? (
+                <Text style={styles.vaultCopySmall}>Lecture…</Text>
+              ) : null}
+              {msig.status === 'error' && msig.error ? (
+                <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
+                  <InfoText tone="error">{msig.error}</InfoText>
                   <Pressable
                     accessibilityRole="button"
-                    onPress={() => {
-                      setMultisigInput('');
-                      msig.clear();
-                    }}
+                    accessibilityLabel="Retry loading the multisig"
+                    onPress={msig.retry}
                     style={styles.retry}
                   >
-                    <Text style={styles.retryText}>Clear</Text>
+                    <Text style={styles.retryTextV2}>Retry</Text>
                   </Pressable>
-                </View>
+                </InfoBox>
+              ) : null}
+              {view !== null ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear the loaded multisig"
+                  onPress={() => {
+                    setMultisigInput('');
+                    msig.clear();
+                  }}
+                  style={styles.retry}
+                >
+                  <Text style={styles.retryTextV2}>Clear</Text>
+                </Pressable>
               ) : null}
             </View>
           ) : null}
-        </View>
-      ) : null}
+          <View style={styles.secondaryStack}>
+            <PillButton
+              accessibilityLabel="Create a vault"
+              label="Create a vault"
+              onPress={() => setVaultCreationOpen(true)}
+              variant="secondary"
+            />
+            <PillButton
+              accessibilityLabel="Open multisig inbox"
+              label="Inbox"
+              onPress={() => setInboxOpen(true)}
+              variant="secondary"
+            />
+          </View>
 
-      {account ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Create a vault"
-          onPress={() => setVaultCreationOpen(true)}
-          style={[styles.button, styles.secondary, styles.sideButton]}
-        >
-          <Text style={styles.secondaryText}>Create a vault</Text>
-        </Pressable>
-      ) : null}
+          {/* TO DO compteurs (données réelles déjà lues). */}
+          <Text style={styles.vaultCopySmall}>
+            {homeNeedsVote} proposal(s) waiting for your vote · {homeReadyToExecute} ready to
+            execute
+          </Text>
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open multisig inbox"
-        onPress={() => setInboxOpen(true)}
-        style={({ pressed }) => [
-          styles.button,
-          styles.secondary,
-          styles.sideButton,
-          pressed && styles.secondaryPressed,
-        ]}
-      >
-        <Text style={styles.secondaryText}>Inbox</Text>
-      </Pressable>
-
-      {error || mwaReport !== null ? (
-        <View style={styles.errorBox}>
-          {error !== null ? <Text style={styles.errorText}>{error}</Text> : null}
-          {mwaReport !== null ? (
-            <>
-              <Text style={styles.diagnosticsTitle}>MWA diagnostics</Text>
-              <Text style={styles.diagnosticsText}>Step: {mwaReport.step}</Text>
-              <Text style={styles.diagnosticsText}>
-                Protocol code: {mwaReport.code ?? 'none returned'}
+          {/* DETAILS TECHNIQUES — repliés, hors du premier niveau. */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: detailsOpen }}
+            accessibilityLabel="Toggle technical details"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={() => setDetailsOpen((previous) => !previous)}
+            style={styles.detailsToggle}
+          >
+            <Text style={styles.detailsToggleText}>
+              {detailsOpen ? '▾ Technical details' : '▸ Technical details'}
+            </Text>
+          </Pressable>
+          {detailsOpen && view !== null ? (
+            <View style={styles.detailsBody}>
+              <Text style={styles.fieldLabel}>Multisig configuration address</Text>
+              <Text selectable style={styles.fieldValue}>
+                {view.address}
               </Text>
-              <Text style={styles.diagnosticsText}>
-                Error type: {mwaReport.name ?? 'not an Error instance'}
+              <Text style={styles.fieldLabel}>Vault address (index 0)</Text>
+              <Text selectable style={styles.fieldValue}>
+                {view.vaultAddress}
               </Text>
-              <Text style={styles.diagnosticsText}>Message: {mwaReport.message}</Text>
-              {mwaReport.data !== null ? (
-                <Text style={styles.diagnosticsText}>Data: {mwaReport.data}</Text>
-              ) : null}
-              <Text style={styles.diagnosticsText}>{mwaReport.hint}</Text>
-            </>
+              <Text style={styles.fieldLabel}>Threshold</Text>
+              <Text style={styles.fieldValue}>
+                {view.threshold} / {view.members.length}
+              </Text>
+              <Text style={styles.fieldLabel}>Members ({view.members.length})</Text>
+              {view.members.map((member) => (
+                <Text key={member.address} selectable style={styles.memberLine}>
+                  {member.address}
+                  {member.roles.length > 0 ? `  ·  ${member.roles.join(' + ')}` : ''}
+                </Text>
+              ))}
+              <Text style={styles.fieldLabel}>Network</Text>
+              <Text style={styles.fieldValue}>Devnet</Text>
+              <Text style={styles.fieldValue}>RPC: {rpcStatus}</Text>
+            </View>
           ) : null}
-          {!account ? (
-            <Pressable accessibilityRole="button" onPress={onConnect} style={styles.retry}>
-              <Text style={styles.retryText}>Retry</Text>
-            </Pressable>
+
+          {/* Connexion / session wallet : handlers existants, présentés en
+              secondaire (l'onglet Account arrivera dans un groupe ultérieur). */}
+          <View style={styles.secondaryStack}>
+            <PillButton
+              accessibilityLabel="Disconnect the wallet"
+              busy={phase === 'disconnecting'}
+              disabled={busy}
+              label="Disconnect"
+              onPress={onDisconnect}
+              variant="ghost"
+            />
+            <PillButton
+              accessibilityLabel="Reset the mobile wallet adapter session"
+              disabled={busy}
+              label="Reset wallet session"
+              onPress={() => {
+                void onResetWalletSession();
+              }}
+              variant="ghost"
+            />
+          </View>
+          <Text style={styles.vaultCopySmall}>
+            Clears the local authorization and revokes the session on the wallet when possible.
+            Nothing is signed and no transaction is sent.
+          </Text>
+          {resetReport !== null ? (
+            <Text style={styles.vaultCopySmall}>{resetReport}</Text>
+          ) : null}
+          {onboarding.storageFailed ? (
+            <Text style={styles.vaultCopySmall}>
+              Your answers could not be saved on this device: the app keeps working with the default
+              learning mode, and nothing is sent anywhere.
+            </Text>
           ) : null}
         </View>
-      ) : null}
+      )}
 
       {__DEV__ ? (
         <View style={styles.previewBlock}>
@@ -1156,25 +1180,23 @@ export function ConnectScreen() {
 const styles = StyleSheet.create({
   // Conteneur du KeyboardAvoidingView : occupe tout l'espace disponible.
   keyboardAvoider: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   // Le ScrollView remplit ce conteneur ; le centrage reste assure par container.
   scrollView: {
+    backgroundColor: colors.background,
     flex: 1,
     width: '100%',
   },
   container: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
+    alignItems: 'stretch',
+    backgroundColor: colors.background,
     flexGrow: 1,
-    // Contenu ancre en haut : pas de centrage artificiel d'un ecran long
-    // (le Home connecte est long et se remplissait par le haut de toute facon).
     justifyContent: 'flex-start',
-    padding: 24,
-    // Assez d'espace sous le contenu pour que le bouton "Load multisig" et le
-    // bouton "Clear" restent atteignables quand le clavier est ouvert.
-    paddingBottom: 96,
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
   },
   inboxHeading: {
     color: '#111827',
@@ -1522,5 +1544,175 @@ const styles = StyleSheet.create({
     color: '#1a56db',
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // --- UI V2 « Seeker style » ------------------------------------------------
+  headerRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+  },
+  logoTile: {
+    alignItems: 'center',
+    backgroundColor: colors.mint,
+    borderRadius: radii.field,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  logoGlyph: {
+    color: colors.petrolDeep,
+    fontSize: 22,
+  },
+  heroTitle: {
+    color: colors.text,
+    fontSize: typography.screenTitle,
+    fontWeight: '800',
+    marginTop: spacing.sm,
+  },
+  heroTagline: {
+    color: colors.textSecondary,
+    fontSize: typography.body,
+    lineHeight: 22,
+    marginTop: spacing.sm,
+  },
+  valueList: {
+    marginTop: spacing.xl,
+  },
+  footerNote: {
+    color: colors.textMuted,
+    fontSize: typography.caption,
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  errorBoxV2: {
+    marginTop: spacing.lg,
+  },
+  retryTextV2: {
+    color: colors.mint,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+  },
+  devBlock: {
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    marginTop: spacing.lg,
+    padding: spacing.md,
+  },
+  devText: {
+    color: colors.textMuted,
+    fontSize: typography.micro,
+    marginTop: 2,
+  },
+  homeBody: {
+    alignSelf: 'stretch',
+    marginTop: spacing.lg,
+  },
+  vaultCard: {
+    marginTop: spacing.sm,
+  },
+  vaultCardTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  vaultName: {
+    color: colors.text,
+    flexShrink: 1,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+    marginRight: spacing.sm,
+  },
+  memberBadge: {
+    backgroundColor: colors.successSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  memberBadgeText: {
+    color: colors.success,
+    fontSize: typography.micro,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  vaultCopy: {
+    color: colors.textSecondary,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.sm,
+  },
+  vaultCopySmall: {
+    color: colors.textMuted,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.lg,
+  },
+  actionTile: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    marginHorizontal: spacing.xs,
+    minHeight: 84,
+    paddingVertical: spacing.md,
+  },
+  actionTilePressed: {
+    backgroundColor: colors.surface,
+  },
+  actionGlyph: {
+    color: colors.mint,
+    fontSize: 22,
+  },
+  actionLabel: {
+    color: colors.text,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+    marginTop: spacing.xs,
+  },
+  sectionTitle: {
+    color: colors.text,
+    fontSize: typography.sectionTitle,
+    fontWeight: '800',
+    marginTop: spacing.xl,
+  },
+  emptyNote: {
+    color: colors.textMuted,
+    fontSize: typography.bodySmall,
+    marginTop: spacing.md,
+  },
+  todoCard: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  walletCard: {
+    marginTop: spacing.md,
+  },
+  walletAddress: {
+    color: colors.text,
+    fontFamily: 'monospace',
+    fontSize: typography.body,
+    marginBottom: spacing.lg,
+    marginTop: spacing.xs,
+  },
+  copyFeedback: {
+    color: colors.success,
+    fontSize: typography.secondary,
+    marginTop: spacing.sm,
+  },
+  secondaryStack: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  loaderBlock: {
+    marginTop: spacing.md,
   },
 });

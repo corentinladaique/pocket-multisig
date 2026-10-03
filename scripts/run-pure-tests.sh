@@ -43,6 +43,7 @@ files=(
   scripts/sol-cost-display.test.ts
   scripts/transaction-review-read-only.test.ts
   scripts/ui-release-review.test.ts
+  scripts/ui-v2.test.ts
   scripts/vault-balance.test.ts
   scripts/vault-draft.test.ts
   scripts/vault-name-required.test.ts

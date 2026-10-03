@@ -51,19 +51,18 @@ function guardedByDev(marker: string, target: string): boolean {
 }
 
 check('1. Les diagnostics wallet ne sont pas visibles en release Home', () => {
-  assert.ok(HOME.includes('Icon supplied by the wallet'), 'le texte existe encore (sous __DEV__)');
-  assert.ok(
-    guardedByDev(HOME, 'Icon supplied by the wallet'),
-    'les diagnostics wallet doivent etre sous __DEV__',
-  );
+  // V2 : les diagnostics d'identite wallet ont quitte le rendu principal.
+  assert.ok(!HOME.includes('Icon supplied by the wallet'), 'diagnostic wallet retire du rendu');
+  assert.ok(!HOME.includes('label supplied: '), 'diagnostic label retire du rendu');
 });
 
 check("2. RPC: Online n'est pas visible en release Home", () => {
-  assert.ok(HOME.includes('<View style={styles.rpcBox}>'), 'le bloc reseau existe encore');
+  // V2 : le seul affichage reseau de premier niveau est sous __DEV__.
   assert.ok(
-    guardedByDev(HOME, '<View style={styles.rpcBox}>'),
-    'le bloc reseau doit etre sous __DEV__',
+    guardedByDev(HOME, 'Network: Devnet · RPC:'),
+    'l etat RPC ne doit apparaitre que sous __DEV__',
   );
+  assert.ok(!HOME.includes('>Network: Devnet</Text>'), 'plus de ligne reseau en release');
 });
 
 check('3. Learn n utilisa plus deux contenants imbriques', () => {
@@ -76,14 +75,15 @@ check('3. Learn n utilisa plus deux contenants imbriques', () => {
 check('4. Inbox disponible n utilise pas le style disabled', () => {
   const idx = HOME.indexOf('accessibilityLabel="Open multisig inbox"');
   assert.ok(idx !== -1, 'le bouton Inbox existe');
-  const block = HOME.slice(idx, idx + 420);
-  assert.ok(block.includes('styles.secondary'), 'Inbox utilise le style secondaire reel');
-  assert.ok(!block.includes('styles.disabled'), 'Inbox ne doit pas utiliser le style disabled');
+  const block = HOME.slice(idx, idx + 240);
+  assert.ok(block.includes('variant="secondary"'), 'Inbox utilise le style secondaire reel');
+  assert.ok(!block.includes('disabled'), 'Inbox ne doit pas etre disabled');
 });
 
-check('5. La barre de statut demande un contenu sombre sur fond clair', () => {
-  assert.ok(APP.includes('<StatusBar style="dark" />'), 'contenu sombre demande');
-  assert.ok(APP.includes("backgroundColor: '#ffffff'"), 'fond racine clair');
+check('5. La barre de statut est coherente avec le theme', () => {
+  // UI V2 : theme sombre => contenu clair + fond racine sombre.
+  assert.ok(APP.includes('<StatusBar style="light" />'), 'contenu clair demande sur fond sombre');
+  assert.ok(APP.includes('colors.background'), 'fond racine issu du theme');
   assert.ok(!APP.includes('style="auto"'), 'plus de contenu auto');
 });
 

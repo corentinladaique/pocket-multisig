@@ -39,7 +39,7 @@ check('1. Home affiche le solde du Main vault apres Load multisig', () => {
       HOME.includes("connection.getBalance(new PublicKey(targetVaultAddress), 'confirmed')"),
     'la lecture doit viser le vault de la vue courante',
   );
-  assert.ok(HOME.includes('{homeBalanceView.sol} SOL'), 'le solde doit etre affiche');
+  assert.ok(HOME.includes('${homeBalanceView.sol} SOL'), 'le solde doit etre affiche');
   assert.ok(
     HOME.includes('{homeBalanceView.title === \'Main vault not funded\' ? ('),
     "l'etat du solde doit etre affiche",
@@ -69,7 +69,7 @@ check('3. wallet membre : roles reels lus on-chain', () => {
     HOME.includes('view.members.find((member) => member.address === walletAddress)?.roles'),
     'les roles doivent venir des membres lus',
   );
-  assert.ok(HOME.includes("homeIsMember ? 'My multisig'"), 'le statut membre doit etre affiche');
+  assert.ok(HOME.includes('My multisig · '), 'le statut membre doit etre affiche');
 });
 
 check('4. wallet non membre : Observed multisig, lecture seule', () => {
@@ -121,7 +121,10 @@ check('7. compteurs d actions calcules depuis les propositions deja lues', () =>
 });
 
 check("8. CTA Home ouvre ProposalDetailsScreen canonique", () => {
-  assert.ok(HOME.includes('setOpenDecisionIndex(priorityIndex)'), 'le CTA doit ouvrir la proposition');
+  assert.ok(
+    HOME.includes('setOpenDecisionIndex(decision.index)'),
+    'le CTA doit ouvrir la proposition',
+  );
   assert.ok(
     HOME.includes('<ProposalDetailsScreen'),
     'le CTA doit ouvrir le MEME ecran que Home et Inbox',
@@ -159,8 +162,10 @@ check('10. aucun chargement Home ni refresh ne sollicite le wallet', () => {
 
 check('identite : nom local du vault et adresse complete selectionnable', () => {
   assert.ok(HOME.includes("registry.entries.find((entry) => entry.address === viewAddress)"));
-  assert.ok(HOME.includes('{homeVaultName ?? \'Unnamed multisig\'}'));
-  assert.ok(HOME.includes('{msig.view.vaultAddress}'));
+  assert.ok(HOME.includes("{homeVaultName ?? 'Main vault'}"));
+  // L'adresse Main vault (index 0) reste affichee et selectionnable (Details).
+  assert.ok(HOME.includes('{view.vaultAddress}'));
+  assert.ok(HOME.includes('shortenAddress(view.vaultAddress)'));
 });
 
 setTimeout(() => {
