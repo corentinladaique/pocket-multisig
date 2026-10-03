@@ -102,10 +102,12 @@ check('15/16. Reset onboarding invisible sur Home, fonction conservee', () => {
 });
 
 check('16bis. Learn retire du dashboard charge, mais ouvert avant connexion', () => {
+  // V2 : Learn reste visible SANS wallet (ecran Connect) et vit dans la
+  // section « More » une fois connecte : deux acces, aucune duplication de logique.
   assert.equal(
     HOME.split('onPress={onboarding.open}').length - 1,
-    1,
-    'un seul acces Learn : celui d avant connexion wallet',
+    2,
+    'Learn accessible avant connexion et depuis More',
   );
   const learnIndex = HOME.indexOf('Learn how multisig works');
   const dashboardIndex = HOME.indexOf('Open this multisig in the shared detail screen');

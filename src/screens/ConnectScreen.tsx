@@ -45,7 +45,6 @@ import type { DecodeStatus } from '../types/transactionReview';
 import { COPIED_MESSAGE, COPY_FAILED_MESSAGE, copyToClipboard } from '../ui/clipboard';
 import { colors, radii, spacing, typography } from '../ui/theme';
 import {
-  AddressRow,
   Card,
   DevnetPill,
   InfoBox,
@@ -121,9 +120,9 @@ export function ConnectScreen() {
   );
   const [multisigInput, setMultisigInput] = useState('');
   const [previewCase, setPreviewCase] = useState<DecodeStatus | null>(null);
-  const [review, setReview] = useState<ProposalReviewResult | null>(null);
-  const [reviewError, setReviewError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // Section « More » (actions de gestion) : repliée par défaut, ouverte si aucun vault.
+  const [moreOpen, setMoreOpen] = useState(false);
   // Vue Receive SOL (Groupe 1) : informative, lecture seule.
   const [receiveOpen, setReceiveOpen] = useState(false);
   // Loader manuel d'un multisig existant : replié par défaut (secondaire).
@@ -220,14 +219,12 @@ export function ConnectScreen() {
   const inboxDecisions = decisions.filter((entry) => entry.kind !== 'none');
   const priorityIndex = inboxDecisions[0]?.index ?? null;
 
-  // Modele deja en memoire pour un index donne : la revue ouverte, ou le
-  // prechargement de la boite de reception. Aucun appel reseau ici.
+  // Modele deja en memoire pour un index donne : seule la proposition
+  // prioritaires prechargee fournit un modele. Aucun appel reseau ici.
   const decodedModelFor = (index: number): TransactionReviewModel | null => {
-    if (review !== null && review.model.proposalIndex === index) return review.model;
     if (inboxDecoded !== null && inboxDecoded.model.proposalIndex === index) return inboxDecoded.model;
     return null;
   };
-  const [reviewLoading, setReviewLoading] = useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
   // Diagnostics MWA : étape, code et message exacts, jamais reformulés.
@@ -353,6 +350,9 @@ export function ConnectScreen() {
   const viewAddress = msig.view?.address ?? null;
   const viewVaultAddress = msig.view?.vaultAddress ?? null;
   const view = msig.view ?? null;
+  // La section « More » s'ouvre d'office tant qu'aucun vault n'est chargé :
+  // Create a vault / Add existing multisig restent découvrables dans l'état vide.
+  const manageExpanded = view === null || moreOpen;
 
   // --- Tableau de bord Home -------------------------------------------------
   // Solde du Main vault, chargé en lecture seule AVEC son adresse : changer de
@@ -487,48 +487,6 @@ export function ConnectScreen() {
     };
   }, [account, priorityIndex, proposalsLoaded, viewAddress, viewVaultAddress]);
 
-  const openProposalReview = useCallback(
-    async (index: number) => {
-      const view = msig.view;
-      if (view === null) return;
-      // Reutilisation du modele deja en memoire : aucun second appel reseau.
-      if (inboxDecoded !== null && inboxDecoded.model.proposalIndex === index) {
-        setReviewError(null);
-        setReview(inboxDecoded);
-        return;
-      }
-      setReviewError(null);
-      setReviewLoading(true);
-      try {
-        const status =
-          proposals.list?.proposals.find((entry) => entry.index === index)?.status ?? 'Unknown';
-        const result = await loadProposalReview(
-          connection,
-          new PublicKey(view.address),
-          {
-            network: 'devnet',
-            multisigAddress: view.address,
-            vaultAddress: view.vaultAddress,
-            proposalIndex: index,
-            proposalStatus: status,
-            signerWallet: account === undefined ? 'Unknown' : account.address.toString(),
-          },
-          index,
-        );
-        setReview(result);
-      } catch (caught: unknown) {
-        setReviewError(
-          `Lecture de la proposition impossible : ${
-            caught instanceof Error ? caught.message : String(caught)
-          }`,
-        );
-      } finally {
-        setReviewLoading(false);
-      }
-    },
-    [account, msig.view, proposals.list],
-  );
-
   // Receive SOL (Groupe 1) : vue informative. N'ouvre aucun wallet, ne prépare
   // aucune transaction, ne fait aucun RPC. L'adresse vient de msig.view
   // (Main vault PDA index 0, déjà dérivée) — jamais d'une valeur inventée.
@@ -581,46 +539,6 @@ export function ConnectScreen() {
         />
       );
     }
-  }
-
-  if (review !== null) {
-    // Données déjà chargées uniquement : le guard ne fait aucun appel RPC.
-    const matched = proposals.list?.proposals.find(
-      (entry) => entry.index === review.model.proposalIndex,
-    );
-    return (
-      <TransactionReviewScreen
-        model={review.model}
-        guardContext={{
-          review: review.model,
-          multisig:
-            msig.view === null
-              ? null
-              : {
-                  address: msig.view.address,
-                  vaultAddress: msig.view.vaultAddress,
-                  threshold: msig.view.threshold,
-                  members: msig.view.members.map((member) => ({
-                    address: member.address,
-                    roles: member.roles,
-                  })),
-                },
-          proposal:
-            matched === undefined
-              ? null
-              : {
-                  index: matched.index,
-                  status: matched.status,
-                  approvedAddresses: matched.approvedAddresses,
-                },
-          walletAddress: account === undefined ? null : account.address.toString(),
-        }}
-        onBack={() => {
-          setReview(null);
-          setReviewError(null);
-        }}
-      />
-    );
   }
 
   // Preview locale (développement uniquement) : affiche un modèle fictif.
@@ -726,14 +644,14 @@ export function ConnectScreen() {
           </Text>
 
           <View style={styles.valueList}>
-            <ListRow glyph="👥" title="Create a shared vault" subtitle="2 or more signers" />
+            <ListRow glyph="◈" title="Create a shared vault" subtitle="2 or more signers" />
             <ListRow
               glyph="✓"
               title="Propose, approve, execute"
               subtitle="Each step signed in your wallet"
             />
             <ListRow
-              glyph="🔒"
+              glyph="❖"
               title="Keys stay in your wallet"
               subtitle="Seed Vault, Solflare, Ledger"
             />
@@ -785,17 +703,18 @@ export function ConnectScreen() {
         </>
       ) : null}
 
-      {/* Apprentissage : accessible IMMEDIATEMENT, sans wallet connecte, sans
-          multisig charge et sans reseau. Aucune donnee wallet n'est touchee.
-          Une SEULE surface cliquable (pas de double contenant). */}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Learn how multisig works"
-        onPress={onboarding.open}
-        style={({ pressed }) => [styles.learnSurface, pressed && styles.learnSurfacePressed]}
-      >
-        <Text style={styles.learnSurfaceText}>Learn how multisig works</Text>
-      </Pressable>
+      {/* Apprentissage : visible SANS wallet (écran déconnecté). Une fois
+          connecté, l'accès Learn vit dans la section « More » du Home. */}
+      {account === undefined ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Learn how multisig works"
+          onPress={onboarding.open}
+          style={({ pressed }) => [styles.learnSurface, pressed && styles.learnSurfacePressed]}
+        >
+          <Text style={styles.learnSurfaceText}>Learn how multisig works</Text>
+        </Pressable>
+      ) : null}
 
       {/* Diagnostics réseau : DEV uniquement. En release, aucun niveau RPC au
           premier niveau des écrans V2. */}
@@ -818,54 +737,46 @@ export function ConnectScreen() {
 
       {account === undefined ? null : (
         <View onLayout={onMultisigBlockLayout} style={styles.homeBody}>
-          {/* CARTE VAULT — données réelles uniquement, aucune valeur codée en dur. */}
-          <Card elevated style={styles.vaultCard}>
-            <View style={styles.vaultCardTop}>
-              <Text style={styles.vaultName}>{homeVaultName ?? 'Main vault'}</Text>
-              {view !== null ? (
+          {/* ÉTAT SANS MULTISIG : message clair, aucune action indisponible. */}
+          {view === null ? (
+            <Card elevated style={styles.vaultCard}>
+              <Text style={styles.vaultName}>No multisig loaded</Text>
+              <Text style={styles.vaultCopy}>
+                Add an existing multisig, or create a vault, to see its balance and actions.
+              </Text>
+            </Card>
+          ) : (
+            <Card elevated style={styles.vaultCard}>
+              <View style={styles.vaultCardTop}>
+                <Text style={styles.vaultName}>{homeVaultName ?? 'Main vault'}</Text>
                 <View style={styles.memberBadge}>
                   <Text style={styles.memberBadgeText}>
                     {`MULTISIG · ${view.threshold} OF ${view.members.length}`}
                   </Text>
                 </View>
-              ) : null}
-            </View>
-            {view === null ? (
-              <Text style={styles.vaultCopy}>
-                No multisig loaded yet. Add an existing multisig below, or create a vault.
+              </View>
+              <Text selectable style={styles.balanceValue}>
+                {homeBalanceView.sol !== null ? `${homeBalanceView.sol} SOL` : '0 SOL'}
               </Text>
-            ) : (
-              <>
-                <Text selectable style={styles.balanceValue}>
-                  {homeBalanceView.sol !== null ? `${homeBalanceView.sol} SOL` : '0 SOL'}
+              {homeBalanceView.title === 'Main vault not funded' ? (
+                <Text style={styles.balanceNote}>Main vault not funded</Text>
+              ) : null}
+              {homeBalanceView.title === 'Balance unavailable' ? (
+                <Text style={styles.balanceNote}>Balance unavailable</Text>
+              ) : null}
+              {homeBalanceView.hint.length > 0 ? (
+                <Text style={styles.vaultCopySmall}>{homeBalanceView.hint}</Text>
+              ) : null}
+              {homeBalanceView.stale ? (
+                <Text style={styles.vaultCopySmall}>stale</Text>
+              ) : null}
+              <Text style={styles.vaultCopySmall}>
+                {homeIsMember ? 'My multisig' : 'Observed multisig · Read only'}
+              </Text>
+              <View style={styles.vaultAddressRow}>
+                <Text selectable style={styles.vaultAddressText}>
+                  {shortenAddress(view.vaultAddress)}
                 </Text>
-                {homeBalanceView.title === 'Main vault not funded' ? (
-                  <Text style={styles.balanceNote}>Main vault not funded</Text>
-                ) : null}
-                {homeBalanceView.title === 'Balance unavailable' ? (
-                  <Text style={styles.balanceNote}>Balance unavailable</Text>
-                ) : null}
-                {homeBalanceView.stale ? (
-                  <Text style={styles.vaultCopySmall}>stale</Text>
-                ) : null}
-                {homeBalanceView.hint.length > 0 ? (
-                  <Text style={styles.vaultCopySmall}>{homeBalanceView.hint}</Text>
-                ) : null}
-                <Text style={styles.vaultCopy}>
-                  {homeIsMember
-                    ? `My multisig · ${homeWalletRoles.join(' · ')}`
-                    : 'Observed multisig · Read only'}
-                </Text>
-                {!homeIsMember ? (
-                  <Text style={styles.vaultCopySmall}>
-                    This is public on-chain information. Your connected wallet has no permissions in
-                    this multisig.
-                  </Text>
-                ) : null}
-                <AddressRow
-                  address={shortenAddress(view.vaultAddress)}
-                  label="Main vault address"
-                />
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Refresh the Main vault balance"
@@ -873,207 +784,247 @@ export function ConnectScreen() {
                   onPress={() => {
                     refreshHomeBalance(viewVaultAddress ?? '');
                   }}
-                  style={styles.retry}
+                  style={({ pressed }) => [
+                    styles.inlineAction,
+                    pressed && styles.inlineActionPressed,
+                  ]}
                 >
-                  <Text style={styles.retryTextV2}>
+                  <Text style={styles.inlineActionText}>
                     {homeBalance?.status === 'loading'
-                      ? 'Loading vault balance…'
+                      ? 'Loading…'
                       : homeBalanceError
-                        ? 'Retry balance'
-                        : 'Refresh balance'}
+                        ? 'Retry'
+                        : 'Refresh'}
                   </Text>
                 </Pressable>
-              </>
-            )}
-          </Card>
+              </View>
+            </Card>
+          )}
 
-          {/* ACTIONS PRINCIPALES — Receive / Propose / Signers, handlers existants. */}
-          <View style={styles.actionRow}>
-            <HomeAction
-              glyph="↓"
-              label="Receive"
-              onPress={() => setReceiveOpen(true)}
-            />
-            <HomeAction
-              glyph="↗"
-              label="Propose"
-              onPress={() => setManualDetailsOpen(true)}
-            />
-            <HomeAction
-              accessibilityLabel="Open this multisig in the shared detail screen"
-              glyph="👥"
-              label="Signers"
-              onPress={() => setManualDetailsOpen(true)}
-            />
-          </View>
+          {/* ACTIONS PRINCIPALES — uniquement quand un vault est chargé. */}
+          {view === null ? null : (
+            <View style={styles.actionRow}>
+              <HomeAction glyph="↓" label="Receive" onPress={() => setReceiveOpen(true)} />
+              <HomeAction glyph="↗" label="Propose" onPress={() => setManualDetailsOpen(true)} />
+              <HomeAction
+                accessibilityLabel="Open this multisig in the shared detail screen"
+                glyph="◎"
+                label="Signers"
+                onPress={() => setManualDetailsOpen(true)}
+              />
+            </View>
+          )}
 
-          {/* TO DO — propositions réellement actionnables, trois au maximum. */}
-          <Text style={styles.sectionTitle}>To do</Text>
-          {proposals.status === 'loading' ? (
-            <Text style={styles.vaultCopySmall}>Reading…</Text>
-          ) : null}
-          {inboxDecisions.length === 0 && proposals.status === 'loaded' ? (
-            <Text style={styles.emptyNote}>Nothing waiting</Text>
-          ) : null}
-          {inboxDecisions.slice(0, 3).map((decision) => {
-            const model = decodedModelFor(decision.index);
-            const summary = summarizeOperation(model);
-            return (
-              <Card key={decision.index} style={styles.todoCard}>
-                <ListRow
-                  accessibilityLabel={`Open proposal ${decision.index} in the shared detail screen`}
-                  glyph="↗"
-                  onPress={() => {
-                    setOpenDecisionIndex(decision.index);
-                  }}
-                  subtitle={
-                    summary === null
-                      ? inboxDecodeError !== null
-                        ? 'Operation details unavailable'
-                        : inboxDecoding
-                          ? 'Loading operation…'
-                          : `${decision.stateLabel} · ${decision.approvals} of ${decision.threshold} approvals`
-                      : `${summary.amount} · ${decision.stateLabel} · ${decision.approvals} of ${decision.threshold} approvals`
-                  }
-                  title={`Proposal #${decision.index}`}
-                />
+          {/* TO DO — propositions réellement actionnables, compactes, max 3. */}
+          {view === null ? null : (
+            <>
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>To do</Text>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`Open the full transaction review of proposal ${decision.index}`}
-                  onPress={() => {
-                    void openProposalReview(decision.index);
-                  }}
-                  style={styles.retry}
+                  accessibilityLabel="Refresh proposals from the chain"
+                  disabled={proposals.status === 'loading'}
+                  onPress={proposals.retry}
+                  style={({ pressed }) => [
+                    styles.inlineAction,
+                    pressed && styles.inlineActionPressed,
+                  ]}
                 >
-                  <Text style={styles.retryTextV2}>
-                    {reviewLoading ? 'Loading…' : 'Full review'}
+                  <Text style={styles.inlineActionText}>
+                    {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh'}
                   </Text>
                 </Pressable>
-              </Card>
-            );
-          })}
-          {reviewError !== null ? <Text style={styles.vaultCopySmall}>{reviewError}</Text> : null}
-          {proposals.status === 'loaded' && (proposals.list?.unreadable ?? 0) > 0 ? (
-            <Text style={styles.vaultCopySmall}>
-              {proposals.list?.unreadable} compte(s) illisible(s) ignoré(s)
-            </Text>
-          ) : null}
-          {proposals.status === 'error' && proposals.error ? (
-            <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
-              <InfoText tone="error">{proposals.error}</InfoText>
-            </InfoBox>
-          ) : null}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Refresh proposals from the chain"
-            disabled={proposals.status === 'loading'}
-            onPress={proposals.retry}
-            style={({ pressed }) => [styles.retry, pressed && styles.secondaryPressed]}
-          >
-            <Text style={styles.retryTextV2}>
-              {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh proposals'}
-            </Text>
-          </Pressable>
-
-          {/* YOUR WALLET — label et adresse réels, copie via le mécanisme existant. */}
-          <Text style={styles.sectionTitle}>Your wallet</Text>
-          <Card style={styles.walletCard}>
-            <Text style={styles.walletLabel}>
-              {walletIdentity?.label ?? 'Wallet without label'}
-            </Text>
-            <Text style={styles.walletAddress}>{shortenAddress(account.address.toString())}</Text>
-            <PillButton
-              accessibilityLabel="Copy the wallet address"
-              glyph="⧉"
-              label="Copy address"
-              onPress={onCopyWallet}
-              variant="secondary"
-            />
-            {walletCopyFeedback !== null ? (
-              <Text style={styles.copyFeedback}>{walletCopyFeedback}</Text>
-            ) : null}
-          </Card>
-
-          {/* ACTIONS SECONDAIRES — ne dominent plus Home, handlers existants. */}
-          <Text style={styles.sectionTitle}>Manage</Text>
-          <PillButton
-            accessibilityLabel="Add an existing multisig"
-            disabled={msig.status === 'loading'}
-            label="Add existing multisig"
-            onPress={() => setAddMultisigOpen((previous) => !previous)}
-            variant="secondary"
-          />
-          {addMultisigOpen ? (
-            <View style={styles.loaderBlock}>
-              <AddressInput
-                disabled={msig.status === 'loading'}
-                inputRef={multisigInputRef}
-                label="Multisig address"
-                onBlur={onMultisigInputBlur}
-                onChangeText={setMultisigInput}
-                onFocus={onMultisigInputFocus}
-                placeholder="Multisig address"
-                value={multisigInput}
-              />
-              <PillButton
-                accessibilityLabel="Load multisig"
-                busy={msig.status === 'loading'}
-                disabled={msig.status === 'loading'}
-                label="Load multisig"
-                onPress={() => msig.load(multisigInput)}
-                variant="primary"
-              />
-              {msig.status === 'loading' ? (
-                <Text style={styles.vaultCopySmall}>Lecture…</Text>
+              </View>
+              {proposals.status === 'loading' ? (
+                <Text style={styles.vaultCopySmall}>Reading…</Text>
               ) : null}
-              {msig.status === 'error' && msig.error ? (
-                <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
-                  <InfoText tone="error">{msig.error}</InfoText>
+              {inboxDecisions.length === 0 && proposals.status === 'loaded' ? (
+                <Text style={styles.emptyNote}>Nothing waiting</Text>
+              ) : null}
+              {inboxDecisions.slice(0, 3).map((decision) => {
+                const model = decodedModelFor(decision.index);
+                const summary = summarizeOperation(model);
+                return (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Retry loading the multisig"
-                    onPress={msig.retry}
-                    style={styles.retry}
+                    accessibilityLabel={`Open proposal ${decision.index} in the shared detail screen`}
+                    key={decision.index}
+                    onPress={() => {
+                      setOpenDecisionIndex(decision.index);
+                    }}
+                    style={({ pressed }) => [styles.todoRow, pressed && styles.todoRowPressed]}
                   >
-                    <Text style={styles.retryTextV2}>Retry</Text>
+                    <Text style={styles.todoIndex}>{`#${decision.index}`}</Text>
+                    <View style={styles.todoBody}>
+                      <Text style={styles.todoTitle}>
+                        {summary === null ? 'Proposal' : summary.action}
+                      </Text>
+                      <Text style={styles.todoMeta}>
+                        {summary === null
+                          ? inboxDecodeError !== null
+                            ? 'Operation details unavailable'
+                            : inboxDecoding
+                              ? 'Loading operation…'
+                              : `${decision.stateLabel} · ${decision.approvals} of ${decision.threshold} approvals`
+                          : `${summary.amount} · ${decision.stateLabel} · ${decision.approvals} of ${decision.threshold} approvals`}
+                      </Text>
+                    </View>
+                    <Text style={styles.todoChevron}>›</Text>
                   </Pressable>
+                );
+              })}
+              {proposals.status === 'error' && proposals.error ? (
+                <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
+                  <InfoText tone="error">{proposals.error}</InfoText>
                 </InfoBox>
               ) : null}
-              {view !== null ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Clear the loaded multisig"
-                  onPress={() => {
-                    setMultisigInput('');
-                    msig.clear();
-                  }}
-                  style={styles.retry}
-                >
-                  <Text style={styles.retryTextV2}>Clear</Text>
-                </Pressable>
+            </>
+          )}
+
+          {/* YOUR WALLET — ligne compacte. */}
+          <Text style={styles.sectionTitle}>Your wallet</Text>
+          <View style={styles.walletRow}>
+            <View style={styles.walletRowBody}>
+              <Text style={styles.walletLabel}>
+                {walletIdentity?.label ?? 'Wallet without label'}
+              </Text>
+              <Text style={styles.walletAddress}>{shortenAddress(account.address.toString())}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Copy the wallet address"
+              onPress={onCopyWallet}
+              style={({ pressed }) => [styles.inlineAction, pressed && styles.inlineActionPressed]}
+            >
+              <Text style={styles.inlineActionText}>Copy</Text>
+            </Pressable>
+          </View>
+          {walletCopyFeedback !== null ? (
+            <Text style={styles.copyFeedback}>{walletCopyFeedback}</Text>
+          ) : null}
+
+          {/* MORE — gestion repliée ; ouverte d'office si AUCUN vault chargé
+              (Create a vault et Add existing multisig restent découvrables). */}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: manageExpanded }}
+            accessibilityLabel="Toggle more actions"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            onPress={() => setMoreOpen((previous) => !previous)}
+            style={styles.detailsToggle}
+          >
+            <Text style={styles.detailsToggleText}>{manageExpanded ? '▾ More' : '▸ More'}</Text>
+          </Pressable>
+          {manageExpanded ? (
+            <View style={styles.manageBody}>
+              <PillButton
+                accessibilityLabel="Add an existing multisig"
+                disabled={msig.status === 'loading'}
+                label="Add existing multisig"
+                onPress={() => setAddMultisigOpen((previous) => !previous)}
+                variant="secondary"
+              />
+              {addMultisigOpen ? (
+                <View style={styles.loaderBlock}>
+                  <AddressInput
+                    disabled={msig.status === 'loading'}
+                    inputRef={multisigInputRef}
+                    label="Multisig address"
+                    onBlur={onMultisigInputBlur}
+                    onChangeText={setMultisigInput}
+                    onFocus={onMultisigInputFocus}
+                    placeholder="Multisig address"
+                    value={multisigInput}
+                  />
+                  <PillButton
+                    accessibilityLabel="Load multisig"
+                    busy={msig.status === 'loading'}
+                    disabled={msig.status === 'loading'}
+                    label="Load multisig"
+                    onPress={() => msig.load(multisigInput)}
+                    variant="primary"
+                  />
+                  {msig.status === 'loading' ? (
+                    <Text style={styles.vaultCopySmall}>Lecture…</Text>
+                  ) : null}
+                  {msig.status === 'error' && msig.error ? (
+                    <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
+                      <InfoText tone="error">{msig.error}</InfoText>
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel="Retry loading the multisig"
+                        onPress={msig.retry}
+                        style={styles.retry}
+                      >
+                        <Text style={styles.retryTextV2}>Retry</Text>
+                      </Pressable>
+                    </InfoBox>
+                  ) : null}
+                  {view !== null ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear the loaded multisig"
+                      onPress={() => {
+                        setMultisigInput('');
+                        msig.clear();
+                      }}
+                      style={styles.retry}
+                    >
+                      <Text style={styles.retryTextV2}>Clear</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+              <PillButton
+                accessibilityLabel="Create a vault"
+                label="Create a vault"
+                onPress={() => setVaultCreationOpen(true)}
+                variant="secondary"
+              />
+              <PillButton
+                accessibilityLabel="Open multisig inbox"
+                label="Inbox"
+                onPress={() => setInboxOpen(true)}
+                variant="secondary"
+              />
+              <PillButton
+                accessibilityLabel="Open the multisig learning guide"
+                label="Learn"
+                onPress={onboarding.open}
+                variant="secondary"
+              />
+              <PillButton
+                accessibilityLabel="Disconnect the wallet"
+                busy={phase === 'disconnecting'}
+                disabled={busy}
+                label="Disconnect"
+                onPress={onDisconnect}
+                variant="ghost"
+              />
+              <PillButton
+                accessibilityLabel="Reset the mobile wallet adapter session"
+                disabled={busy}
+                label="Reset wallet session"
+                onPress={() => {
+                  void onResetWalletSession();
+                }}
+                variant="ghost"
+              />
+              <Text style={styles.vaultCopySmall}>
+                Clears the local authorization and revokes the session on the wallet when possible.
+                Nothing is signed and no transaction is sent.
+              </Text>
+              {resetReport !== null ? (
+                <Text style={styles.vaultCopySmall}>{resetReport}</Text>
+              ) : null}
+              {onboarding.storageFailed ? (
+                <Text style={styles.vaultCopySmall}>
+                  Your answers could not be saved on this device: the app keeps working with the
+                  default learning mode, and nothing is sent anywhere.
+                </Text>
               ) : null}
             </View>
           ) : null}
-          <View style={styles.secondaryStack}>
-            <PillButton
-              accessibilityLabel="Create a vault"
-              label="Create a vault"
-              onPress={() => setVaultCreationOpen(true)}
-              variant="secondary"
-            />
-            <PillButton
-              accessibilityLabel="Open multisig inbox"
-              label="Inbox"
-              onPress={() => setInboxOpen(true)}
-              variant="secondary"
-            />
-          </View>
-
-          {/* TO DO compteurs (données réelles déjà lues). */}
-          <Text style={styles.vaultCopySmall}>
-            {homeNeedsVote} proposal(s) waiting for your vote · {homeReadyToExecute} ready to
-            execute
-          </Text>
 
           {/* DETAILS TECHNIQUES — repliés, hors du premier niveau. */}
           <Pressable
@@ -1109,45 +1060,20 @@ export function ConnectScreen() {
                   {member.roles.length > 0 ? `  ·  ${member.roles.join(' + ')}` : ''}
                 </Text>
               ))}
+              <Text style={styles.fieldLabel}>Waiting for your vote</Text>
+              <Text style={styles.fieldValue}>
+                {homeNeedsVote} proposal(s) · {homeReadyToExecute} ready to execute
+              </Text>
               <Text style={styles.fieldLabel}>Network</Text>
               <Text style={styles.fieldValue}>Devnet</Text>
               <Text style={styles.fieldValue}>RPC: {rpcStatus}</Text>
+              {!homeIsMember ? (
+                <Text style={styles.hint}>
+                  This is public on-chain information. Your connected wallet has no permissions in
+                  this multisig.
+                </Text>
+              ) : null}
             </View>
-          ) : null}
-
-          {/* Connexion / session wallet : handlers existants, présentés en
-              secondaire (l'onglet Account arrivera dans un groupe ultérieur). */}
-          <View style={styles.secondaryStack}>
-            <PillButton
-              accessibilityLabel="Disconnect the wallet"
-              busy={phase === 'disconnecting'}
-              disabled={busy}
-              label="Disconnect"
-              onPress={onDisconnect}
-              variant="ghost"
-            />
-            <PillButton
-              accessibilityLabel="Reset the mobile wallet adapter session"
-              disabled={busy}
-              label="Reset wallet session"
-              onPress={() => {
-                void onResetWalletSession();
-              }}
-              variant="ghost"
-            />
-          </View>
-          <Text style={styles.vaultCopySmall}>
-            Clears the local authorization and revokes the session on the wallet when possible.
-            Nothing is signed and no transaction is sent.
-          </Text>
-          {resetReport !== null ? (
-            <Text style={styles.vaultCopySmall}>{resetReport}</Text>
-          ) : null}
-          {onboarding.storageFailed ? (
-            <Text style={styles.vaultCopySmall}>
-              Your answers could not be saved on this device: the app keeps working with the default
-              learning mode, and nothing is sent anywhere.
-            </Text>
           ) : null}
         </View>
       )}
@@ -1237,7 +1163,7 @@ const styles = StyleSheet.create({
   },
   detailsToggle: {
     alignItems: 'center',
-    borderColor: '#d1d5db',
+    borderColor: colors.divider,
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: 'row',
@@ -1248,12 +1174,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   detailsToggleText: {
-    color: '#374151',
+    color: colors.textSecondary,
     fontSize: 13,
     fontWeight: '700',
   },
   detailsBody: {
-    borderColor: '#e5e7eb',
+    borderColor: colors.divider,
     borderRadius: 8,
     borderWidth: 1,
     marginTop: 8,
@@ -1343,8 +1269,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   walletLabel: {
-    fontSize: 14,
-    marginBottom: 8,
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '700',
   },
   address: {
     fontFamily: 'monospace',
@@ -1396,7 +1323,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   hint: {
-    color: '#6b7280',
+    color: colors.textMuted,
     fontSize: 13,
     marginTop: 12,
   },
@@ -1455,19 +1382,19 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   fieldLabel: {
-    color: '#6b7280',
+    color: colors.textMuted,
     fontSize: 11,
     marginTop: 12,
     textTransform: 'uppercase',
   },
   fieldValue: {
-    color: '#101317',
+    color: colors.text,
     fontFamily: 'monospace',
     fontSize: 12,
     marginTop: 2,
   },
   memberLine: {
-    color: '#101317',
+    color: colors.textSecondary,
     fontFamily: 'monospace',
     fontSize: 11,
     marginTop: 4,
@@ -1503,13 +1430,13 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   balanceValue: {
-    color: '#101317',
-    fontSize: 30,
+    color: colors.text,
+    fontSize: 40,
     fontWeight: '800',
     marginTop: 4,
   },
   balanceNote: {
-    color: '#7c2d12',
+    color: colors.warning,
     fontSize: 15,
     fontWeight: '700',
     marginTop: 4,
@@ -1528,20 +1455,20 @@ const styles = StyleSheet.create({
   learnSurface: {
     alignItems: 'center',
     alignSelf: 'stretch',
-    backgroundColor: '#ffffff',
-    borderColor: '#cbd5e1',
-    borderRadius: 10,
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.button,
     borderWidth: 1,
     justifyContent: 'center',
     marginTop: 16,
-    minHeight: 48,
+    minHeight: 52,
     paddingHorizontal: 24,
   },
   learnSurfacePressed: {
-    backgroundColor: '#eef2ff',
+    backgroundColor: colors.surface,
   },
   learnSurfaceText: {
-    color: '#1a56db',
+    color: colors.mint,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -1714,5 +1641,94 @@ const styles = StyleSheet.create({
   },
   loaderBlock: {
     marginTop: spacing.md,
+  },
+  manageBody: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  vaultAddressRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+  },
+  vaultAddressText: {
+    color: colors.textSecondary,
+    flexShrink: 1,
+    fontFamily: 'monospace',
+    fontSize: typography.bodySmall,
+  },
+  inlineAction: {
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+  },
+  inlineActionPressed: {
+    backgroundColor: colors.surface,
+  },
+  inlineActionText: {
+    color: colors.mint,
+    fontSize: typography.secondary,
+    fontWeight: '700',
+  },
+  sectionRow: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  todoRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+    minHeight: 56,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  todoRowPressed: {
+    backgroundColor: colors.surfaceElevated,
+  },
+  todoIndex: {
+    color: colors.mint,
+    fontFamily: 'monospace',
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+    marginRight: spacing.md,
+  },
+  todoBody: {
+    flex: 1,
+  },
+  todoTitle: {
+    color: colors.text,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+  },
+  todoMeta: {
+    color: colors.textSecondary,
+    fontSize: typography.secondary,
+    marginTop: 2,
+  },
+  todoChevron: {
+    color: colors.textMuted,
+    fontSize: 22,
+    marginLeft: spacing.sm,
+  },
+  walletRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginTop: spacing.sm,
+    minHeight: 56,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  walletRowBody: {
+    flex: 1,
   },
 });

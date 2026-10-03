@@ -69,7 +69,7 @@ check('3. wallet membre : roles reels lus on-chain', () => {
     HOME.includes('view.members.find((member) => member.address === walletAddress)?.roles'),
     'les roles doivent venir des membres lus',
   );
-  assert.ok(HOME.includes('My multisig · '), 'le statut membre doit etre affiche');
+  assert.ok(HOME.includes('My multisig'), 'le statut membre doit etre affiche');
 });
 
 check('4. wallet non membre : Observed multisig, lecture seule', () => {
@@ -99,7 +99,8 @@ check('6. erreur RPC : dernier solde du meme vault conserve, marque stale', () =
   assert.equal(stale.sol, '1.000000000');
   assert.equal(stale.stale, true);
   assert.ok(HOME.includes('setHomeBalanceError(true)'));
-  assert.ok(HOME.includes('Retry balance'), 'le bouton doit proposer une relecture');
+  // V2 : action de relecture compacte (petite action inline, pas une ligne pleine).
+  assert.ok(HOME.includes("? 'Retry'"), 'une relecture doit etre proposee');
   assert.ok(HOME.includes('Balance unavailable'), 'letat doit etre explicite');
 });
 

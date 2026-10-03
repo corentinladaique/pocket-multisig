@@ -127,7 +127,8 @@ check('14. Receive n utilise aucune adresse hardcodee', () => {
 
 check('15. Copy address recoit l adresse complete du Main vault', () => {
   assert.ok(RECEIVE.includes('copyToClipboard(address)'), 'copie la valeur recue, telle quelle');
-  assert.ok(RECEIVE.includes('address={address}') || RECEIVE.includes('address={address}\n'), 'adresse passee au composant');
+  assert.ok(RECEIVE.includes('{address}'), 'adresse complete affichee, non tronquee');
+  assert.ok(RECEIVE.includes('Copy address'), 'action de copie visible');
 });
 
 check('16. Copy est indisponible si l adresse manque', () => {

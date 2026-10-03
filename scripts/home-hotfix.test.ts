@@ -52,7 +52,7 @@ check('2. Main vault : aucune zone vide issue dune donnee absente', () => {
     HOME.includes('{homeBalanceView.hint.length > 0 ? ('),
     "l'explication conditionnelle doit etre omise si vide",
   );
-  assert.ok(HOME.includes('Main vault address'), 'le bloc vault doit etre titré en clair');
+  assert.ok(HOME.includes('shortenAddress(view.vaultAddress)'), 'adresse courte du vault');
   assert.ok(HOME.includes('styles.balanceValue'), 'le solde doit etre mis en avant');
 });
 
@@ -171,7 +171,7 @@ check('9. CTA Review proposal avant les details techniques', () => {
   const technical = HOME.indexOf('Technical details');
   assert.ok(actions > 0 && technical > 0, 'les deux sections doivent exister');
   assert.ok(actions < technical, 'la section d action doit preceder les informations techniques');
-  assert.ok(HOME.includes('Full review'), "l action d ouverture de la revue reste presente");
+  assert.ok(HOME.includes('setOpenDecisionIndex(decision.index)'), 'action reelle vers la proposition');
 });
 
 check('10. aucun chargement automatique ne sollicite le wallet', () => {
