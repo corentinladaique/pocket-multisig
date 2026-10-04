@@ -12,6 +12,8 @@ import {
   View,
   type LayoutChangeEvent,
 } from 'react-native';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 
 import {
@@ -53,6 +55,7 @@ import {
   ListRow,
   PillButton,
 } from '../ui/v2/primitives';
+import { TabBar, type TabKey } from '../ui/v2/TabBar';
 
 // Marge conservee entre le haut du bloc multisig (label + champ + bouton Load
 // multisig) et le haut de la zone visible : uniquement une valeur de confort,
@@ -226,6 +229,9 @@ export function ConnectScreen() {
     return null;
   };
   const [phase, setPhase] = useState<Phase>('idle');
+  // Onglet actif de la barre de navigation V2. État LOCAL de rendu : ne
+  // persiste rien, ne déclenche aucun RPC, ne sollicite jamais le wallet.
+  const [tab, setTab] = useState<TabKey>('vault');
   const [error, setError] = useState<string | null>(null);
   // Diagnostics MWA : étape, code et message exacts, jamais reformulés.
   const [mwaReport, setMwaReport] = useState<MwaErrorReport | null>(null);
@@ -688,10 +694,9 @@ export function ConnectScreen() {
         ref={scrollViewRef}
         style={styles.scrollView}
       >
+      {/* Le carre menthe « ◈ » est retire : un faux logo dont personne ne
+          comprenait le sens. Il ne reste que la pastille reseau, alignee a droite. */}
       <View style={styles.headerRow}>
-        <View style={styles.logoTile}>
-          <Text style={styles.logoGlyph}>◈</Text>
-        </View>
         <DevnetPill />
       </View>
 
@@ -703,14 +708,22 @@ export function ConnectScreen() {
           </Text>
 
           <View style={styles.valueList}>
-            <ListRow glyph="◈" title="Create a shared vault" subtitle="2 or more signers" />
+            {/* Vraies icônes : le carré « ◈ », le « ✓ » et le « ❖ » d'avant ne
+                voulaient rien dire. Le coffre reprend la marque de l'app. */}
             <ListRow
-              glyph="✓"
+              glyphNode={<MaterialCommunityIcons color={colors.mint} name="safe" size={22} />}
+              title="Create a shared vault"
+              subtitle="2 or more signers"
+            />
+            <ListRow
+              glyphNode={
+                <Ionicons color={colors.mint} name="checkmark-done-outline" size={22} />
+              }
               title="Propose, approve, execute"
               subtitle="Each step signed in your wallet"
             />
             <ListRow
-              glyph="❖"
+              glyphNode={<Ionicons color={colors.mint} name="lock-closed-outline" size={22} />}
               title="Keys stay in your wallet"
               subtitle="Seed Vault, Solflare, Ledger"
             />
@@ -794,7 +807,8 @@ export function ConnectScreen() {
         </View>
       ) : null}
 
-      {account === undefined ? null : (
+      {/* Onglet Vault : le contenu du Home V2, strictement INCHANGÉ. */}
+      {account === undefined || tab !== 'vault' ? null : (
         <View onLayout={onMultisigBlockLayout} style={styles.homeBody}>
           {/* ÉTAT SANS MULTISIG : message clair, aucune action indisponible. */}
           {view === null ? (
@@ -1172,6 +1186,82 @@ export function ConnectScreen() {
         </View>
       )}
 
+      {/* Onglets Proposals / Activity / Account : rendus À LA PLACE du Home.
+          Aucune logique nouvelle — les actions d'Account réutilisent les
+          handlers EXISTANTS du Home (copie, déconnexion, guide). */}
+      {account === undefined || tab === 'vault' ? null : (
+        <View style={styles.homeBody}>
+          <Text style={styles.tabTitle}>
+            {tab === 'proposals' ? 'Proposals' : tab === 'activity' ? 'Activity' : 'Account'}
+          </Text>
+
+          {tab === 'proposals' ? (
+            // TODO(placeholder) : la liste des propositions vit encore dans
+            // Vault Details. Elle sera déplacée ici à l'étape suivante ; d'ici
+            // là, on dit où regarder plutôt que d'inventer une liste.
+            <Text style={styles.tabEmpty}>
+              Proposals are not in this tab yet. Open your vault to see them.
+            </Text>
+          ) : null}
+
+          {tab === 'activity' ? (
+            // TODO(placeholder) : la timeline exige de reconstruire l'historique
+            // depuis la chaîne (création, approbations, exécution). Aucun
+            // événement n'est affiché tant qu'il n'est pas réellement lu.
+            <Text style={styles.tabEmpty}>
+              Nothing to show yet. Activity will list what happened on-chain: created, approved,
+              executed.
+            </Text>
+          ) : null}
+
+          {tab === 'account' ? (
+            <>
+              {/* Le wallet, en petit : libellé + adresse courte + copie discrète
+                  sur la MÊME ligne (handlers existants). */}
+              <View style={styles.accountWallet}>
+                <View style={styles.walletRowBody}>
+                  <Text style={styles.accountWalletLabel}>
+                    {walletIdentity?.label ?? 'Wallet without label'}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.accountWalletAddress}>
+                    {shortenAddress(account.address.toString())}
+                  </Text>
+                </View>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Copy the wallet address"
+                  onPress={onCopyWallet}
+                  style={({ pressed }) => [
+                    styles.inlineAction,
+                    pressed && styles.inlineActionPressed,
+                  ]}
+                >
+                  <Text style={styles.inlineActionText}>Copy</Text>
+                </Pressable>
+              </View>
+              {walletCopyFeedback !== null ? (
+                <Text style={styles.copyFeedback}>{walletCopyFeedback}</Text>
+              ) : null}
+
+              <ListRow title="Network" subtitle="Devnet · nothing real is at stake" />
+              <ListRow title="About" subtitle="Pocket Multisig" />
+
+              {/* Seule action de l'onglet : se déconnecter. */}
+              <View style={styles.accountActions}>
+                <PillButton
+                  accessibilityLabel="Disconnect the wallet"
+                  busy={phase === 'disconnecting'}
+                  disabled={busy}
+                  label="Disconnect wallet"
+                  onPress={onDisconnect}
+                  variant="danger"
+                />
+              </View>
+            </>
+          ) : null}
+        </View>
+      )}
+
       {__DEV__ ? (
         <View style={styles.previewBlock}>
           <Text style={styles.previewHeading}>Development only</Text>
@@ -1193,6 +1283,9 @@ export function ConnectScreen() {
         </View>
       ) : null}
     </ScrollView>
+      {/* Barre d'onglets : visible une fois le wallet connecté. Elle ne fait
+          que changer l'onglet ACTIF — aucun handler métier n'est appelé ici. */}
+      {account === undefined ? null : <TabBar active={tab} onSelect={setTab} />}
     </KeyboardAvoidingView>
   );
 }
@@ -1577,20 +1670,8 @@ const styles = StyleSheet.create({
   headerRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     marginBottom: spacing.lg,
-  },
-  logoTile: {
-    alignItems: 'center',
-    backgroundColor: colors.mint,
-    borderRadius: radii.field,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  logoGlyph: {
-    color: colors.petrolDeep,
-    fontSize: 22,
   },
   heroTitle: {
     color: colors.text,
@@ -1758,9 +1839,13 @@ const styles = StyleSheet.create({
     flex: 1,
     flexShrink: 1,
   },
-  // Aligne le bouton Load sur la zone de saisie (sous le label du champ).
+  // Aligne le bouton Load sur la ZONE DE SAISIE, pas sur le haut du bloc.
+  // AddressInput ajoute son propre `marginTop` (spacing.md = 12), puis la hauteur
+  // de son libellé (~18 pour typography.secondary), puis le `marginTop` de son
+  // champ (spacing.sm = 8). Soit 38. Vérifié par MESURE sur une capture réelle :
+  // avec spacing.xxl (32) le bouton sortait 5,6 dp trop haut.
   loaderButtonSlot: {
-    marginTop: spacing.xxl,
+    marginTop: 38,
   },
   manageBody: {
     gap: spacing.sm,
@@ -1855,5 +1940,46 @@ const styles = StyleSheet.create({
   },
   walletRowBody: {
     flex: 1,
+  },
+
+  // --- Navigation V2 : onglets Proposals / Activity / Account ---------------
+  tabTitle: {
+    color: colors.text,
+    fontSize: typography.screenTitle,
+    fontWeight: '800',
+    marginTop: spacing.sm,
+  },
+  tabEmpty: {
+    color: colors.textMuted,
+    fontSize: typography.bodySmall,
+    lineHeight: 21,
+    marginTop: spacing.lg,
+  },
+  // Ligne wallet de l'onglet Account : compacte, sur une seule ligne.
+  accountWallet: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.divider,
+    borderRadius: radii.field,
+    borderWidth: 1,
+    flexDirection: 'row',
+    marginTop: spacing.lg,
+    minHeight: 56,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  accountWalletLabel: {
+    color: colors.text,
+    fontSize: typography.body,
+    fontWeight: '700',
+  },
+  accountWalletAddress: {
+    color: colors.textSecondary,
+    fontFamily: 'monospace',
+    fontSize: typography.bodySmall,
+    marginTop: 2,
+  },
+  accountActions: {
+    marginTop: spacing.xl,
   },
 });

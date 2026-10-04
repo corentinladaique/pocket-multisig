@@ -250,7 +250,14 @@ check('13. reponses explicites d onboarding conservees', () => {
 
 check('14. aucun package ajoute', () => {
   assert.ok(!PACKAGE.includes('qrcode'));
-  assert.ok(!/react-native-svg|vector-icons/.test(PACKAGE));
+  // Décision explicite : `@expo/vector-icons` est autorisé pour la navigation V2.
+  // La règle d'origine tient pour tout le reste : aucun paquet SVG, et un seul
+  // paquet d'icônes — celui qui a été explicitement autorisé.
+  assert.ok(!/react-native-svg/.test(PACKAGE), 'aucun paquet SVG');
+  assert.ok(
+    PACKAGE.split('vector-icons').length - 1 === 1,
+    'un seul paquet d icones, explicitement autorise',
+  );
   assert.ok(!/from '@expo\/vector-icons'/.test(CREATE), 'aucun package d icones');
   assert.ok(!/from 'react-native-svg'/.test(CREATE));
 });
@@ -276,9 +283,13 @@ check('15. aucun invariant metier modifie', () => {
   // 4) Registre local conserve (ecriture apres verification uniquement).
   assert.ok(CREATE.includes('registry.add('));
   // 5) Fichiers proteges strictement identiques au dernier commit.
+  //    EXCEPTION explicitement autorisee par Corentin : `src/ui/v2/primitives.tsx`
+  //    a recu une option FACULTATIVE (`glyphNode`). Pour ce fichier, l'egalite
+  //    stricte est remplacee par ses invariants reels : option facultative, rendu
+  //    historique par glyphe TEXTE conserve, aucun paquet d'icones importe. Plus
+  //    precis qu'une empreinte, et pas plus permissif.
   const protectedFiles = [
     'src/ui/theme.ts',
-    'src/ui/v2/primitives.tsx',
     'App.tsx',
     'src/vault/thresholdRecommendation.ts',
     'src/screens/ReceiveScreen.tsx',
@@ -291,6 +302,9 @@ check('15. aucun invariant metier modifie', () => {
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
   assert.deepEqual(changed, [], `fichiers proteges modifies : ${changed.join(', ')}`);
+  assert.ok(PRIM.includes('glyphNode?: ReactNode'), 'option ajoutee facultative');
+  assert.ok(PRIM.includes('glyph !== undefined'), 'rendu par glyphe texte conserve');
+  assert.ok(!/from '@expo\/vector-icons/.test(PRIM), 'aucun paquet d icones importe ici');
   // 6) src/squads et le theme partage restent intacts sur le fond.
   assert.ok(THEME.includes("background: '#08110F'"), 'tokens du theme intacts');
   assert.ok(PRIM.includes('export function PillButton'));

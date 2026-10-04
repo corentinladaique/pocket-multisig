@@ -141,6 +141,7 @@ export function PillButton({
 export function ListRow({
   accessibilityLabel,
   glyph,
+  glyphNode,
   onPress,
   subtitle,
   title,
@@ -149,6 +150,11 @@ export function ListRow({
 }: {
   accessibilityLabel?: string;
   glyph?: string;
+  /**
+   * Icône fournie par l'APPELANT. Aucun paquet d'icônes n'est importé ici :
+   * ce module doit rester sans dépendance d'icônes (invariant testé).
+   */
+  glyphNode?: ReactNode;
   onPress?: () => void;
   subtitle?: string;
   title: string;
@@ -157,7 +163,9 @@ export function ListRow({
 }) {
   const content = (
     <>
-      {glyph !== undefined ? (
+      {glyphNode !== undefined ? (
+        <View style={styles.rowGlyph}>{glyphNode}</View>
+      ) : glyph !== undefined ? (
         <View style={styles.rowGlyph}>
           <Text style={styles.rowGlyphText}>{glyph}</Text>
         </View>

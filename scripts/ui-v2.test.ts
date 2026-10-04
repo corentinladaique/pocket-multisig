@@ -41,7 +41,7 @@ const RUNNER = readFileSync('scripts/run-pure-tests.sh', 'utf8');
 const PACKAGE = readFileSync('package.json', 'utf8');
 
 // Frontière « écran connecté » : tout ce qui suit ce marqueur est le Home V2.
-const HOME_BRANCH = '{account === undefined ? null : (';
+const HOME_BRANCH = "{account === undefined || tab !== 'vault' ? null : (";
 const homeStart = CONNECT.indexOf(HOME_BRANCH);
 
 check('1. Connect utilise le handler existant', () => {

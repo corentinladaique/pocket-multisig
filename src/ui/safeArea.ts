@@ -26,6 +26,17 @@ export const ANDROID_STATUS_BAR_FALLBACK = 24;
 export const ANDROID_TOP_INSET_FLOOR = 28;
 
 /**
+ * Plancher BAS : la barre de navigation Android (gestes) est en edge-to-edge
+ * et recouvre le bas de la fenetre ; une barre d'onglets posee au ras du bas
+ * serait partiellement inaccessible.
+ *
+ * Valeur FIXE, volontairement provisoire : lire la vraie inset basse exige
+ * `react-native-safe-area-context`, donc une dependance native — interdite ici.
+ * A remplacer lors de la migration vers de vraies insets, comme pour le haut.
+ */
+export const ANDROID_BOTTOM_INSET_FALLBACK = 24;
+
+/**
  * Espace visuel ajoute APRES l'inset : le bandeau reseau ne doit pas seulement
  * eviter la camera, il doit respirer sous celle-ci.
  */

@@ -186,7 +186,14 @@ check('14/15/16. Aucun wallet, RPC, transaction', () => {
 
 check('17. Aucun package ajoute', () => {
   assert.ok(!PACKAGE.includes('qrcode'));
-  assert.ok(!/react-native-svg|vector-icons/.test(PACKAGE));
+  // Décision explicite : `@expo/vector-icons` est autorisé pour la navigation V2.
+  // La règle d'origine tient pour tout le reste : aucun paquet SVG, et un seul
+  // paquet d'icônes — celui qui a été explicitement autorisé.
+  assert.ok(!/react-native-svg/.test(PACKAGE), 'aucun paquet SVG');
+  assert.ok(
+    PACKAGE.split('vector-icons').length - 1 === 1,
+    'un seul paquet d icones, explicitement autorise',
+  );
 });
 
 check('coche visible : etat selectionne non dependant de la couleur seule', () => {

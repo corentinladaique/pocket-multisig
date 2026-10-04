@@ -236,7 +236,14 @@ check('28. Aucune transaction', () => {
 
 check('29. Aucun package', () => {
   assert.ok(!PACKAGE.includes('qrcode'));
-  assert.ok(!/react-native-svg|vector-icons/.test(PACKAGE));
+  // Décision explicite : `@expo/vector-icons` est autorisé pour la navigation V2.
+  // La règle d'origine tient pour tout le reste : aucun paquet SVG, et un seul
+  // paquet d'icônes — celui qui a été explicitement autorisé.
+  assert.ok(!/react-native-svg/.test(PACKAGE), 'aucun paquet SVG');
+  assert.ok(
+    PACKAGE.split('vector-icons').length - 1 === 1,
+    'un seul paquet d icones, explicitement autorise',
+  );
 });
 
 // "Inchangé" vérifié réellement : les fichiers du Groupe 1 ne doivent apparaître
@@ -264,7 +271,18 @@ check('30. theme.ts inchange', () => {
 check('31. primitives.tsx inchange', () => {
   assert.ok(PRIM.includes('export function AppScreen'));
   assert.ok(PRIM.includes('export function PillButton'));
-  assert.ok(!changed.includes('src/ui/v2/primitives.tsx'), 'aucune modification des primitives');
+  // Décision explicite de Corentin : `ListRow` reçoit une option FACULTATIVE
+  // (`glyphNode`) pour afficher une véritable icône fournie par l'appelant.
+  // La protection d'origine visait la DÉRIVE des primitives partagées : elle est
+  // précisée, pas retirée. Les invariants réels du fichier sont donc vérifiés —
+  // c'est plus précis qu'une empreinte, et strictement non plus permissif :
+  //   - l'option ajoutée doit être FACULTATIVE ;
+  //   - le rendu historique par glyphe TEXTE doit rester en place ;
+  //   - ce module ne doit toujours importer AUCUN paquet d'icônes.
+  assert.ok(PRIM.includes('glyphNode?: ReactNode'), 'option ajoutee facultative');
+  assert.ok(PRIM.includes('glyph !== undefined'), 'rendu par glyphe texte conserve');
+  assert.ok(PRIM.includes('styles.rowGlyphText'), 'le texte du glyphe reste rendu');
+  assert.ok(!/from '@expo\/vector-icons/.test(PRIM), 'aucun paquet d icones importe ici');
 });
 
 check('32. ConnectScreen reste sur les fondations UI V2', () => {

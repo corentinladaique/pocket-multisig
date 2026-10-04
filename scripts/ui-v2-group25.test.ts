@@ -125,7 +125,14 @@ check('14. Aucune transaction', () => {
 
 check('15. Aucun package', () => {
   assert.ok(!PACKAGE.includes('qrcode'));
-  assert.ok(!/react-native-svg|vector-icons/.test(PACKAGE));
+  // Décision explicite : `@expo/vector-icons` est autorisé pour la navigation V2.
+  // La règle d'origine tient pour tout le reste : aucun paquet SVG, et un seul
+  // paquet d'icônes — celui qui a été explicitement autorisé.
+  assert.ok(!/react-native-svg/.test(PACKAGE), 'aucun paquet SVG');
+  assert.ok(
+    PACKAGE.split('vector-icons').length - 1 === 1,
+    'un seul paquet d icones, explicitement autorise',
+  );
 });
 
 setTimeout(() => {
