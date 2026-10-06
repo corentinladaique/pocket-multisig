@@ -38,7 +38,7 @@ check('1. les deux ecrans Preview ont ete supprimes du disque', () => {
 });
 
 check('2. Step 5 rend les quatre familles d etats', () => {
-  assert.ok(step5.includes('Prepare and create on Devnet'), 'etat ready : CTA principal');
+  assert.ok(step5.includes('Review and create'), 'etat ready : CTA principal');
   assert.ok(step5.includes('Nothing was sent.'), 'etat echec avant signature');
   assert.ok(
     step5.includes("VAULT_VISIBLE_LABELS['signed-pending-confirmation']"),
@@ -68,9 +68,9 @@ check('4. un seul CTA de creation et un seul handler d envoi', () => {
   );
   assert.equal(CREATE.split('const onCreateOnDevnet').length - 1, 1, 'un seul handler d envoi');
   assert.equal(
-    CREATE.split('Prepare and create on Devnet').length - 1,
+    CREATE.split('Review and create').length - 1,
     1,
-    'un seul libelle Prepare and create on Devnet',
+    'un seul libelle Review and create',
   );
   assert.ok(!/const createOnDevnet2|onCreateOnDevnetSecond/.test(CREATE), 'aucun second handler');
 });
@@ -117,7 +117,7 @@ check('9. sans signature : Nothing was sent. et Prepare again correctement condi
 check('10/11. signature presente : Prepare again absent, Check transaction again present', () => {
   // La CTA n affiche « Prepare again » que si needsPrepareAgain (jamais sur une
   // signature non revoquee : allowNewAttempt y est faux par construction).
-  assert.ok(step5.includes("needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'"));
+  assert.ok(step5.includes("needsPrepareAgain ? 'Prepare again' : 'Review and create'"));
   assert.ok(step5.includes('Check transaction again'));
 });
 
@@ -132,9 +132,9 @@ check('12/13. relecture en lecture seule, section repliable conditionnee', () =>
   assert.ok(CREATE.includes('Troubleshooting details'));
 });
 
-check('14. succes : Open vault et Go to Inbox disponibles', () => {
+check('14. succes : Open vault et View proposals disponibles', () => {
   assert.ok(step5.includes('Open vault'));
-  assert.ok(step5.includes('Go to Inbox'));
+  assert.ok(step5.includes('View proposals'));
   assert.ok(step5.includes('onGoToInbox'));
 });
 

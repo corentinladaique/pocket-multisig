@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
+  AppState,
   Keyboard,
   KeyboardAvoidingView,
   Linking,
@@ -169,11 +170,36 @@ export function ConnectScreen() {
   const { account, connect, connectAnd, disconnect, store } = useMobileWallet();
   const { detail: rpcDetail, retry: retryRpc, status: rpcStatus } = useRpcHealth();
   const msig = useMultisigLookup();
+  // Jeton d'actualisation EXPLICITE de la liste des propositions. Sans lui,
+  // cette liste ne pouvait JAMAIS etre relue (aucun 4e argument) : une
+  // proposition executee restait dans To do jusqu'a un demontage. Lecture seule.
+  const [proposalsNonce, setProposalsNonce] = useState(0);
+  const proposalsRefreshRef = useRef(false);
+  const refreshProposalsReadOnly = useCallback(() => {
+    // Aucun chevauchement : tant que la lecture precedente n'a pas rendu la
+    // main (statut revenue a autre chose que « loading »), on ne relance rien.
+    if (proposalsRefreshRef.current) return;
+    proposalsRefreshRef.current = true;
+    setProposalsNonce((previous) => previous + 1);
+  }, []);
   const proposals = useProposals(
     msig.view?.address ?? null,
     msig.view?.transactionIndex ?? 0,
     msig.view?.staleTransactionIndex ?? 0,
+    proposalsNonce,
   );
+  // La lecture est terminee : le verrou anti-chevauchement est relache.
+  useEffect(() => {
+    if (proposals.status !== 'loading') proposalsRefreshRef.current = false;
+  }, [proposals.status]);
+  // Retour au premier plan (le wallet prend puis rend le focus) : relecture
+  // LECTURE SEULE de la liste. Aucun wallet, aucune signature, aucun envoi.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshProposalsReadOnly();
+    });
+    return () => subscription.remove();
+  }, [refreshProposalsReadOnly]);
   const [multisigInput, setMultisigInput] = useState('');
   const [previewCase, setPreviewCase] = useState<DecodeStatus | null>(null);
   // Section « More » (actions de gestion) : repliée par défaut, ouverte si aucun vault.
@@ -745,7 +771,12 @@ export function ConnectScreen() {
           }
           index={decision.index}
           members={view.members}
-          onBack={() => setOpenDecisionIndex(null)}
+          onBack={() => {
+            // Retour depuis le detail : relecture de la liste, sinon une
+            // proposition executee resterait affichee dans To do.
+            setOpenDecisionIndex(null);
+            refreshProposalsReadOnly();
+          }}
           proposal={{ approvedAddresses: decision.approvedAddresses, status: decision.status }}
           threshold={view.threshold}
           vaultTransactionAddress={decision.vaultTransactionAddress}
@@ -989,7 +1020,7 @@ export function ConnectScreen() {
               maintien, fermeture, maintien — 3,6 s). Mode tuile : les cartes
               sont sombres et disparaîtraient sur le fond de l'app. */}
           <CardsMark loop size={132} style={styles.brandMark} tile />
-          <Text style={styles.heroTitle}>Pocket Multisig</Text>
+          <Text style={styles.heroTitle}>Multisig</Text>
           <Text style={styles.heroTagline}>
             Shared vaults on Solana.{'\n'}Everyone signs, nobody trusts alone.
           </Text>

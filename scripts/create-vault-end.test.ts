@@ -26,7 +26,7 @@ const CREATE = readFileSync('src/screens/CreateVaultScreen.tsx', 'utf8');
 const HOME = readFileSync('src/screens/ConnectScreen.tsx', 'utf8');
 
 check('1/2. Step 5 : CTA principal present, plus de mention du bouton mort', () => {
-  assert.ok(CREATE.includes('Prepare and create on Devnet'));
+  assert.ok(CREATE.includes('Review and create'));
   assert.ok(!CREATE.includes('not available yet'));
 });
 
@@ -44,7 +44,7 @@ check('4. un seul CTA de creation visible : le meme handler, une seule fois', ()
     'un seul bouton declenche la creation dans le wizard',
   );
   assert.equal(
-    CREATE.split('Prepare and create on Devnet').length - 1,
+    CREATE.split('Review and create').length - 1,
     1,
     'un seul libelle de creation',
   );

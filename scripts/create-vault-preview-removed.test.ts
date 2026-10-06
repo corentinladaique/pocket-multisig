@@ -71,7 +71,7 @@ check('8/9. libelles techniques absents du parcours Create Vault', () => {
 
 check('10/11. un seul CTA Create et un seul handler onCreateOnDevnet', () => {
   assert.equal(CREATE.split('onPress={onCreateOnDevnet}').length - 1, 1);
-  assert.equal(CREATE.split('Prepare and create on Devnet').length - 1, 1);
+  assert.equal(CREATE.split('Review and create').length - 1, 1);
   assert.equal(CREATE.split('const onCreateOnDevnet =').length - 1, 1);
 });
 

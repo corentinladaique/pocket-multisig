@@ -20,6 +20,8 @@ files=(
   scripts/create-vault-end.test.ts
   scripts/create-vault-preview-removed.test.ts
   scripts/create-vault-step5.test.ts
+  scripts/execution-approval-contradiction.test.ts
+  scripts/execution-verification-recovery.test.ts
   scripts/home-dashboard.test.ts
   scripts/home-hotfix.test.ts
   scripts/hook-order.test.ts
@@ -39,6 +41,7 @@ files=(
   scripts/proposal-detail-decode.test.ts
   scripts/proposal-details-states.test.ts
   scripts/proposal-list-refresh.test.ts
+  scripts/refresh-on-resume.test.ts
   scripts/safe-area.test.ts
   scripts/sign-and-send-proposal-creation.test.ts
   scripts/signing-window.test.ts

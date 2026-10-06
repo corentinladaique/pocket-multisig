@@ -91,24 +91,43 @@ check('4. « Approved by you » inchangé fonctionnellement', () => {
 });
 
 check('5. Approve conserve ses guards', () => {
-  assert.ok(DETAILS.includes('const onApprove = () => {'), 'handler Approve manquant');
+  // Handler desormais ASYNC : il relit la chaine AVANT le dialogue, et la garde
+  // couvre aussi cette relecture.
+  assert.ok(DETAILS.includes('const onApprove = async () => {'), 'handler Approve manquant');
   assert.ok(
-    DETAILS.includes('if (!canConfirm || approving || approvalAttemptedRef.current) return;'),
+    DETAILS.includes(
+      'if (!canConfirm || approving || checkingApproval || approvalAttemptedRef.current) return;',
+    ),
     'anti-double-tap Approve manquant',
   );
   assert.ok(DETAILS.includes('if (walletAlreadyApproved) {'), 'garde « déjà approuvé » manquante');
   assert.ok(DETAILS.includes('await signAndSendProposalApproval({'), 'module d’approbation non utilisé');
   // Le CTA n'apparaît que pour la famille « approbation disponible ».
   assert.ok(DETAILS.includes("actionState === 'approval-available' || approvalRetry"), 'CTA Approve non conditionné');
-  assert.ok(DETAILS.includes('disabled={!canConfirm || approving}'), 'CTA Approve non désactivé pendant l’envoi');
+  assert.ok(
+    DETAILS.includes('disabled={!canConfirm || approving || checkingApproval}'),
+    'CTA Approve non désactivé pendant l’envoi',
+  );
 });
 
 check('6. Execute conserve ses guards', () => {
-  assert.ok(DETAILS.includes('const onExecute = () => {'), 'handler Execute manquant');
-  assert.ok(
-    DETAILS.includes('if (!canExecute || insufficientBalance || executing'),
-    'garde Execute manquante',
+  // Le handler est desormais ASYNC (il relit la chaine avant de proposer
+  // l'execution) et ses gardes sont reparties sur plusieurs lignes : les memes
+  // gardes sont verifiees une par une, dans le corps du handler.
+  assert.ok(DETAILS.includes('const onExecute = async () => {'), 'handler Execute manquant');
+  const EXECUTE_HANDLER = DETAILS.slice(
+    DETAILS.indexOf('const onExecute = async () => {'),
+    DETAILS.indexOf('const refreshProposalFromChain'),
   );
+  for (const guard of [
+    '!canExecute',
+    'insufficientBalance',
+    'executing',
+    'checkingExecution',
+    'executionAttemptedRef.current',
+  ]) {
+    assert.ok(EXECUTE_HANDLER.includes(guard), `garde Execute manquante : ${guard}`);
+  }
   assert.ok(DETAILS.includes('executionAttemptedRef'), 'anti-double-tap Execute manquant');
   assert.ok(DETAILS.includes('await signAndSendProposalExecution({'), 'module d’exécution non utilisé');
   assert.ok(DETAILS.includes("member.roles.includes('Execute')"), 'permission Execute non vérifiée');

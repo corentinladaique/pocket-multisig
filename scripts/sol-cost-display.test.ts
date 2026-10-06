@@ -130,9 +130,10 @@ check('14. verified masque Run the checks again', () => {
   assert.ok(!SUCCESS.includes('Run the checks again'));
 });
 
-check('15. verified masque Prepare and create on Devnet', () => {
-  assert.ok(NOT_VERIFIED.includes('Prepare and create on Devnet'));
-  assert.ok(!SUCCESS.includes('Prepare and create on Devnet'));
+check('15. verified masque Review and create', () => {
+  // Libelle du CTA principal renomme (mission copie) : « Review and create ».
+  assert.ok(NOT_VERIFIED.includes('Review and create'));
+  assert.ok(!SUCCESS.includes('Review and create'));
 });
 
 check('16. verified masque Estimated creation cost', () => {
@@ -140,12 +141,14 @@ check('16. verified masque Estimated creation cost', () => {
   assert.ok(!SUCCESS.includes('creationCost'));
 });
 
-check('17/18. verified affiche Open vault et Go to Inbox', () => {
+check('17/18. verified affiche Open vault et View proposals', () => {
   assert.ok(SUCCESS.includes('Vault created and verified.'));
-  assert.ok(SUCCESS.includes('Multisig configuration address'));
-  assert.ok(SUCCESS.includes('Main vault address'));
+  // Les adresses COMPLETES ne sont plus le contenu principal de la carte de
+  // succes : elles vivent dans le recu technique replie, meme bloc SUCCESS.
+  assert.ok(SUCCESS.includes('Multisig configuration:'));
+  assert.ok(SUCCESS.includes('Main vault:'));
   assert.ok(SUCCESS.includes('Open vault'));
-  assert.ok(SUCCESS.includes('Go to Inbox'));
+  assert.ok(SUCCESS.includes('View proposals'));
   assert.ok(!SUCCESS.includes('onPress={onCreateOnDevnet}'), 'aucun CTA Create residuel');
 });
 

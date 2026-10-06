@@ -159,7 +159,7 @@ export async function signAndSendProposalExecution(input: {
       }
       if (approvalsBefore < input.threshold) {
         errors.push(
-          `ThresholdNotReached: ${approvalsBefore} approval(s) on-chain, ${input.threshold} required.`,
+          `ThresholdNotReached: ${approvalsBefore} of ${input.threshold} approvals collected on-chain.`,
         );
       }
     }

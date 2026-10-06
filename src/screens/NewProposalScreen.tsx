@@ -19,6 +19,7 @@ import {
   buildProposalCreation,
   PROPOSAL_CREATION_EXPLAINERS,
 } from '../squads/buildProposalCreation';
+import { abbreviateAddress } from '../types/transactionReview';
 import {
   hasInvalidDestinationError,
   INVALID_DESTINATION_MESSAGE,
@@ -230,8 +231,19 @@ export function NewProposalScreen({
   const explainers = build.warnings.filter((warning) =>
     (PROPOSAL_CREATION_EXPLAINERS as readonly string[]).includes(warning),
   );
+  /**
+   * Notes HISTORIQUES de developpement : jamais rendues, nulle part — ni dans le
+   * parcours principal, ni dans les details techniques. Les chaines vivent encore
+   * dans `src/squads` (zone cloturee) : elles sont filtrees ici.
+   */
+  const DEVELOPMENT_NOTES = [
+    'Call this once, from an explicit user gesture',
+    'answers the open question of Phase',
+  ] as const;
   const otherWarnings = build.warnings.filter(
-    (warning) => !(PROPOSAL_CREATION_EXPLAINERS as readonly string[]).includes(warning),
+    (warning) =>
+      !(PROPOSAL_CREATION_EXPLAINERS as readonly string[]).includes(warning) &&
+      !DEVELOPMENT_NOTES.some((note) => warning.includes(note)),
   );
 
   // Toute modification de la saisie invalide le pipeline déjà calculé : on ne
@@ -440,52 +452,42 @@ export function NewProposalScreen({
       setCreateResult(null);
       setCreateError(null);
     }
+    // UN SEUL dialogue de confirmation : les deux dialogues precedents
+    // dupliquaient la meme information. Aucun detail de construction de compte
+    // ici (VaultTransaction / Proposal account / rente) : il vit dans
+    // « Advanced diagnostics ». Le montant est formate en SOL lisible, jamais
+    // « 0.200000000 ». Le transfert n'a PAS lieu a la creation : c'est dit.
     Alert.alert(
       'Create this proposal?',
       [
-        `Transfer ${formatSol(build.request?.lamports ?? 0)} to ${destination}`,
-        `${members.length} member(s)`,
+        `Amount: ${formatSolAmount(build.request?.lamports ?? 0)}`,
+        `Destination: ${abbreviateAddress(destination)}`,
         `Estimated creation cost: ${
           simulation.estimatedCreatorBalanceDelta === null
             ? 'not measurable'
             : formatSolAmount(Math.abs(simulation.estimatedCreatorBalanceDelta))
         }`,
-        'You will sign ONE transaction creating two accounts on devnet.',
+        '',
+        'Creating the proposal does not move the funds.',
+        'The transfer only happens after the required approvals are collected and the proposal is executed.',
       ].join('\n'),
       [
         { style: 'cancel', text: 'Cancel' },
         {
           onPress: () => {
-            Alert.alert(
-              'Confirm creation',
-              [
-                'The proposal will be created on devnet now and cannot be undone.',
-                'The transfer itself only happens later, when the proposal is executed.',
-                'Tap Create to sign with your wallet, or Cancel to stop.',
-              ].join('\n'),
-              [
-                { style: 'cancel', text: 'Cancel' },
-                {
-                  onPress: () => {
-                    // Nouvelle tentative : préflight et simulation sont refaits
-                    // AVANT d'ouvrir le wallet (transaction neuve, blockhash neuf).
-                    if (isRetry) {
-                      void (async () => {
-                        const fresh = await runPipeline();
-                        if (fresh === null || fresh.readyToSign !== true) return;
-                        await runCreate(fresh);
-                      })();
-                      return;
-                    }
-                    void runCreate();
-                  },
-                  text: 'Create',
-                },
-              ],
-              { cancelable: true },
-            );
+            // Nouvelle tentative : préflight et simulation sont refaits
+            // AVANT d'ouvrir le wallet (transaction neuve, blockhash neuf).
+            if (isRetry) {
+              void (async () => {
+                const fresh = await runPipeline();
+                if (fresh === null || fresh.readyToSign !== true) return;
+                await runCreate(fresh);
+              })();
+              return;
+            }
+            void runCreate();
           },
-          text: 'Continue',
+          text: 'Create proposal',
         },
       ],
       { cancelable: true },
@@ -826,6 +828,18 @@ export function NewProposalScreen({
 
             {advancedOpen ? (
               <View style={styles.block}>
+                {/* Details d'implementation : uniquement ici, jamais dans le
+                    parcours principal. */}
+                {explainers.map((warning) => (
+                  <Text key={warning} style={styles.fieldNote}>
+                    · {warning}
+                  </Text>
+                ))}
+                {otherWarnings.map((warning) => (
+                  <Text key={warning} style={styles.fieldNote}>
+                    · {warning}
+                  </Text>
+                ))}
                 <Text style={styles.fieldNote}>Transaction index</Text>
                 <Text style={styles.monoValue}>{build.transactionIndexNext}</Text>
                 <Text style={styles.fieldNote}>
@@ -878,15 +892,10 @@ export function NewProposalScreen({
           </View>
         ) : null}
 
-        {otherWarnings.length > 0 ? (
-          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
-            {otherWarnings.map((warning) => (
-              <InfoText key={warning} tone="warning">
-                · {warning}
-              </InfoText>
-            ))}
-          </InfoBox>
-        ) : null}
+        {/* Les avertissements TECHNIQUES du module de creation (notes de
+            developpement, references a des phases, création des comptes
+            internes) ne sont plus rendus dans le parcours : ils vivent dans
+            « Advanced diagnostics » ci-dessus. Seule la phrase humaine reste. */}
 
         {/* Section explicative FACULTATIVE, fermée par défaut : information pure,
             sans effet sur les validations ni sur la transaction. */}
@@ -906,10 +915,14 @@ export function NewProposalScreen({
               </Text>
             </Pressable>
             {howItWorksOpen ? (
+              /* Version LISIBLE. Les details d'implementation (VaultTransaction,
+                 Proposal account, ProposalCreate, rente, premier approbateur) ont
+                 ete deplaces dans « Advanced diagnostics ». */
               <InfoBox style={styles.infoBox}>
-                {explainers.map((warning) => (
-                  <InfoText key={warning}>· {warning}</InfoText>
-                ))}
+                <InfoText>
+                  Creating a proposal records the transfer instructions on Devnet. The funds only
+                  move after the required approvals are collected and the proposal is executed.
+                </InfoText>
               </InfoBox>
             ) : null}
           </>
@@ -972,7 +985,10 @@ export function NewProposalScreen({
               <>
                 <Text style={styles.monoValue}>
                   Proposal: {createResult.readBack.proposalStatus ?? 'unknown'} ·{' '}
-                  {createResult.readBack.proposalApprovedCount ?? 0} approval(s)
+                  {createResult.readBack.proposalApprovedCount ?? 0}{' '}
+                  {(createResult.readBack.proposalApprovedCount ?? 0) === 1
+                    ? 'approval collected'
+                    : 'approvals collected'}
                 </Text>
                 <Text style={styles.monoValue}>
                   Transaction index: {createResult.readBack.transactionIndex ?? 'unknown'} ·

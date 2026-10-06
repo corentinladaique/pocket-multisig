@@ -65,7 +65,7 @@ export const SIGNING_MEAN_DESCRIPTIONS: Record<SigningMean, string> = {
 
 /** Compatibilités réellement testées avec Pocket Multisig, et rien de plus. */
 export const SIGNING_MEAN_COMPATIBILITY = {
-  'hardware-wallet': 'Tested with Pocket Multisig: Ledger through Solflare. Other Solana-compatible hardware wallets may work, but have not yet been tested with Pocket Multisig.',
+  'hardware-wallet': 'Tested with Multisig: Ledger through Solflare. Other Solana-compatible hardware wallets may work, but have not yet been tested with Multisig.',
   'seed-vault': 'Integrated in Solana Mobile.',
 } as const;
 
@@ -269,7 +269,7 @@ export function personalizedSummary(profile: LearningProfile): string[] {
   }
 
   lines.push(
-    'Pocket Multisig runs on Devnet only, is experimental and has not been independently audited.',
+    'Multisig runs on Devnet only, is experimental and has not been independently audited.',
   );
   return lines;
 }

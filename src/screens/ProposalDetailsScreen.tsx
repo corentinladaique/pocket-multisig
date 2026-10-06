@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  AppState,
   BackHandler,
   KeyboardAvoidingView,
   Pressable,
@@ -57,6 +58,11 @@ import { abbreviateAddress, type TransactionReviewModel } from '../types/transac
 import { computeCanConfirm, TransactionReviewScreen } from './TransactionReviewScreen';
 import { formatMwaError } from '../wallet/mwaDiagnostics';
 import { buildOperationReport, classifyOperationResult, describeAttemptOutcome, isTemporaryNetworkFailure } from '../wallet/operationState';
+import {
+  forgetPendingSubmission,
+  pendingSubmissionFor,
+  rememberPendingSubmission,
+} from '../wallet/pendingSubmissionMemory';
 import { signingStateTitle, type SigningState } from '../wallet/signingWindow';
 
 /**
@@ -97,6 +103,30 @@ function describeOperationFailure(result: {
       : result.validationErrors.join(' ');
   return `${title} ${detail}`;
 }
+
+/**
+ * Copie HUMAINE d'une verification impossible. La signature existe : la
+ * transaction n'est ni invalide ni perdue, donc jamais presentee comme un echec.
+ */
+const EXECUTION_SENT_TITLE = 'Transaction sent';
+const EXECUTION_UNVERIFIED_MESSAGE =
+  'Verification is temporarily unavailable. Multisig will check again when the network connection returns.';
+const EXECUTION_CHECK_FAILED_MESSAGE = 'Verification failed — nothing was sent by this check.';
+/** Approbation : meme contrat que l'execution (envoi signe != echec). */
+const APPROVAL_SENT_TITLE = 'Approval sent';
+const APPROVAL_UNVERIFIED_MESSAGE =
+  'Verification is temporarily unavailable. Multisig will check again when the network connection returns.';
+/** Lecture prealable impossible : RIEN n'a ete envoye, la copie le dit. */
+const EXECUTION_PRECHECK_TITLE = 'Network verification unavailable';
+const EXECUTION_PRECHECK_MESSAGE =
+  'Multisig could not refresh the latest proposal state. Check your connection and try again. Nothing was sent.';
+/** Lecture prealable impossible cote approbation : RIEN n'a ete approuve. */
+const APPROVAL_PRECHECK_TITLE = 'Verification pending';
+const APPROVAL_PRECHECK_MESSAGE =
+  'This proposal could not be read right now, so nothing was approved. Check the network connection and try again.';
+/** Reprises AUTOMATIQUES bornees : compte maximal et espacement croissant. */
+const MAX_VERIFICATION_ATTEMPTS = 3;
+const VERIFICATION_RETRY_DELAYS_MS = [4000, 8000, 15000];
 
 /**
  * Detail d'une proposition : LECTURE SEULE.
@@ -282,6 +312,34 @@ export function ProposalDetailsScreen({
   // l'etat courant, uniquement dans « Troubleshooting details ».
   const [approvalDiagnostics, setApprovalDiagnostics] = useState<string[]>([]);
   const [troubleshootingOpen, setTroubleshootingOpen] = useState(false);
+  // Relecture seule « Check execution again » : meme contrat que l'approbation.
+  const [checkingExecution, setCheckingExecution] = useState(false);
+  const [executionCheckReport, setExecutionCheckReport] = useState<string | null>(null);
+  // Diagnostic BRUT (RPC, Java, DNS, ReadBack, ConfirmationCheck) d'une execution :
+  // jamais dans le bloc principal, uniquement dans « Troubleshooting details ».
+  const [executionDiagnostics, setExecutionDiagnostics] = useState<string[]>([]);
+  // Reprises bornees : compteur, minuteur, anti-chevauchement, drapeau de demontage.
+  const [verificationRound, setVerificationRound] = useState(0);
+  const verificationAttemptsRef = useRef(0);
+  const verificationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const verificationInFlightRef = useRef(false);
+  // Anti-chevauchement de la relecture de retour au premier plan.
+  const refreshInFlightRef = useRef(false);
+  const unmountedRef = useRef(false);
+  // IDENTITE DE LA PROPOSITION VERIFIEE. Le composant n'est PAS remonte par un
+  // changement de proposition (aucune `key` cote appelant) : sans cette garde,
+  // une relecture lancee pour la proposition A pourrait ecrire dans l'ecran de
+  // la proposition B, et un minuteur de A pourrait relancer une relecture ici.
+  const proposalKey = `${address}:${index}`;
+  const proposalKeyRef = useRef(proposalKey);
+  // Signature d'une execution signee dans ce PROCESSUS mais pas encore verifiee.
+  // Elle survit au demontage de l'ecran (jamais a la fermeture de l'app, et
+  // jamais persistee). Sans elle, rouvrir la proposition reproposerait Execute
+  // alors qu'un envoi signe peut encore etre traite.
+  const [rememberedSignature, setRememberedSignature] = useState<string | null>(() =>
+    pendingSubmissionFor(proposalKey),
+  );
+  // (Derivation placee APRES la declaration d'executionResult : voir plus bas.)
 
   // Verite on-chain si elle a ete relue, sinon donnee fournie par l'appelant.
   const effectiveApprovedAddresses = onchainApproval?.approvedAddresses ?? proposal.approvedAddresses;
@@ -314,6 +372,11 @@ export function ProposalDetailsScreen({
     null,
   );
   const executionAttemptedRef = useRef(false);
+  // Signature d'execution NON verifiee disponible : celle du montage courant, ou
+  // celle memorisee dans le processus (ecran rouvert). Tant qu'elle existe,
+  // Execute n'est jamais repropose.
+  const unverifiedExecutionSignature =
+    executionResult?.signature ?? rememberedSignature;
 
   // Verdict unique de l'UI : sans signature, jamais de libellé « Sent ».
   const approvalOutcome =
@@ -372,6 +435,19 @@ export function ProposalDetailsScreen({
     walletHasExecute,
   });
 
+  // Etat TERMINAL atteint : la memoire d'envoi et les minuteurs de reprise n'ont
+  // plus lieu d'etre, et aucun reçu « Transaction sent » ne doit reapparaitre en
+  // rouvrant une proposition deja Done.
+  useEffect(() => {
+    if (!executed) return;
+    forgetPendingSubmission(proposalKey);
+    setRememberedSignature(null);
+    if (verificationTimerRef.current !== null) {
+      clearTimeout(verificationTimerRef.current);
+      verificationTimerRef.current = null;
+    }
+  }, [executed, proposalKey]);
+
   const executionOutcome =
     executionResult === null
       ? null
@@ -389,8 +465,16 @@ export function ProposalDetailsScreen({
 
   const runExecution = async () => {
     // Contrôle pré-exécution : le solde est RELU ici. L'affichage précédent ne
-    // remplace jamais ce contrôle.
-    const freshLamports = await readVaultBalance();
+    // remplace jamais ce contrôle. Une lecture IMPOSSIBLE (DNS/RPC) ne doit pas
+    // faire rejeter cette fonction : c'etait un retour MUET, sans wallet et sans
+    // message. On traite l'echec comme « solde inconnu », exactement comme un
+    // `null` renvoye par la lecture elle-meme.
+    let freshLamports: number | null = null;
+    try {
+      freshLamports = await readVaultBalance();
+    } catch {
+      freshLamports = null;
+    }
     if (
       freshLamports !== null &&
       isRecognizedTransfer &&
@@ -405,7 +489,13 @@ export function ProposalDetailsScreen({
       setExecuting(false);
       return;
     }
-    if (approvalAttemptedRef.current || executionAttemptedRef.current) return;
+    if (approvalAttemptedRef.current || executionAttemptedRef.current) {
+      // Aucun chemin ne sort en silence : l'utilisateur voit toujours pourquoi.
+      setExecutionError(
+        'This execution was already attempted. Use Check execution again instead of sending it twice.',
+      );
+      return;
+    }
     if (walletAddress === null) {
       setExecutionError('No wallet connected: an execution must be signed by a member.');
       return;
@@ -426,13 +516,33 @@ export function ProposalDetailsScreen({
       });
       signature = result.signature;
       setExecutionResult(result);
+      if (result.signature !== null) {
+        rememberPendingSubmission(proposalKey, result.signature);
+        setRememberedSignature(result.signature);
+      }
       // Après une exécution vérifiée, le solde du vault a changé : on le relit.
       if (result.verified) void readVaultBalance();
       if (!result.verified) {
-        setExecutionError(describeOperationFailure(result));
+        // Le detail BRUT part dans les diagnostics ; le bloc principal ne montre
+        // jamais une pile Java. Sans signature, aucune copie « sent ».
+        const raw = describeOperationFailure(result);
+        setExecutionDiagnostics((previous) => [...previous, raw]);
+        const networkFailure =
+          isTemporaryNetworkFailure(result.errorMessage ?? '') || isTemporaryNetworkFailure(raw);
+        setExecutionError(
+          result.signature !== null && networkFailure
+            ? `${EXECUTION_SENT_TITLE}\n${EXECUTION_UNVERIFIED_MESSAGE}`
+            : raw,
+        );
       }
     } catch (caught: unknown) {
-      setExecutionError(caught instanceof Error ? caught.message : String(caught));
+      const raw = caught instanceof Error ? caught.message : String(caught);
+      setExecutionDiagnostics((previous) => [...previous, raw]);
+      setExecutionError(
+        signature !== null && isTemporaryNetworkFailure(caught)
+          ? `${EXECUTION_SENT_TITLE}\n${EXECUTION_UNVERIFIED_MESSAGE}`
+          : raw,
+      );
     } finally {
       if (signature === null) executionAttemptedRef.current = false;
       setExecuting(false);
@@ -443,8 +553,15 @@ export function ProposalDetailsScreen({
    * Tap sur Execute : DOUBLE confirmation explicite avant toute demande au
    * wallet. Rien ne part du premier dialogue, ni d'un effet, ni d'un rendu.
    */
-  const onExecute = () => {
-    if (!canExecute || insufficientBalance || executing || executionAttemptedRef.current) return;
+  const onExecute = async () => {
+    if (
+      !canExecute ||
+      insufficientBalance ||
+      executing ||
+      checkingExecution ||
+      executionAttemptedRef.current
+    )
+      return;
     if (insufficientBalance) {
       setExecutionError(
         'Insufficient vault balance: the vault does not currently hold the amount this proposal moves. Nothing was sent.',
@@ -458,25 +575,49 @@ export function ProposalDetailsScreen({
       setExecutionResult(null);
       setExecutionError(null);
     }
+    // PORTE DE SECURITE : relecture on-chain AVANT toute confirmation. Le
+    // dialogue ne s'appuie jamais sur l'instantane recu en props (c'est ce qui
+    // affichait « 1 of 2 » devant une carte a « 2 of 2 »). Une lecture
+    // impossible ne regresse rien et n'autorise AUCUN envoi.
+    setCheckingExecution(true);
+    const fresh = await refreshProposalFromChain();
+    setCheckingExecution(false);
+    if (fresh === null) {
+      setExecutionError(`${EXECUTION_PRECHECK_TITLE}\n${EXECUTION_PRECHECK_MESSAGE}`);
+      return;
+    }
+    if (fresh.status !== 'Approved' || fresh.approvedAddresses.length < threshold) {
+      setExecutionError(
+        `Approval threshold not yet verified on-chain: ${fresh.approvedAddresses.length} of ${threshold} approvals collected. Nothing was sent.`,
+      );
+      return;
+    }
+    const collected = fresh.approvedAddresses.length;
+    const destinationLabel =
+      fullDestination ?? (summary !== null ? summary.destination : 'the destination');
+    const amountLabel =
+      amountLamports === null ? 'The stored amount' : lamportsToSolDisplay(amountLamports);
     Alert.alert(
-      'Execute this proposal?',
+      'Review execution',
       [
-        `Proposal #${index}`,
-        `Status: ${proposal.status} · ${proposal.approvedAddresses.length} of ${threshold} approvals`,
-        `You will sign ONE vaultTransactionExecute instruction as ${walletAddress ?? 'unknown wallet'}.`,
-        'The stored transaction will be submitted to the vault and its effects are permanent.',
+        // Destination affichee UNE seule fois, EN ENTIER : l'abrege ne permet pas
+        // de verifier ou part l'argent, et la doubler (abrege + complet) rendait
+        // le dialogue illisible.
+        `${amountLabel} will be transferred to ${destinationLabel}.`,
+        `${collected} of ${threshold} approvals collected.`,
+        'The approval threshold has been reached.',
+        'Your connected wallet will sign the execution.',
       ].join('\n'),
       [
         { style: 'cancel', text: 'Cancel' },
         {
           onPress: () => {
+            // DEUXIEME CONFIRMATION CONSERVEE : garde-fou delibere du projet
+            // (une execution est irreversible). Volontairement courte, sans
+            // repeter l'explication du premier dialogue.
             Alert.alert(
-              'Confirm execution',
-              [
-                'This cannot be undone and cannot be cancelled once sent.',
-                'The vault will execute the approved transaction now.',
-                'Tap Execute to sign with your wallet, or Cancel to stop.',
-              ].join('\n'),
+              'Execute now?',
+              'This action cannot be undone.',
               [
                 { style: 'cancel', text: 'Cancel' },
                 {
@@ -505,6 +646,9 @@ export function ProposalDetailsScreen({
     approvedAddresses: string[];
     status: string;
   } | null> => {
+    // Identite capturee AVANT la lecture : si la proposition affichee a change
+    // pendant l'aller-retour, le resultat ne doit toucher a AUCUN etat.
+    const requestKey = proposalKeyRef.current;
     try {
       const [proposalPdaKey] = multisig.getProposalPda({
         multisigPda: new PublicKey(address),
@@ -513,6 +657,7 @@ export function ProposalDetailsScreen({
       const info = await connection.getAccountInfo(proposalPdaKey, 'confirmed');
       if (info === null) return null;
       const [decoded] = multisig.accounts.Proposal.fromAccountInfo(info);
+      if (proposalKeyRef.current !== requestKey) return null;
       const fresh = {
         approvedAddresses: decoded.approved.map((entry) => entry.toBase58()),
         status: decoded.status.__kind,
@@ -526,6 +671,190 @@ export function ProposalDetailsScreen({
   };
 
   /**
+   * Relecture LECTURE SEULE au RETOUR AU PREMIER PLAN. Le wallet prend le focus
+   * pendant qu'il signe, puis nous le rend : sans cette relecture, une
+   * approbation signee dans le wallet n'est JAMAIS vue par cet ecran, et Execute
+   * reste bloque jusqu'a une sortie/rentree. Aucun wallet, aucune signature,
+   * aucun envoi : uniquement des lectures, protegees contre le chevauchement.
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      if (unmountedRef.current || refreshInFlightRef.current) return;
+      refreshInFlightRef.current = true;
+      void (async () => {
+        try {
+          await runDecode();
+          await refreshProposalFromChain();
+        } finally {
+          refreshInFlightRef.current = false;
+        }
+      })();
+    });
+    return () => subscription.remove();
+  }, [runDecode]);
+
+  /**
+   * Relecture SEULE d'une execution DEJA signee : statut de la signature, puis
+   * relecture de la Proposal. Renvoie la preuve obtenue, ou null si la lecture
+   * n'a rien pu produire. Aucune reconstruction, aucun wallet, aucun envoi.
+   */
+  const verifyExecutionOnce = async (): Promise<
+    { confirmed: boolean; executedOnchain: boolean } | null
+  > => {
+    const signature = executionResult?.signature ?? rememberedSignature;
+    if (signature === null) return null;
+    const requestKey = proposalKeyRef.current;
+    const confirmation = await confirmSignature({ connection, signature });
+    const fresh = await refreshProposalFromChain();
+    // Proposition changee pendant la relecture : resultat IGNORE.
+    if (proposalKeyRef.current !== requestKey) return null;
+    const confirmed = confirmation.status === 'confirmed';
+    const executedOnchain = fresh !== null && fresh.status === 'Executed';
+    setExecutionResult((previous) =>
+      previous === null
+        ? previous
+        : {
+            ...previous,
+            confirmed,
+            confirmationStatus: confirmation.status,
+            readBack:
+              fresh === null
+                ? previous.readBack
+                : {
+                    proposalAccountPresent: true,
+                    proposalStatusAfter: fresh.status,
+                    vaultAddress: previous.readBack?.vaultAddress ?? '',
+                    vaultLamportsAfter: previous.readBack?.vaultLamportsAfter ?? null,
+                    vaultLamportsDelta: previous.readBack?.vaultLamportsDelta ?? null,
+                  },
+            verified: confirmed && executedOnchain,
+          },
+    );
+    return { confirmed, executedOnchain };
+  };
+
+  /**
+   * « Check execution again » : LECTURES uniquement. Jamais de reconstruction,
+   * jamais d'ouverture du wallet, jamais de seconde signature, jamais d'envoi.
+   * Une reussite fait disparaitre l'erreur COURANTE du bloc principal (l'historique
+   * technique reste dans Troubleshooting details) et arrete les reprises.
+   */
+  const onCheckExecutionAgain = async () => {
+    const signature = executionResult?.signature ?? rememberedSignature;
+    if (signature === null || verificationInFlightRef.current) return;
+    verificationInFlightRef.current = true;
+    setCheckingExecution(true);
+    setExecutionCheckReport('Checking the execution…');
+    try {
+      const evidence = await verifyExecutionOnce();
+      if (evidence === null) {
+        setExecutionCheckReport(EXECUTION_CHECK_FAILED_MESSAGE);
+        return;
+      }
+      setExecutionCheckReport(
+        evidence.executedOnchain
+          ? 'Execution verified on-chain.'
+          : evidence.confirmed
+            ? 'Transaction confirmed, proposal verification pending.'
+            : EXECUTION_UNVERIFIED_MESSAGE,
+      );
+      if (evidence.executedOnchain) {
+        setExecutionError(null);
+        verificationAttemptsRef.current = MAX_VERIFICATION_ATTEMPTS;
+        // L'etat est tranche : la memoire d'envoi n'a plus de raison d'etre.
+        forgetPendingSubmission(proposalKey);
+        setRememberedSignature(null);
+      }
+    } catch (caught: unknown) {
+      const raw = caught instanceof Error ? caught.message : String(caught);
+      setExecutionDiagnostics((previous) => [...previous, raw]);
+      setExecutionCheckReport(
+        isTemporaryNetworkFailure(caught)
+          ? EXECUTION_UNVERIFIED_MESSAGE
+          : EXECUTION_CHECK_FAILED_MESSAGE,
+      );
+    } finally {
+      verificationInFlightRef.current = false;
+      setCheckingExecution(false);
+      setVerificationRound((round) => round + 1);
+    }
+  };
+
+  // Une verification impossible POUR UNE RAISON RESEAU sur un envoi SIGNE : seul
+  // cas ou une reprise automatique est autorisee. Elle RELIT, elle ne renvoie pas.
+  const executionNetworkFailure =
+    executionResult !== null &&
+    executionResult.signature !== null &&
+    !executionResult.verified &&
+    isTemporaryNetworkFailure(executionResult.errorMessage ?? '');
+  // Meme regle cote approbation : une signature qui existe et une relecture
+  // impossible ne sont PAS un echec.
+  const approvalNetworkFailure =
+    approvalResult !== null &&
+    approvalResult.signature !== null &&
+    !approvalResult.verified &&
+    isTemporaryNetworkFailure(approvalError ?? '');
+  const latestCheckRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    latestCheckRef.current = () => {
+      void onCheckExecutionAgain();
+    };
+  });
+  useEffect(() => {
+    if (proposalKeyRef.current === proposalKey) return;
+    // Changement de proposition : on ANNULE les reprises en cours et on oublie
+    // tout resultat de l'ancienne. Aucun etat n'est herite d'une autre proposition.
+    proposalKeyRef.current = proposalKey;
+    if (verificationTimerRef.current !== null) {
+      clearTimeout(verificationTimerRef.current);
+      verificationTimerRef.current = null;
+    }
+    verificationAttemptsRef.current = 0;
+    setExecutionResult(null);
+    setExecutionError(null);
+    setExecutionDiagnostics([]);
+    setExecutionCheckReport(null);
+    setCheckingExecution(false);
+    setApprovalResult(null);
+    setApprovalError(null);
+    setCheckingApproval(false);
+    setOnchainApproval(null);
+    // Cette proposition a-t-elle un envoi signe non verifie dans ce processus ?
+    setRememberedSignature(pendingSubmissionFor(proposalKey));
+  }, [proposalKey]);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      if (verificationTimerRef.current !== null) {
+        clearTimeout(verificationTimerRef.current);
+        verificationTimerRef.current = null;
+      }
+    };
+  }, []);
+  useEffect(() => {
+    if (!executionNetworkFailure) return;
+    if (verificationAttemptsRef.current >= MAX_VERIFICATION_ATTEMPTS) return;
+    const delay =
+      VERIFICATION_RETRY_DELAYS_MS[
+        Math.min(verificationAttemptsRef.current, VERIFICATION_RETRY_DELAYS_MS.length - 1)
+      ];
+    verificationAttemptsRef.current += 1;
+    verificationTimerRef.current = setTimeout(() => {
+      verificationTimerRef.current = null;
+      if (unmountedRef.current || verificationInFlightRef.current) return;
+      latestCheckRef.current();
+    }, delay);
+    return () => {
+      if (verificationTimerRef.current !== null) {
+        clearTimeout(verificationTimerRef.current);
+        verificationTimerRef.current = null;
+      }
+    };
+  }, [executionNetworkFailure, verificationRound]);
+
+  /**
    * « Check approval again » : LECTURES uniquement (statut de signature,
    * confirmation, relecture de la Proposal). Jamais de reconstruction, jamais
    * d'ouverture du wallet, jamais de signature, jamais de second envoi.
@@ -533,11 +862,14 @@ export function ProposalDetailsScreen({
   const onCheckApprovalAgain = async () => {
     const signature = approvalResult?.signature ?? null;
     if (signature === null || checkingApproval) return;
+    const requestKey = proposalKeyRef.current;
     setCheckingApproval(true);
     setApprovalCheckReport('Checking the approval…');
     try {
       const confirmation = await confirmSignature({ connection, signature });
       const fresh = await refreshProposalFromChain();
+      // Proposition changee pendant la relecture : resultat IGNORE.
+      if (proposalKeyRef.current !== requestKey) return;
       const confirmed = confirmation.status === 'confirmed';
       const verified =
         confirmed && fresh !== null && walletHasApproved(fresh.approvedAddresses, walletAddress);
@@ -641,23 +973,36 @@ export function ProposalDetailsScreen({
   };
 
   /** Tap sur Approve : préparation des verdicts déjà là, puis confirmation. */
-  const onApprove = () => {
-    if (!canConfirm || approving || approvalAttemptedRef.current) return;
+  const onApprove = async () => {
+    if (!canConfirm || approving || checkingApproval || approvalAttemptedRef.current) return;
     // Même logique qu'Execute : un échec sans signature redevient une tentative
     // neuve, un envoi signé ne peut jamais être réessayé.
     if (approvalResult !== null && approvalOutcome?.allowNewAttempt === true) {
       setApprovalResult(null);
       setApprovalError(null);
     }
+    // PORTE DE SECURITE : relecture on-chain AVANT le dialogue. Le compteur du
+    // dialogue vient de CETTE lecture, jamais de l'instantane des props (c'est
+    // ce qui faisait afficher un compteur perime, inferieur a la carte). Une
+    // lecture impossible ne regresse rien et n'approuve rien.
+    setCheckingApproval(true);
+    const fresh = await refreshProposalFromChain();
+    setCheckingApproval(false);
+    if (fresh === null) {
+      setApprovalError(`${APPROVAL_PRECHECK_TITLE}\n${APPROVAL_PRECHECK_MESSAGE}`);
+      return;
+    }
+    if (walletHasApproved(fresh.approvedAddresses, walletAddress)) {
+      setApprovalError('Already approved: this wallet already approved this proposal on-chain.');
+      return;
+    }
     Alert.alert(
       'Approve this proposal?',
       [
         `Proposal #${index}`,
-        `Approvals: ${proposal.approvedAddresses.length} of ${threshold} required`,
-        `You will sign ONE proposalApprove instruction as ${walletAddress ?? 'unknown wallet'}.`,
-        'No account is created and no rent is paid.',
-        'Nothing is executed and nothing is rejected by this action.',
-        'Nothing is sent until you tap Approve.',
+        `${fresh.approvedAddresses.length} of ${threshold} approvals collected`,
+        'Your connected wallet will approve this proposal.',
+        'Approving does not move the funds.',
       ].join('\n'),
       [
         { style: 'cancel', text: 'Cancel' },
@@ -866,7 +1211,7 @@ export function ProposalDetailsScreen({
               approvalRetry ? 'Prepare the approval again' : 'Approve this proposal'
             }
             busy={approving}
-            disabled={!canConfirm || approving}
+            disabled={!canConfirm || approving || checkingApproval}
             label={approvalRetry ? 'Prepare again' : 'Approve'}
             onPress={onApprove}
           />
@@ -894,53 +1239,66 @@ export function ProposalDetailsScreen({
           </Text>
         ) : null}
 
-        {approvalError !== null && actionState !== 'executed' ? (
-          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
-            <InfoText tone="error">{approvalError}</InfoText>
+        {approvalError !== null &&
+        actionState !== 'executed' &&
+        !approvalNetworkFailure &&
+        !progress.reached ? (
+          /* Un envoi SIGNE non verifie n'est PAS un echec : ton neutre. */
+          <InfoBox
+            glyph="⚠"
+            style={styles.infoBox}
+            tone={approvalNetworkFailure ? 'warning' : 'error'}
+          >
+            <InfoText tone={approvalNetworkFailure ? 'warning' : 'error'}>
+              {approvalNetworkFailure
+                ? `${APPROVAL_SENT_TITLE}\n${APPROVAL_UNVERIFIED_MESSAGE}`
+                : approvalError}
+            </InfoText>
           </InfoBox>
         ) : null}
 
-        {approvalResult !== null && actionState !== 'executed' ? (
+        {approvalResult !== null && actionState !== 'executed' && !progress.reached ? (
           <View
             style={
               approvalOutcome !== null && approvalOutcome.tone === 'success'
                 ? styles.successBox
-                : styles.errorBox
+                : approvalNetworkFailure
+                  ? /* Etat INCONNU (envoi signe, relecture indisponible) : jamais
+                       rouge. Le ton neutre est reserve aux etats non tranches. */
+                    styles.infoBox
+                  : styles.errorBox
             }
           >
             <Text
               style={
                 approvalOutcome !== null && approvalOutcome.tone === 'success'
                   ? styles.successText
-                  : styles.errorText
+                  : approvalNetworkFailure
+                    ? styles.fieldValue
+                    : styles.errorText
               }
             >
-              {/* Sans signature, ce libellé est le SEUL autorisé : jamais « Sent ». */}
-              {approvalLabel}
+              {/* Sans signature, ce libellé est le SEUL autorisé : jamais « Sent ».
+                  Avec une signature non verifiee, la copie humaine remplace le
+                  libelle technique (le detail brut vit dans Troubleshooting). */}
+              {approvalNetworkFailure
+                ? `${APPROVAL_SENT_TITLE}\n${APPROVAL_UNVERIFIED_MESSAGE}`
+                : approvalLabel}
             </Text>
             {approvalResult.signature !== null ? (
-              <>
-                <Text style={styles.fieldNote}>Signature</Text>
-                <Text selectable style={styles.monoValue}>
-                  {abbreviateAddress(approvalResult.signature)}
-                </Text>
-                <Text selectable style={styles.monoValue}>
-                  {approvalResult.signature}
-                </Text>
-              </>
+              <Text selectable style={styles.fieldNote}>
+                Signature: {abbreviateAddress(approvalResult.signature)}
+              </Text>
             ) : null}
             {approvalResult.readBack !== null ? (
               <>
                 <Text style={styles.fieldValue}>
-                  Status: {approvalResult.readBack.status} (was{' '}
-                  {approvalResult.approvalsBefore} approval(s))
+                  {approvalResult.readBack.approvedAddresses.length} of {threshold} approvals
+                  collected
                 </Text>
-                <Text style={styles.fieldValue}>
-                  Approvals: {approvalResult.readBack.approvedAddresses.length} of {threshold}
-                </Text>
-                <Text selectable style={styles.monoValue}>
-                  {approvalResult.readBack.address}
-                </Text>
+                {approvalResult.readBack.approvedAddresses.length >= threshold ? (
+                  <Text style={styles.successText}>Approval threshold reached</Text>
+                ) : null}
               </>
             ) : null}
             {approvalActions?.allowCheckAgain ? (
@@ -976,6 +1334,8 @@ export function ProposalDetailsScreen({
                 busy={executing}
                 disabled={
                   executing ||
+                  checkingExecution ||
+                  unverifiedExecutionSignature !== null ||
                   (executionResult !== null && !(executionOutcome?.allowNewAttempt ?? false))
                 }
                 label={PROPOSAL_ACTION_LABELS.executeCta}
@@ -986,11 +1346,14 @@ export function ProposalDetailsScreen({
                 Executing submits the stored transaction to the vault. It is irreversible and
                 requires a double confirmation.
               </Text>
+              {checkingExecution ? (
+                <Text style={styles.fieldNote}>Checking the approvals on-chain…</Text>
+              ) : null}
             </>
           )
         ) : executeState === 'unavailable-threshold' ? (
-          // Raison déjà portée par la carte principale (« Waiting for N more
-          // approval(s). » + « Execution becomes available… ») : aucun bloc séparé.
+          // Raison déjà portée par la carte principale (approbations restantes
+          // + « Execution becomes available… ») : aucun bloc séparé.
           null
         ) : executeState === 'no-permission' ? (
           <InfoBox glyph="•" style={styles.infoBox}>
@@ -1001,33 +1364,30 @@ export function ProposalDetailsScreen({
           /* Etat terminal : proposition exécutée, AUCUN CTA Approve/Execute. */
           <View style={styles.executedCard}>
             <Text style={styles.executedCheck}>✓</Text>
-            <Text style={styles.executedTitle}>Executed</Text>
+            <Text style={styles.executedTitle}>Transaction executed</Text>
             <Text style={styles.executedMeta}>{PROPOSAL_ACTION_LABELS.executed}</Text>
             <Text style={styles.fieldNote}>Proposal #{index}</Text>
             <Text style={styles.executedAmount}>
               {amountLamports === null ? 'Amount unavailable' : lamportsToSolDisplay(amountLamports)}
             </Text>
             <Text style={styles.fieldNote}>Destination</Text>
+            {/* Abregee : l'adresse complete est dans Troubleshooting details. */}
             <Text selectable style={styles.monoValue}>
-              {fullDestination ?? (summary !== null ? summary.destination : 'Destination unavailable')}
+              {fullDestination !== null
+                ? abbreviateAddress(fullDestination)
+                : summary !== null
+                  ? abbreviateAddress(summary.destination)
+                  : 'Destination unavailable'}
             </Text>
             <Text style={styles.fieldNote}>{progress.collectedLabel}</Text>
             {/* Aucune date n'est affichée : aucune date n'est réellement disponible. */}
             {confirmedOnchain ? (
-              <Text style={styles.successText}>Confirmed on-chain</Text>
+              <Text style={styles.successText}>Verified on-chain</Text>
             ) : null}
-            {executionResult?.signature != null ? (
-              <>
-                <Text style={styles.fieldNote}>Signature</Text>
-                <Text selectable style={styles.monoValue}>
-                  {abbreviateAddress(executionResult.signature)}
-                </Text>
-                <Text selectable style={styles.monoValue}>
-                  {executionResult.signature}
-                </Text>
-              </>
-            ) : null}
-            <Text style={styles.fieldNote}>On-chain status: {effectiveProposalStatus}</Text>
+            {/* Ni signature abregee ni signature complete sur la carte terminale :
+                la liste demandee est stricte (titre, montant, destination abregee,
+                approbations, verification). Le reste vit dans Troubleshooting. */}
+            {/* Statut brut et signature complete : deplaces dans le recu technique. */}
           </View>
         )}
 
@@ -1035,9 +1395,37 @@ export function ProposalDetailsScreen({
           <Text style={styles.fieldNote}>Waiting for the wallet…</Text>
         ) : null}
 
-        {executionError !== null ? (
-          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
-            <InfoText tone="error">{executionError}</InfoText>
+        {executionError !== null && !executed ? (
+          /* Un envoi SIGNE non encore verifie n'est PAS un echec : ton neutre. */
+          <InfoBox
+            glyph="⚠"
+            style={styles.infoBox}
+            tone={executionNetworkFailure ? 'warning' : 'error'}
+          >
+            <InfoText tone={executionNetworkFailure ? 'warning' : 'error'}>{executionError}</InfoText>
+          </InfoBox>
+        ) : null}
+
+        {executionResult === null && rememberedSignature !== null && !executed ? (
+          /* Envoi SIGNE d'un montage precedent de cet ecran (ou d'un ecran
+             rouvert) : Execute n'est jamais repropose sans preuve on-chain ; la
+             main est laissee a la relecture. Ton neutre : etat INCONNU, pas echec. */
+          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+            <InfoText tone="warning">{EXECUTION_SENT_TITLE}</InfoText>
+            <InfoText tone="warning">{EXECUTION_UNVERIFIED_MESSAGE}</InfoText>
+            <Text selectable style={styles.fieldNote}>
+              Signature: {abbreviateAddress(rememberedSignature)}
+            </Text>
+            <PillButton
+              accessibilityLabel="Check execution again"
+              busy={checkingExecution}
+              disabled={checkingExecution}
+              label={checkingExecution ? 'Checking…' : 'Check execution again'}
+              onPress={() => {
+                void onCheckExecutionAgain();
+              }}
+              variant="secondary"
+            />
           </InfoBox>
         ) : null}
 
@@ -1060,13 +1448,14 @@ export function ProposalDetailsScreen({
               {executionOutcome?.label ?? 'Execution verified on-chain'}
             </Text>
             {executionResult.signature !== null ? (
-              <Text selectable style={styles.monoValue}>
-                Signature: {executionResult.signature}
+              /* Signature ABREGEE ici ; la complete vit dans Troubleshooting. */
+              <Text selectable style={styles.fieldNote}>
+                Signature: {abbreviateAddress(executionResult.signature)}
               </Text>
             ) : null}
             <Text style={styles.fieldValue}>
               Status before: {executionResult.statusBefore ?? 'unknown'} ·{' '}
-              {executionResult.approvalsBefore} approval(s)
+              {executionResult.approvalsBefore} of {threshold} required approvals
             </Text>
             {executionResult.readBack !== null ? (
               <>
@@ -1087,11 +1476,21 @@ export function ProposalDetailsScreen({
                 </Text>
               </>
             ) : null}
-            {executionResult.validationWarnings.map((warning) => (
-              <Text key={warning} style={styles.fieldNote}>
-                · {warning}
-              </Text>
-            ))}
+            {executionOutcome?.allowCheckAgain ? (
+              <PillButton
+                accessibilityLabel="Check execution again"
+                busy={checkingExecution}
+                disabled={checkingExecution}
+                label={checkingExecution ? 'Checking…' : 'Check execution again'}
+                onPress={() => {
+                  void onCheckExecutionAgain();
+                }}
+                variant="secondary"
+              />
+            ) : null}
+            {executionCheckReport !== null ? (
+              <Text style={styles.fieldNote}>{executionCheckReport}</Text>
+            ) : null}
           </View>
         ) : null}
 
@@ -1215,6 +1614,8 @@ export function ProposalDetailsScreen({
             replie par defaut, jamais prioritaire sur l'etat courant. */}
         {approvalDiagnostics.length > 0 ||
         (approvalResult?.validationErrors.length ?? 0) > 0 ||
+        approvalResult?.signature != null ||
+        executionDiagnostics.length > 0 ||
         executionError !== null ? (
           <View>
             <Pressable
@@ -1243,11 +1644,44 @@ export function ProposalDetailsScreen({
                     {message}
                   </Text>
                 ))}
+                {executionDiagnostics.map((message, position) => (
+                  <Text key={`execution-detail-${position}`} selectable style={styles.fieldNote}>
+                    {message}
+                  </Text>
+                ))}
                 {executionError !== null ? (
                   <Text selectable style={styles.fieldNote}>
                     {executionError}
                   </Text>
                 ) : null}
+                {executionResult?.signature != null ? (
+                  <Text selectable style={styles.fieldNote}>
+                    Execution signature: {executionResult.signature}
+                  </Text>
+                ) : null}
+                {(executionResult?.validationWarnings ?? []).map((warning, position) => (
+                  <Text key={`execution-warning-${position}`} selectable style={styles.fieldNote}>
+                    {warning}
+                  </Text>
+                ))}
+                {approvalResult?.signature != null ? (
+                  <Text selectable style={styles.fieldNote}>
+                    Approval signature: {approvalResult.signature}
+                  </Text>
+                ) : null}
+                {approvalResult?.readBack != null ? (
+                  <Text selectable style={styles.fieldNote}>
+                    Proposal account: {approvalResult.readBack.address}
+                  </Text>
+                ) : null}
+                {fullDestination !== null ? (
+                  <Text selectable style={styles.fieldNote}>
+                    Destination (full): {fullDestination}
+                  </Text>
+                ) : null}
+                <Text selectable style={styles.fieldNote}>
+                  On-chain status: {effectiveProposalStatus}
+                </Text>
               </Card>
             ) : null}
           </View>

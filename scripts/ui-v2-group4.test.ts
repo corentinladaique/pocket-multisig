@@ -157,8 +157,11 @@ check('6. warning 1-of-2 conserve (Low security configuration)', () => {
 });
 
 check('7. permissions inchangees', () => {
-  assert.ok(CREATE.includes('Planned permissions'));
-  assert.ok(CREATE.includes('Permissions will be configured during creation.'));
+  // La phrase creuse « Permissions will be configured during creation. » a ete
+  // RETIREE (mission : nettoyage de la revue). L'invariant metier, lui, reste
+  // verifie : aucune edition de role, permissions lues du plan partage.
+  assert.ok(!CREATE.includes('Planned permissions'));
+  assert.ok(!CREATE.includes('Permissions will be configured during creation.'));
   // Aucun editeur de role ajoute dans le wizard : les permissions restent
   // lues du plan partage, jamais editees ici.
   assert.ok(!/Initiate['"]|\bVote\b|\bExecute['"]/.test(CREATE), 'aucun role code en dur');
@@ -227,11 +230,12 @@ check('12. succes terminal inchange', () => {
   assert.equal(VAULT_VISIBLE_LABELS.verified, 'Vault created and verified.');
   assert.ok(CREATE.includes('Vault created and verified.'));
   assert.ok(CREATE.includes("setCheckReport('Vault created and verified.')"));
-  assert.ok(SUCCESS.includes('Multisig configuration address'), 'adresse de configuration');
-  assert.ok(SUCCESS.includes('Main vault address'), 'adresse du vault principal');
+  // Adresses completes deplacees dans le recu technique replie, meme bloc.
+  assert.ok(SUCCESS.includes('Multisig configuration:'), 'adresse de configuration');
+  assert.ok(SUCCESS.includes('Main vault:'), 'adresse du vault principal');
   assert.ok(SUCCESS.includes('mainVaultAddress'), 'vault principal derive apres verification');
   assert.ok(SUCCESS.includes('Open vault'));
-  assert.ok(SUCCESS.includes('Go to Inbox'));
+  assert.ok(SUCCESS.includes('View proposals'));
   assert.ok(SUCCESS.includes('onGoToInbox'));
   assert.ok(!SUCCESS.includes('onPress={onCreateOnDevnet}'), 'aucune action Create residuelle');
 });
@@ -326,6 +330,13 @@ check('15. aucun invariant metier modifie', () => {
     ],
     ['Could not read the account: ', 'Lecture impossible : '],
     ['Could not read proposals: ', 'Lecture des propositions impossible : '],
+    //   4e exception (06/10, demande explicite) : « approval(s) » ne doit jamais
+    //   atteindre l'interface. Changement STRICTEMENT textuel d'un message, sans
+    //   ternaire ni logique : aucune instruction, aucun compte, aucune derivation.
+    [
+      'ThresholdNotReached: ${approvalsBefore} of ${input.threshold} approvals collected on-chain.',
+      'ThresholdNotReached: ${approvalsBefore} approval(s) on-chain, ${input.threshold} required.',
+    ],
   ];
   const changedSquadsFiles = execSync('git diff --name-only HEAD -- src/squads', {
     encoding: 'utf8',
@@ -342,7 +353,7 @@ check('15. aucun invariant metier modifie', () => {
     assert.equal(
       workingContent,
       headContent,
-      `${squadsFile} : les 3 messages traduits sont la SEULE difference autorisee`,
+      `${squadsFile} : les messages traduits/reecrits sont la SEULE difference autorisee`,
     );
   }
 });

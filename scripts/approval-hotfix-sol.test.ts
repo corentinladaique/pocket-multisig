@@ -122,7 +122,12 @@ const ALLOWLIST = readFileSync('src/squads/instructionAllowlist.ts', 'utf8');
     // Le CTA n'existe que pour la famille « approbation disponible » (ou retry),
     // et reste desactive pendant une tentative.
     assert.ok(DETAILS.includes("actionState === 'approval-available' || approvalRetry"), 'CTA conditionnel');
-    assert.ok(DETAILS.includes('disabled={!canConfirm || approving}'), 'desactive pendant approbation');
+    // Handler desormais ASYNC (il relit la chaine avant le dialogue) : le CTA est
+  // aussi desactive pendant cette relecture.
+  assert.ok(
+    DETAILS.includes('disabled={!canConfirm || approving || checkingApproval}'),
+    'desactive pendant approbation et pendant la relecture',
+  );
   });
 
   await check('9. wallet deja approbateur : aucune construction lancee', () => {

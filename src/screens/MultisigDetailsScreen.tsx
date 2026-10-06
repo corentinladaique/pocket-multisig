@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   BackHandler,
   KeyboardAvoidingView,
   Pressable,
@@ -124,7 +125,11 @@ export function MultisigDetailsScreen({
   // wallet, aucune signature, aucun envoi.
   const [refreshing, setRefreshing] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const reloadInFlightRef = useRef(false);
   const reloadFromChain = useCallback(async (): Promise<boolean> => {
+    // Aucun refresh concurrent ni en double.
+    if (reloadInFlightRef.current) return false;
+    reloadInFlightRef.current = true;
     setRefreshing(true);
     try {
       const key = new PublicKey(address);
@@ -135,6 +140,7 @@ export function MultisigDetailsScreen({
     } catch {
       return false;
     } finally {
+      reloadInFlightRef.current = false;
       setRefreshing(false);
     }
   }, [address]);
@@ -158,6 +164,14 @@ export function MultisigDetailsScreen({
     },
     [address],
   );
+
+  // Retour au premier plan : relecture LECTURE SEULE (aucun wallet, aucun envoi).
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') void reloadFromChain();
+    });
+    return () => subscription.remove();
+  }, [reloadFromChain]);
 
   const view = state.status === 'loaded' ? state.view : null;
   const vaultAddress = view?.vaultAddress ?? null;
@@ -307,7 +321,12 @@ export function MultisigDetailsScreen({
         guardContext={guardContext}
         index={openProposal.index}
         members={view.members}
-        onBack={() => setOpenProposal(null)}
+        onBack={() => {
+          // Retour depuis le detail : relecture de la liste, sinon une
+          // proposition executee resterait dans To do / Open.
+          setOpenProposal(null);
+          void reloadFromChain();
+        }}
         proposal={{
           approvedAddresses: openProposal.approvedAddresses,
           status: openProposal.status,

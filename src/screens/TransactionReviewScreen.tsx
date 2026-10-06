@@ -50,10 +50,19 @@ function fieldText(field: ReviewField<string>): string {
   return field.known ? field.value : 'Unknown';
 }
 
-/** Montant : SOL et lamports bruts, sans aucun arrondi. */
+/**
+ * Montant principal : SOL seul. Les lamports exacts ne disparaissent pas pour
+ * autant : ils vivent dans les details techniques bruts (voir `rawLamports`).
+ * `formatLamportsExact` ne fait AUCUN arrondi : la valeur affichee est exacte.
+ */
 function amountText(field: ReviewField<SolAmount>): string {
   if (!field.known) return 'Unknown';
-  return `${formatLamportsExact(field.value.lamports)} (${field.value.lamports} lamports)`;
+  return formatLamportsExact(field.value.lamports);
+}
+
+/** Lamports bruts, pour la section technique uniquement. */
+function rawLamports(field: ReviewField<SolAmount>): string | null {
+  return field.known ? `${field.value.lamports} lamports` : null;
 }
 
 export interface TransactionReviewScreenProps {
@@ -349,6 +358,9 @@ export function TransactionReviewScreen({
       {advancedOpen ? (
         <>
           <Text style={styles.sectionTitle}>Technical transaction details</Text>
+          {/* Lamports EXACTS : deplaces ici, plus jamais dans le montant principal. */}
+          <Text style={styles.fieldLabel}>Raw amount</Text>
+          <Text style={styles.fieldValue}>{rawLamports(model.amount) ?? 'Unknown'}</Text>
           <TransactionTechnicalDetails
             model={model}
             guard={guard}

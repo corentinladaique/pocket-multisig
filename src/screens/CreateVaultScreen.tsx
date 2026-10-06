@@ -870,15 +870,13 @@ export function CreateVaultScreen({
         );
         setCreating(false);
         Alert.alert(
-          'Create this multisig on Devnet?',
+          'Create this vault on Devnet?',
           [
-            `Threshold: ${plan.threshold} of ${plan.members.length} members`,
-            `Estimated cost: ${charged === null ? 'unknown' : lamportsToSolDisplay(charged)} (rent + network fee)`,
-            `Payer wallet: ${creator}`,
+            `${plan.members.length} signers · ${plan.threshold} approvals required`,
+            `Estimated cost: ${charged === null ? 'unknown' : lamportsToSolDisplay(charged)}`,
             '',
-            'You sign ONCE as creator. The other members are not asked to approve.',
-            'The configuration will be frozen: no admin authority.',
-            'Nothing is sent until you tap Create.',
+            'Your connected wallet will sign the creation.',
+            'The other members do not need to approve this step.',
           ].join('\n'),
           [
             { onPress: () => setCreating(false), style: 'cancel', text: 'Cancel' },
@@ -886,7 +884,7 @@ export function CreateVaultScreen({
               onPress: () => {
                 void confirmAndSend(prepared, creator);
               },
-              text: 'Create',
+              text: 'Create vault',
             },
           ],
           { cancelable: true, onDismiss: () => setCreating(false) },
@@ -1189,7 +1187,7 @@ export function CreateVaultScreen({
             ) : null}
 
             <Text style={styles.sectionTitle}>
-              Signers ({members.length} of {requiredMembers} required)
+              Signers ({members.length} added)
             </Text>
             {members.length < requiredMembers ? (
               <Text style={styles.warningText}>
@@ -1331,27 +1329,27 @@ export function CreateVaultScreen({
               </InfoBox>
             ) : null}
             <Text style={styles.hint}>
-              Example: 2 of 3 means any two signers can approve, so one lost signer is
-              survivable. 2 of 2 is stricter: both signers are always needed.
+              With 2 of 3, any two signers can approve. The vault remains accessible if one signer
+              is unavailable.
             </Text>
           </View>
         ) : null}
 
         {step === 4 ? (
           <View style={styles.block}>
-            <Text style={styles.blockTitle}>Security check</Text>
+            <Text style={styles.blockTitle}>Vault configuration</Text>
 
             <Text style={styles.checkLine}>
-              {draft.validationErrors.length === 0 ? '✓ ' : '✗ '}
-              Public addresses valid, no duplicates
-            </Text>
-            <Text style={styles.checkLine}>
               {members.length >= 2 ? '✓ ' : '✗ '}
-              At least two members ({members.length})
+              {members.length} valid signer addresses
             </Text>
             <Text style={styles.checkLine}>
               {threshold >= 1 && threshold <= members.length ? '✓ ' : '✗ '}
-              Threshold {threshold} within 1..{members.length}
+              {threshold} of {members.length} approvals required
+            </Text>
+            <Text style={styles.checkLine}>
+              {draft.validationErrors.length === 0 ? '✓ ' : '✗ '}
+              No duplicate addresses
             </Text>
 
             {draft.validationErrors.map((message) => (
@@ -1365,12 +1363,14 @@ export function CreateVaultScreen({
               </InfoBox>
             ))}
 
+            {/* Conseils pratiques : jamais un langage de validation technique. */}
             <InfoBox glyph="ℹ" style={styles.infoBox}>
+              <Text style={styles.infoHeading}>Good to know</Text>
               <InfoText>
-                Verify every hardware wallet address on the device itself.
+                Verify hardware wallet addresses on the hardware device itself.
               </InfoText>
               <InfoText>
-                Pocket Multisig never asks for recovery phrases or private keys.
+                Multisig never asks for a recovery phrase or private key.
               </InfoText>
             </InfoBox>
           </View>
@@ -1415,18 +1415,18 @@ export function CreateVaultScreen({
                 </InfoBox>
               ) : null}
 
-              <Text style={styles.fieldLabel}>Planned permissions</Text>
-              <Text style={styles.fieldValue}>
-                Permissions will be configured during creation.
-              </Text>
-
               <Text style={styles.fieldLabel}>Network</Text>
               <Text style={styles.fieldValue}>Devnet</Text>
 
-              <Text style={styles.fieldLabel}>Status</Text>
-              <Text style={ready ? styles.statusReady : styles.warningText}>
-                {ready ? 'Ready to create' : 'Not ready yet — see below'}
-              </Text>
+              {/* Resume UNIQUE : plus de triple libelle de preparation. */}
+              <Card style={styles.summaryBox}>
+                <Text style={ready ? styles.statusReady : styles.warningText}>
+                  {ready ? 'Vault ready' : 'Not ready yet — see below'}
+                </Text>
+                <Text style={styles.hint}>
+                  {members.length} signers · {threshold} approvals required · Devnet
+                </Text>
+              </Card>
 
               {/* Erreurs bloquantes et avertissements rappeles ici : la revue doit
                   rester lisible sans revenir a l'etape Security check. */}
@@ -1490,13 +1490,7 @@ export function CreateVaultScreen({
                   un gros bloc adjacent au bouton). Sinon, un bandeau d'action.
                   Masque pendant la creation (ETAT 2) et apres succes. */}
               {vaultVisibleState !== 'awaiting-wallet' ? (
-                canCreate ? (
-                  <View style={styles.readyBadge}>
-                    <Text style={styles.readyBadgeText}>
-                      ✓ {createReadiness.userMessage}
-                    </Text>
-                  </View>
-                ) : (
+                canCreate ? null : (
                   <InfoBox glyph="⚠" style={styles.noticeBox} tone="warning">
                     <InfoText tone="warning">{createReadiness.userMessage}</InfoText>
                     <InfoText tone="warning">{createReadiness.recommendedAction}</InfoText>
@@ -1524,7 +1518,7 @@ export function CreateVaultScreen({
                   <PillButton
                     busy={creating}
                     disabled={!canCreate || creating}
-                    label={needsPrepareAgain ? 'Prepare again' : 'Prepare and create on Devnet'}
+                    label={needsPrepareAgain ? 'Prepare again' : 'Review and create'}
                     onPress={onCreateOnDevnet}
                     variant="primary"
                   />
@@ -1650,26 +1644,20 @@ export function CreateVaultScreen({
                     <Text style={styles.verifiedBadgeText}>Verified on-chain</Text>
                   </View>
 
-                  <Text style={styles.fieldLabel}>Main vault address</Text>
-                  <Text selectable style={styles.fieldValue}>
-                    {mainVaultAddress ?? 'unavailable'}
-                  </Text>
-                  <Text style={styles.fieldLabel}>Multisig configuration address</Text>
-                  <Text selectable style={styles.fieldValue}>
-                    {createResult?.readBack?.address}
-                  </Text>
-                  <Text style={styles.fieldLabel}>Threshold</Text>
+                  {/* Les adresses COMPLETES ne sont plus le contenu principal :
+                      elles restent dans le recu technique replie. */}
+                  <Text style={styles.fieldLabel}>Approvals required</Text>
                   <Text style={styles.fieldValue}>
                     {createResult?.readBack?.threshold} of {createResult?.readBack?.memberCount}
                   </Text>
-                  <Text style={styles.fieldLabel}>Members</Text>
+                  <Text style={styles.fieldLabel}>Signers</Text>
                   <Text style={styles.fieldValue}>{createResult?.readBack?.memberCount}</Text>
                   <Text style={styles.fieldLabel}>Signature</Text>
                   <Text style={styles.fieldValue}>
                     {shortenSignature(createResult?.signature)}
                   </Text>
 
-                  {/* CTA principal unique : « Open vault ». « Go to Inbox » est un
+                  {/* CTA principal unique : « Open vault ». « View proposals » est un
                       lien secondaire (jamais trois gros boutons concurrents). */}
                   <View style={styles.successActions}>
                     <PillButton
@@ -1686,7 +1674,7 @@ export function CreateVaultScreen({
                       onPress={onGoToInbox}
                       style={({ pressed }) => [styles.successLink, pressed && styles.pressed]}
                     >
-                      <Text style={styles.successLinkText}>Go to Inbox</Text>
+                      <Text style={styles.successLinkText}>View proposals</Text>
                     </Pressable>
                   </View>
 
@@ -2065,7 +2053,7 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginTop: spacing.lg,
   },
-  // Lien secondaire « Go to Inbox » : jamais un troisieme gros bouton.
+  // Lien secondaire « View proposals » : jamais un troisieme gros bouton.
   successLink: {
     alignSelf: 'center',
     borderRadius: radii.pill,

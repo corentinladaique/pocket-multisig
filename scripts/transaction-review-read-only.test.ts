@@ -120,7 +120,7 @@ check('9. ProposalDetailsScreen contient toujours le CTA Approve', () => {
   // exclusifs), donc le libelle est porte par une constante/ternaire.
   assert.ok(DETAILS.includes("'Approve this proposal'"));
   assert.ok(DETAILS.includes('onPress={onApprove}'));
-  assert.ok(DETAILS.includes('const onApprove = () => {'));
+  assert.ok(DETAILS.includes('const onApprove = async () => {'));
   assert.ok(DETAILS.includes('const runApproval = async () => {'));
 });
 

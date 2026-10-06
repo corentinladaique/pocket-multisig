@@ -153,7 +153,9 @@ check('9. le solde est relu avant toute execution', () => {
   // Protection FONCTIONNELLE (jamais un simple commentaire francais) : la
   // relecture du solde vit DANS le chemin d'execution, avant tout envoi.
   assert.ok(
-    source.includes('const freshLamports = await readVaultBalance();'),
+    // La lecture est desormais bornee par un try/catch (aucun retour muet si le
+    // RPC est injoignable), mais elle reste AVANT toute signature.
+    source.includes('freshLamports = await readVaultBalance();'),
     'la relecture pre-execution doit exister',
   );
   const runExecution = source.slice(
@@ -168,8 +170,13 @@ check('9. le solde est relu avant toute execution', () => {
   assert.ok(runExecution.includes('Insufficient vault balance'));
   // Le CTA Execute est rendu conditionnellement (etats exclusifs) ; le blocage
   // par solde insuffisant reste porte par le handler onExecute.
+  // Handler desormais async : on borne la recherche au corps de onExecute.
+  const executeHandler = source.slice(
+    source.indexOf('const onExecute = async () => {'),
+    source.indexOf('const refreshProposalFromChain'),
+  );
   assert.ok(
-    source.includes('if (!canExecute || insufficientBalance || executing'),
+    executeHandler.includes('insufficientBalance'),
     'Execute doit etre bloque si le solde est insuffisant',
   );
 });

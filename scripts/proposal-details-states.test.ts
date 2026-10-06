@@ -55,7 +55,8 @@ check('1. recheck reussi : ancienne erreur reseau absente du bloc principal', ()
   assert.ok(CHECK.includes('if (verified) {'), 'la reussite est detectee');
   assert.ok(CHECK.includes('setApprovalError(null)'), 'erreur courante effacee');
   // L'erreur courante n'est rendue que si elle est encore l'etat courant.
-  assert.ok(DETAILS.includes("approvalError !== null && actionState !== 'executed'"));
+  // L'erreur courante disparait aussi des que le seuil est verifie.
+  assert.ok(DETAILS.includes("approvalError !== null &&\n        actionState !== 'executed' &&"));
 });
 
 check('2. recheck reussi : Proposal approved and verified visible', () => {

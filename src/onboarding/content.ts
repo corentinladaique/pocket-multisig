@@ -91,9 +91,9 @@ export const ONBOARDING_SCREENS: OnboardingLesson[] = [
       'verify the amount',
       'verify the Main vault balance',
       'understand whether the action is Propose, Approve or Execute',
-      'never enter a recovery phrase into Pocket Multisig',
+      'never enter a recovery phrase into Multisig',
     ],
-    emphasis: 'Pocket Multisig is experimental and not independently audited.',
+    emphasis: 'Multisig is experimental and not independently audited.',
     id: 'devnet-and-signing-checklist',
     levels: ['new-to-multisig', 'familiar'],
     title: 'Devnet and before you sign',
@@ -105,7 +105,7 @@ export const ONBOARDING_SCREENS: OnboardingLesson[] = [
       'Approved does not mean executed',
       'Execute is the action that applies the approved transaction',
       'Devnet does not use real funds',
-      'Pocket Multisig never asks for your recovery phrase',
+      'Multisig never asks for your recovery phrase',
     ],
     id: 'critical-reminders',
     levels: ['familiar', 'advanced'],
@@ -135,7 +135,7 @@ export const CRITICAL_PROTECTIONS = [
   'Approved does not mean executed',
   'Execute applies the approved transaction',
   'Devnet does not use real funds',
-  'Pocket Multisig never asks for your recovery phrase',
+  'Multisig never asks for your recovery phrase',
 ] as const;
 
 /**

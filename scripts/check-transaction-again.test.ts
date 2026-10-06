@@ -132,8 +132,10 @@ check('7/8/9. recheck confirme + compte lisible : verified, adresses affichees',
   assert.ok(CHECK.includes('decodeMultisigCreationReadBack'), 'decodage commun');
   assert.ok(CHECK.includes('expectedAddress: expectedPda'), 'adresse attendue conservee');
   assert.ok(CHECK.includes('verified: true'), 'bascule verified seulement si conforme');
-  assert.ok(SUCCESS_BLOCK.includes('Multisig configuration address'));
-  assert.ok(SUCCESS_BLOCK.includes('Main vault address'));
+  // Adresses completes : desormais dans le recu technique replie (libelles
+  // « Main vault: » / « Multisig configuration: »), meme bloc SUCCESS.
+  assert.ok(SUCCESS_BLOCK.includes('Multisig configuration:'));
+  assert.ok(SUCCESS_BLOCK.includes('Main vault:'));
   assert.ok(SUCCESS_BLOCK.includes('mainVaultAddress'));
 });
 
@@ -192,9 +194,9 @@ check('16. plusieurs taps rapides : une seule relecture simultanee', () => {
   assert.ok(CONFIRMED_BLOCK.includes('disabled={checking}'));
 });
 
-check('17/18. succes : Open vault et Go to Inbox disponibles', () => {
+check('17/18. succes : Open vault et View proposals disponibles', () => {
   assert.ok(SUCCESS_BLOCK.includes('Open vault'));
-  assert.ok(SUCCESS_BLOCK.includes('Go to Inbox'));
+  assert.ok(SUCCESS_BLOCK.includes('View proposals'));
   assert.ok(SUCCESS_BLOCK.includes('onGoToInbox'));
 });
 
