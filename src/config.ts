@@ -17,17 +17,16 @@ export const DEVNET_ENDPOINT = 'https://api.devnet.solana.com';
  * `name` est ce que le wallet AFFICHE à l'utilisateur (accorde avec le label du
  * lanceur, `app.json` -> name).
  * `uri` identifie l'application. ATTENTION : le wallet en affiche l'HOTE, pas
- * le chemin — `.../github.com/...` faisait apparaitre « github.com » comme nom
- * d'application. On pointe donc l'hote qui nous appartient
- * (`<utilisateur>.github.io`, servi par GitHub Pages), et non plus le domaine
- * de demonstration de la bibliotheque.
+ * le chemin — un chemin sous github.com faisait donc apparaitre « github.com »
+ * comme nom d'application. On pointe le domaine du projet (`multisig.fr`, page
+ * servie par GitHub Pages), qui porte le nom de l'application.
  * La bibliotheque ne verifie QUE le schema de cette URI
  * (`assertValidIdentityUri`), et ne la lit jamais sur le reseau.
  * Pas d'`icon` ici pour ne pas declencher une verification reseau.
  */
 export const APP_IDENTITY: AppIdentity = {
   name: 'Multisig',
-  uri: 'https://corentinladaique.github.io/pocket-multisig/',
+  uri: 'https://multisig.fr/',
 };
 
 /**
