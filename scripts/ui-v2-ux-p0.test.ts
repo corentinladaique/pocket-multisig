@@ -118,7 +118,20 @@ check('11. Aucun debordement horizontal intentionnel', () => {
     ['AddressInput', ADDRESS],
     ['ConnectScreen', HOME],
   ] as const) {
-    assert.ok(!/position:\s*'absolute'/.test(source), `${name}: aucune position absolue`);
+    // Intention inchangee : aucun positionnement absolu pour echapper au flux,
+    // c'est ce qui provoquait des debordements horizontaux. Exception unique et
+    // ENCADREE : un calque PLEIN ECRAN, qui pose ses bords a 0 — il ne peut pas
+    // deborder par construction. On exige donc autant de calques absolus que de
+    // calques a bords poses : tout autre positionnement absolu reste interdit.
+    const absolute = source.match(/position:\s*'absolute'/g) ?? [];
+    const pinned = source.match(
+      /position:\s*'absolute'[\s\S]{0,300}?(top|bottom|left|right):\s*0,[\s\S]{0,300}?(top|bottom|left|right):\s*0,/g,
+    ) ?? [];
+    assert.equal(
+      absolute.length,
+      pinned.length,
+      `${name}: position absolue toleree uniquement pour un calque plein ecran (bords poses a 0)`,
+    );
   }
   assert.ok(ADDRESS.includes('flex: 1'), 'le champ se comprime au lieu de deborder');
 });

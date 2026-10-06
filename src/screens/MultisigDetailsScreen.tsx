@@ -19,7 +19,7 @@ import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import type { ReviewGuardContext } from '../wallet/useWalletGuard';
 import { connection } from '../solana/connection';
 import { loadMultisig, MultisigLookupError, type MultisigView } from '../squads/multisig';
-import { loadSingleProposalView, type ProposalView } from '../squads/proposals';
+import { loadSingleProposalView, useProposals, type ProposalView } from '../squads/proposals';
 import type { TransactionReviewModel } from '../types/transactionReview';
 import { colors, radii, spacing, typography } from '../ui/theme';
 import { Card, DevnetPill, InfoBox, InfoText, ListRow, PillButton } from '../ui/v2/primitives';
@@ -112,7 +112,7 @@ export function MultisigDetailsScreen({
           message:
             caught instanceof MultisigLookupError
               ? caught.message
-              : `Lecture impossible : ${caught instanceof Error ? caught.message : String(caught)}`,
+              : `Could not read the account: ${caught instanceof Error ? caught.message : String(caught)}`,
         });
       }
     })();
@@ -161,6 +161,16 @@ export function MultisigDetailsScreen({
 
   const view = state.status === 'loaded' ? state.view : null;
   const vaultAddress = view?.vaultAddress ?? null;
+
+  // Propositions du multisig courant : LECTURE SEULE. Le hook vit ICI, et non
+  // dans la liste, pour qu'un seul propriétaire décide de la lecture : la liste
+  // reçoit l'état et ne relit donc JAMAIS rien (aucune double lecture possible).
+  const proposals = useProposals(
+    view?.address ?? null,
+    view?.transactionIndex ?? 0,
+    view?.staleTransactionIndex ?? 0,
+    refreshNonce,
+  );
 
   // Le solde affiché appartient TOUJOURS à l'adresse du vault courant : sinon
   // il est considéré comme absent, jamais comme celui du multisig précédent.
@@ -314,19 +324,17 @@ export function MultisigDetailsScreen({
   if (proposalsOpen && view !== null) {
     return (
       <ProposalListScreen
-        address={view.address}
         decodedModelFor={decodedModelFor}
         executingMembers={executingMembers}
         onBack={() => setProposalsOpen(false)}
         onOpenProposal={(proposal) => setOpenProposal(proposal)}
         onRefresh={reloadFromChain}
-        refreshNonce={refreshNonce}
+        proposals={proposals}
         refreshing={refreshing}
-        staleTransactionIndex={view.staleTransactionIndex}
         threshold={view.threshold}
-        transactionIndex={view.transactionIndex}
         vaultName={vaultName}
         votingMembers={votingMembers}
+        walletAddress={walletAddress}
       />
     );
   }

@@ -69,7 +69,7 @@ check('3. wallet membre : roles reels lus on-chain', () => {
     HOME.includes('view.members.find((member) => member.address === walletAddress)?.roles'),
     'les roles doivent venir des membres lus',
   );
-  assert.ok(HOME.includes('My multisig'), 'le statut membre doit etre affiche');
+  assert.ok(HOME.includes('You are a signer'), 'le statut membre doit etre affiche');
 });
 
 check('4. wallet non membre : Observed multisig, lecture seule', () => {

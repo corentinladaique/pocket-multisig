@@ -114,7 +114,7 @@ check('16bis. Learn retire du dashboard charge, mais ouvert avant connexion', ()
   assert.ok(learnIndex > -1 && dashboardIndex > -1 && learnIndex < dashboardIndex, 'Learn hors dashboard');
   // Le dashboard = la zone Vault. Elle va du marqueur jusqu'au bloc des AUTRES
   // onglets : Learn doit y rester ABSENT, et etre present dans Account.
-  const tabsIndex = HOME.indexOf('{/* Onglets Proposals / Activity / Account');
+  const tabsIndex = HOME.indexOf('{/* Onglets Proposals / Account');
   assert.ok(tabsIndex > dashboardIndex, 'la frontiere des onglets existe');
   const dashboard = HOME.slice(dashboardIndex, tabsIndex);
   assert.ok(!dashboard.includes('Learn how multisig works'), 'Learn absent du dashboard charge');

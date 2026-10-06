@@ -60,7 +60,7 @@ export function useMultisigLookup(): MultisigLookup {
         setError(
           caught instanceof MultisigLookupError
             ? caught.message
-            : `Lecture impossible : ${caught instanceof Error ? caught.message : String(caught)}`,
+            : `Could not read the account: ${caught instanceof Error ? caught.message : String(caught)}`,
         );
         setStatus('error');
       }

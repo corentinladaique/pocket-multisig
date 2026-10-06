@@ -3,11 +3,13 @@ import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 import {
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Image,
   Text,
   TextInput,
   View,
@@ -39,6 +41,7 @@ import { MultisigDetailsScreen } from './MultisigDetailsScreen';
 import { MultisigInboxScreen } from './MultisigInboxScreen';
 import { OnboardingScreen } from './OnboardingScreen';
 import { ReceiveScreen } from './ReceiveScreen';
+import { ProposalListBody } from './ProposalListScreen';
 import { AddressInput } from '../ui/AddressInput';
 import { useOnboarding } from '../onboarding/useOnboarding';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
@@ -84,19 +87,57 @@ function shortenAddress(address: string): string {
 }
 
 /**
+ * Duree MINIMALE d'affichage de l'ecran d'attente du wallet (le calque menthe).
+ *
+ * Pourquoi : la visibilite du calque depend de `phase === 'connecting'`, et
+ * `phase` retombe a `'idle'` des que `connect()` se conclut. A la DEUXIEME
+ * tentative (apres une annulation), `connect()` se conclut parfois si vite que
+ * React groupe les deux `setPhase` dans un SEUL rendu : le calque n'est alors
+ * jamais peint, et l'utilisateur croit qu'il ne revient pas. Une duree plancher
+ * garantit qu'il est vu — sans toucher a l'appel `connect()` lui-meme.
+ */
+const CONNECTING_SPLASH_MIN_MS = 450;
+
+/**
+ * Cadre de la marque de l'ecran d'attente (dp). L'asset `brand-splash-cards.png`
+ * a son dessin sur environ 54 % de la toile : 480 donne un eventail d'environ
+ * 260 dp de large, entierement visible.
+ */
+const CONNECTING_MARK_DP = 480;
+
+/** Profil X de l'auteur, affiche dans l'onglet Account (aucun appel reseau). */
+const X_PROFILE_URL = 'https://x.com/Corentin_Lad';
+
+/**
+ * Attend la frame suivante. Sert a garantir qu'un rendu est bien PEINT avant
+ * de poursuivre : quand l'invite du wallet prend le focus, Android cesse de
+ * redessiner notre app, donc un changement d'etat pas encore peint ne sera
+ * jamais vu.
+ */
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+/**
  * Traduit l'erreur brute remontée par Mobile Wallet Adapter en message lisible.
  * Un refus de l'utilisateur n'est jamais présenté comme une erreur technique
  * (SECURITY.md §6).
+ *
+ * Ces messages sont RENDUS à l'écran : ils sont donc en ANGLAIS, comme le reste
+ * de l'interface. Les commentaires du fichier restent en français (style maison),
+ * mais jamais le texte visible.
  */
 function toReadableError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   if (/reject|cancel|denied|declin|refus/i.test(raw)) {
-    return "Connexion refusée dans le wallet. Aucune autorisation n'a été accordée.";
+    return 'Connection declined in the wallet. No authorization was granted.';
   }
   if (/no wallet|no activity|not found|not installed|unable to (find|open)/i.test(raw)) {
-    return 'Aucun wallet Mobile Wallet Adapter trouvé sur cet appareil.';
+    return 'No Mobile Wallet Adapter wallet was found on this device.';
   }
-  return `Échec de la connexion : ${raw}`;
+  return `Connection failed: ${raw}`;
 }
 
 /** Tuile d'action principale du Home V2 (Receive / Propose / Signers). Présentation seule. */
@@ -244,6 +285,18 @@ export function ConnectScreen() {
   // Onglet actif de la barre de navigation V2. État LOCAL de rendu : ne
   // persiste rien, ne déclenche aucun RPC, ne sollicite jamais le wallet.
   const [tab, setTab] = useState<TabKey>('vault');
+  // L'onglet revient TOUJOURS sur Vault dès qu'un wallet est connecté. Sans ça,
+  // se déconnecter depuis Account (seul endroit d'où on peut le faire) y
+  // ramenait à la reconnexion, puisque `tab` est un état local qui survit à la
+  // déconnexion — alors que la barre d'onglets n'est rendue que connecté.
+  // La condition `!== null` évite de faire sauter l'écran pendant la
+  // déconnexion elle-même ; la clé est `walletAddress` (une chaîne, stable tant
+  // que le wallet ne change pas), et non l'objet `account`.
+  useEffect(() => {
+    if (walletAddress !== null) {
+      setTab('vault');
+    }
+  }, [walletAddress]);
   const [error, setError] = useState<string | null>(null);
   // Diagnostics MWA : étape, code et message exacts, jamais reformulés.
   const [mwaReport, setMwaReport] = useState<MwaErrorReport | null>(null);
@@ -254,12 +307,27 @@ export function ConnectScreen() {
     setMwaReport(null);
     setResetReport(null);
     setPhase('connecting');
+    // Le calque doit etre PEINT avant que le wallet ne s'ouvre : des que son
+    // invite prend le focus, Android cesse de redessiner notre app, et un
+    // changement d'etat pas encore peint ne sera JAMAIS vu (les cartes
+    // n'apparaissaient qu'une fois sur trois). Deux frames : celle qui peint,
+    // puis la suivante, pour etre sur d'etre passe apres.
+    await nextFrame();
+    await nextFrame();
+    const startedAt = Date.now();
     try {
       await connect();
     } catch (caught: unknown) {
       setError(toReadableError(caught));
       setMwaReport(describeMwaError(caught, 'authorize'));
     } finally {
+      // Le calque est deja rendu : on lui garantit une duree MINIMALE avant de
+      // repasser a `idle`, sinon un `connect()` qui se conclut instantanement le
+      // retirerait dans le meme rendu (voir CONNECTING_SPLASH_MIN_MS).
+      const remaining = CONNECTING_SPLASH_MIN_MS - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining));
+      }
       setPhase('idle');
     }
   }, [connect]);
@@ -568,6 +636,11 @@ export function ConnectScreen() {
       walletCanApprove: input.walletCanApprove,
     }),
   );
+
+  // Onglet Proposals : la liste elle-même vient du CORPS partagé
+  // (`ProposalListBody`), alimenté par `proposals` — DÉJÀ lu par cet écran. Les
+  // filtres et leurs compteurs restent les fonctions PURES de `proposalFilters`,
+  // donc aucune divergence possible avec l'écran Vault, et AUCUNE double lecture.
   const priorityIndex = inboxDecisions[0]?.index ?? null;
 
   // Compteurs : ce qui attend une action du wallet (vote) et ce qui est prêt à
@@ -887,6 +960,26 @@ export function ConnectScreen() {
             <Ionicons color={colors.mint} name="mail-outline" size={22} />
           </Pressable>
         )}
+        {/* Wallet : ADRESSE TRONQUEE + bouton copie, AU CENTRE de l'en-tete
+            (demande explicite). `flex: 1` + `justifyContent: 'center'` le
+            recentrent entre l'enveloppe (a gauche) et le badge Devnet (a
+            droite), qui sont des elements de largeur fixe. */}
+        {account === undefined ? null : (
+          <View style={styles.headerWallet}>
+            <Text numberOfLines={1} style={styles.headerWalletAddress}>
+              {shortenAddress(account.address.toString())}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Copy the wallet address"
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              onPress={onCopyWallet}
+              style={({ pressed }) => [styles.inlineAction, pressed && styles.inlineActionPressed]}
+            >
+              <Ionicons color={colors.textSecondary} name="copy-outline" size={15} />
+            </Pressable>
+          </View>
+        )}
         <DevnetPill />
       </View>
 
@@ -930,6 +1023,9 @@ export function ConnectScreen() {
             label="Connect wallet"
             onPress={onConnect}
           />
+          {/* Note Devnet : REMISE a cote du bouton Connect. C'est un avertissement
+              sur l'ACTION de connexion — donc il vit la ou l'action se fait, a
+              cote de ce qui peut paraitre risque. */}
           <Text style={styles.footerNote}>Devnet · nothing real is at stake</Text>
           {phase === 'connecting' ? (
             <Text style={styles.footerNote}>Opening the wallet…</Text>
@@ -1086,7 +1182,11 @@ export function ConnectScreen() {
                 <Text style={styles.vaultCopySmall}>stale</Text>
               ) : null}
               <Text style={styles.vaultCopySmall}>
-                {homeIsMember ? 'My multisig' : 'Observed multisig · Read only'}
+                {/* Le ROLE, pas un nom : « My multisig » se lisait comme un
+                    second nom du vault (Claude : « Test3 et My multisig donnent
+                    deux noms pour le meme vault »). Le nom est deja au-dessus,
+                    en gros. Ici on dit ce que TU es pour ce vault. */}
+                {homeIsMember ? 'You are a signer' : 'Observed multisig · Read only'}
               </Text>
               {!homeIsMember ? (
                 <Text style={styles.vaultCopySmall}>This is public on-chain information.</Text>
@@ -1288,32 +1388,28 @@ export function ConnectScreen() {
         </View>
       )}
 
-      {/* Onglets Proposals / Activity / Account : rendus À LA PLACE du Home.
+      {/* Onglets Proposals / Account : rendus À LA PLACE du Home.
           Aucune logique nouvelle — les actions d'Account réutilisent les
           handlers EXISTANTS du Home (copie, déconnexion, guide). */}
       {account === undefined || tab === 'vault' ? null : (
         <View style={styles.homeBody}>
           <Text style={styles.tabTitle}>
-            {tab === 'proposals' ? 'Proposals' : tab === 'activity' ? 'Activity' : 'Account'}
+            {tab === 'proposals' ? 'Proposals' : 'Account'}
           </Text>
 
           {tab === 'proposals' ? (
-            // TODO(placeholder) : la liste des propositions vit encore dans
-            // Vault Details. Elle sera déplacée ici à l'étape suivante ; d'ici
-            // là, on dit où regarder plutôt que d'inventer une liste.
-            <Text style={styles.tabEmpty}>
-              Proposals are not in this tab yet. Open your vault to see them.
-            </Text>
-          ) : null}
-
-          {tab === 'activity' ? (
-            // TODO(placeholder) : la timeline exige de reconstruire l'historique
-            // depuis la chaîne (création, approbations, exécution). Aucun
-            // événement n'est affiché tant qu'il n'est pas réellement lu.
-            <Text style={styles.tabEmpty}>
-              Nothing to show yet. Activity will list what happened on-chain: created, approved,
-              executed.
-            </Text>
+            /* MÊME corps que l'écran Vault : rien n'est relu ici, tout vient de
+               `proposals`, déjà lu par cet écran (aucune double lecture). */
+            <ProposalListBody
+              busy={proposals.status === 'loading'}
+              decodedModelFor={decodedModelFor}
+              onOpenProposal={(proposal) => setOpenDecisionIndex(proposal.index)}
+              proposals={proposals}
+              threshold={msig.view?.threshold ?? 0}
+              walletAddress={walletAddress}
+              walletCanApprove={walletCanApprove}
+              walletCanExecute={homeWalletCanExecute}
+            />
           ) : null}
 
           {tab === 'account' ? (
@@ -1352,7 +1448,17 @@ export function ConnectScreen() {
                 subtitle="What a shared vault is, and how approvals work"
                 title="Learn how multisig works"
               />
-              <ListRow title="About" subtitle="Pocket Multisig" />
+              <ListRow title="About" subtitle="Multisig" />
+              <ListRow
+                accessibilityLabel="Open the X profile of the app"
+                onPress={() => {
+                  // Presentation seule : on ouvre le navigateur. Un echec
+                  // (aucune app capable d'ouvrir un lien) ne change rien ici.
+                  void Linking.openURL(X_PROFILE_URL).catch(() => undefined);
+                }}
+                subtitle="@Corentin_Lad"
+                title="X"
+              />
               {onboarding.storageFailed ? (
                 <Text style={styles.vaultCopySmall}>
                   Your answers could not be saved on this device: the app keeps working with the
@@ -1422,6 +1528,46 @@ export function ConnectScreen() {
       {account === undefined ? null : <TabBar active={tab} onSelect={setTab} />}
     </KeyboardAvoidingView>
     {launching ? <LaunchSplash onDone={finishLaunch} /> : null}
+    {/* ECRAN D'ATTENTE DU WALLET — idee de Corentin, et c'est la bonne : quand
+        l'invite du wallet prend le focus, Android cesse de redessiner notre app,
+        donc l'ecran reste FIGE. On ne peut pas empecher le gel, mais on peut
+        CHOISIR ce qui reste a l'ecran : les cartes en eventail, plein ecran, sur
+        fond noir. L'utilisateur voit un etat VOULU au lieu d'une animation
+        coupee en plein mouvement.
+        Monte EN PERMANENCE (invisible hors connexion, `pointerEvents: 'none'`) :
+        un bitmap n'est decode qu'a la taille ou il est RENDU, donc le demonter
+        entre deux tentatives obligeait a le redecoder, et sur un aller-retour
+        (annuler puis reconnecter) l'ouverture du wallet se conclut en quelques
+        centaines de ms — plus vite que le decodage. Resultat : l'image manquait
+        une fois
+        sur deux. Monte en continu, elle est deja peinte quand le calque devient
+        visible.
+        Rendu EN DERNIER, donc au-dessus de tout le contenu. */}
+    <View
+      pointerEvents={phase === 'connecting' ? 'auto' : 'none'}
+      style={[
+        styles.connectingSplash,
+        phase === 'connecting' ? null : styles.connectingSplashIdle,
+      ]}
+    >
+      {/* LES CARTES EN EVENTAIL, seules : ni tuile, ni fond d'icone, ni
+          habillage d'application. L'asset `brand-splash-cards.png` derive du
+          logo (`foregroundImage`) avec la carte AVANT noircie (#102028 ->
+          #03080A) ; les cartes teal et les accents mint sont intacts.
+          On n'anime RIEN : une marque animee se figeait sur sa toute premiere
+          frame des que le panneau du wallet prenait le focus. */}
+      <View style={styles.connectingSplashTop}>
+        <Image
+          accessibilityIgnoresInvertColors
+          resizeMode="contain"
+          source={require('../../assets/brand-splash-cards.png')}
+          style={styles.connectingSplashMark}
+        />
+      </View>
+      {/* Reserve la hauteur de la feuille « Open with Wallet » d'Android :
+          sans elle les cartes sont centrees, et la feuille coupe leur bas. */}
+      <View style={styles.connectingSplashSheetSpace} />
+    </View>
     </>
   );
 }
@@ -1815,6 +1961,81 @@ const styles = StyleSheet.create({
   headerInbox: {
     marginRight: 'auto',
     paddingVertical: spacing.xs,
+  },
+  // Wallet de l'en-tete : centre entre l'enveloppe et le badge Devnet.
+  headerWallet: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  headerWalletAddress: {
+    color: colors.textSecondary,
+    fontFamily: 'monospace',
+    fontSize: typography.micro,
+  },
+  // Ecran d'attente pendant l'ouverture du wallet : plein ecran, fond NOIR
+  // (demande explicite), les cartes centrees. C'est CE rendu qui reste fige
+  // pendant que l'invite du wallet a le focus (Android ne redessine plus l'app).
+  connectingSplash: {
+    backgroundColor: '#000000',
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  // Hors connexion : le calque reste monte (pour que son bitmap reste decode a
+  // la bonne taille) mais totalement invisible, et il ne capte aucun toucher
+  // (`pointerEvents: 'none'` cote JSX).
+  connectingSplashIdle: {
+    opacity: 0,
+  },
+  // Les cartes sont centrees dans la partie HAUTE de l'ecran : la feuille
+  // « Open with Wallet » d'Android occupe le bas et coupait l'eventail. Le
+  // partage est PROPORTIONNEL (60 / 40), donc identique sur tout ecran, et il
+  // n'ajoute aucun element hors flux. Pour monter ou descendre les cartes, il
+  // suffit de deplacer ce rapport (ex. 65 / 35 les remonte).
+  connectingSplashTop: {
+    alignItems: 'center',
+    flex: 60,
+    justifyContent: 'center',
+  },
+  connectingSplashSheetSpace: {
+    flex: 40,
+  },
+  // Les cartes en eventail, seules : aucun habillage autour.
+  connectingSplashMark: {
+    height: CONNECTING_MARK_DP,
+    width: CONNECTING_MARK_DP,
+  },
+  // Filtres de l'onglet Proposals : pastilles. L'actif est BLANC a texte sombre,
+  // comme la pastille de l'onglet actif de la barre du bas.
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+    marginTop: spacing.xs,
+  },
+  filterChip: {
+    backgroundColor: colors.surfaceElevated,
+    borderColor: colors.divider,
+    borderRadius: radii.button,
+    borderWidth: 1,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+  },
+  filterChipActive: {
+    backgroundColor: colors.text,
+    borderColor: colors.text,
+  },
+  filterChipText: {
+    color: colors.textSecondary,
+    fontSize: typography.bodySmall,
+    fontWeight: '700',
+  },
+  filterChipTextActive: {
+    color: colors.onLight,
   },
   brandMark: {
     alignSelf: 'center',

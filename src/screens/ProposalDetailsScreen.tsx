@@ -1253,12 +1253,21 @@ export function ProposalDetailsScreen({
           </View>
         ) : null}
 
-        <PillButton
-          accessibilityLabel="Back to proposals"
-          label="Back to proposals"
-          onPress={onBack}
-          variant={executed ? 'primary' : 'secondary'}
-        />
+        {/* Ce bouton ne s'affiche QUE dans l'etat « Executed », ou il devient
+            l'action principale de sortie. Dans les autres etats il faisait
+            DOUBLON avec la fleche de retour de l'en-tete, et venait coller au
+            repli « Advanced transaction details » juste au-dessus — d'ou
+            l'espace ajoute par `backFooter`. */}
+        {executed ? (
+          <View style={styles.backFooter}>
+            <PillButton
+              accessibilityLabel="Go back"
+              label="Back"
+              onPress={onBack}
+              variant={executed ? 'primary' : 'secondary'}
+            />
+          </View>
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -1331,6 +1340,12 @@ const styles = StyleSheet.create({
     fontSize: typography.micro,
     marginTop: spacing.md,
     textTransform: 'uppercase',
+  },
+  // Espace avant le bouton de sortie de l'etat « Executed » : sans lui, il venait
+  // coller au repli « Advanced transaction details » quand le bloc de diagnostics
+  // ne rendait rien.
+  backFooter: {
+    marginTop: spacing.xl,
   },
   stepper: {
     flexDirection: 'row',

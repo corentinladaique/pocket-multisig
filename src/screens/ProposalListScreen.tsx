@@ -9,10 +9,9 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useMobileWallet } from '@wallet-ui/react-native-web3js';
 import { SAFE_TOP_PADDING } from '../ui/safeAreaPadding';
 
-import { summarizeOperation, useProposals, type ProposalView } from '../squads/proposals';
+import { summarizeOperation, type ProposalView, type ProposalsState } from '../squads/proposals';
 import {
   classifyProposal,
   proposalStatusLabel,
@@ -25,8 +24,12 @@ import { DevnetPill, InfoBox, InfoText } from '../ui/v2/primitives';
 /**
  * Liste des propositions d'un multisig : LECTURE SEULE, theme UI V2.
  *
- * Aucun appel RPC propre : tout passe par `useProposals` / `loadProposals`, qui
- * dérivent les PDA localement et font un seul `getMultipleAccountsInfo`.
+ * Aucun appel RPC propre : l'état `proposals` est FOURNI par l'appelant, qui en
+ * est le SEUL propriétaire (un seul `useProposals` par écran). Ni cet écran ni
+ * son corps `ProposalListBody` ne relisent quoi que ce soit — c'est ce qui
+ * permet d'afficher la MÊME liste dans l'écran Vault et dans un onglet sans
+ * jamais lire les propositions deux fois.
+ *
  * Aucune création, aucun vote, aucune exécution, aucune signature.
  *
  * Le résumé d'opération n'est affiché que si un modèle DÉJÀ décodé est fourni
@@ -53,21 +56,20 @@ const EMPTY_STATE: Record<ProposalFilterGroup, { title: string; body?: string }>
 };
 
 export function ProposalListScreen({
-  address,
   decodedModelFor,
   executingMembers = [],
   onBack,
   onOpenProposal,
   onRefresh,
-  refreshNonce = 0,
+  proposals,
   refreshing = false,
-  staleTransactionIndex,
   threshold,
-  transactionIndex,
   vaultName,
   votingMembers,
+  walletAddress,
 }: {
-  address: string;
+  /** État de lecture fourni par l'appelant : cet écran ne lit RIEN lui-même. */
+  proposals: ProposalsState;
   /** Modèles déjà en mémoire uniquement (aucun appel réseau ici). */
   decodedModelFor?: (index: number) => TransactionReviewModel | null;
   /** Adresses des membres porteurs du droit d'exécution (filtre To do). */
@@ -80,25 +82,18 @@ export function ProposalListScreen({
    * (transactionIndex courant) puis les propositions. Lecture seule, aucun wallet.
    */
   onRefresh?: () => Promise<boolean>;
-  /** Jeton d'actualisation forcée (relance la lecture même sans nouvel index). */
-  refreshNonce?: number;
   /** Vrai pendant que le parent relit le multisig. */
   refreshing?: boolean;
-  staleTransactionIndex: number;
   threshold: number;
-  transactionIndex: number;
   vaultName?: string | null;
   /** Adresses des membres porteurs du droit de vote (pour l'état « needs you »). */
   votingMembers: readonly string[];
+  /** Adresse du wallet connecté, fournie par l'appelant (jamais relue ici). */
+  walletAddress: string | null;
 }) {
-  const { account } = useMobileWallet();
-  const walletAddress = account === undefined ? null : account.address.toString();
   const walletCanApprove = walletAddress !== null && votingMembers.includes(walletAddress);
   const walletCanExecute = walletAddress !== null && executingMembers.includes(walletAddress);
 
-  const [filter, setFilter] = useState<ProposalFilterGroup>('todo');
-
-  const proposals = useProposals(address, transactionIndex, staleTransactionIndex, refreshNonce);
   const busy = refreshing || proposals.status === 'loading';
 
   /**
@@ -121,31 +116,6 @@ export function ProposalListScreen({
     });
     return () => subscription.remove();
   }, [onBack]);
-
-  // Classement LOCAL : aucune I/O, aucune valeur inventée.
-  const rows = (proposals.list?.proposals ?? []).map((proposal) => {
-    const input = {
-      index: proposal.index,
-      status: proposal.status,
-      approvals: proposal.approvals,
-      threshold,
-      approvedAddresses: proposal.approvedAddresses,
-      walletAddress,
-      walletCanApprove,
-      walletCanExecute,
-    };
-    const group = classifyProposal(input);
-    const statusLabel = proposalStatusLabel(input);
-    const summary = summarizeOperation(decodedModelFor?.(proposal.index) ?? null);
-    return { proposal, group, statusLabel, summary };
-  });
-
-  const counts: Record<ProposalFilterGroup, number> = {
-    todo: rows.filter((row) => row.group === 'todo').length,
-    open: rows.filter((row) => row.group === 'open').length,
-    done: rows.filter((row) => row.group === 'done').length,
-  };
-  const visible = rows.filter((row) => row.group === filter);
 
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
@@ -186,119 +156,187 @@ export function ProposalListScreen({
           </Pressable>
         </View>
 
-        {/* Filtres locaux : To do / Open / Done. */}
-        <View style={styles.filterRow}>
-          {FILTERS.map((entry) => {
-            const active = entry.key === filter;
-            return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={`Show ${entry.label} proposals`}
-                key={entry.key}
-                onPress={() => setFilter(entry.key)}
-                style={({ pressed }) => [
-                  styles.filterPill,
-                  active && styles.filterPillActive,
-                  pressed && !active && styles.filterPillPressed,
-                ]}
-              >
-                <Text style={[styles.filterText, active && styles.filterTextActive]}>
-                  {entry.label} {counts[entry.key]}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {busy ? (
-          <View style={styles.centerBlock}>
-            <ActivityIndicator color={colors.mint} />
-            <Text style={styles.note}>Refreshing proposals…</Text>
-          </View>
-        ) : null}
-
-        {/* Liste périmée conservée (jamais supprimée en silence). */}
-        {proposals.stale && proposals.list !== null ? (
-          <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
-            <InfoText tone="warning">
-              Showing the last successfully read list. Refresh failed:{' '}
-              {proposals.error ?? 'unknown error'}
-            </InfoText>
-          </InfoBox>
-        ) : null}
-
-        {proposals.status === 'error' ? (
-          <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
-            <InfoText tone="error">{proposals.error ?? 'Reading proposals failed.'}</InfoText>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Retry reading proposals"
-              onPress={proposals.retry}
-              style={styles.inlineAction}
-            >
-              <Text style={styles.inlineActionText}>Retry</Text>
-            </Pressable>
-          </InfoBox>
-        ) : null}
-
-        {proposals.status === 'loaded' ? (
-          <View style={styles.block}>
-            {visible.length === 0 ? (
-              <View style={styles.emptyBox}>
-                <Text style={styles.emptyTitle}>{EMPTY_STATE[filter].title}</Text>
-                {EMPTY_STATE[filter].body !== undefined ? (
-                  <Text style={styles.emptyText}>{EMPTY_STATE[filter].body}</Text>
-                ) : null}
-              </View>
-            ) : null}
-
-            {visible.map(({ proposal, statusLabel, summary }) => (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Open proposal ${proposal.index}`}
-                disabled={onOpenProposal === undefined}
-                key={proposal.index}
-                onPress={() => onOpenProposal?.(proposal)}
-                style={({ pressed }) => [styles.entryCard, pressed && styles.entryCardPressed]}
-              >
-                <View style={styles.entryIndexChip}>
-                  <Text style={styles.entryIndexText}>#{proposal.index}</Text>
-                </View>
-                <View style={styles.entryBody}>
-                  <Text style={styles.entryTitle}>
-                    {summary === null
-                      ? 'Details available after opening'
-                      : `${summary.amount} → ${summary.destination}`}
-                  </Text>
-                  <Text style={styles.entryMeta}>
-                    {proposal.approvals} of {threshold} approvals
-                  </Text>
-                </View>
-                <View style={styles.entryBadge}>
-                  <Text style={styles.entryBadgeText}>{statusLabel}</Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </Pressable>
-            ))}
-
-            {proposals.list !== null && proposals.list.unreadable > 0 ? (
-              <Text style={styles.note}>
-                {proposals.list.unreadable} derived account(s) absent or unreadable (config
-                transactions and batches are not indexed here).
-              </Text>
-            ) : null}
-
-            {__DEV__ ? (
-              <Text style={styles.note}>
-                RPC calls used for this list: {proposals.list?.rpcCalls ?? 0} (one
-                getMultipleAccountsInfo).
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
+        <ProposalListBody
+          busy={busy}
+          decodedModelFor={decodedModelFor}
+          onOpenProposal={onOpenProposal}
+          proposals={proposals}
+          threshold={threshold}
+          walletAddress={walletAddress}
+          walletCanApprove={walletCanApprove}
+          walletCanExecute={walletCanExecute}
+        />
       </ScrollView>
     </KeyboardAvoidingView>
+  );
+}
+
+/**
+ * CORPS de la liste : filtres + états + entrées. Volontairement SANS en-tête et
+ * SANS défilement propre : il se pose aussi bien dans l'écran Vault que DANS un
+ * onglet déjà contenu dans un défilement (imbriquer deux ScrollView casserait
+ * le défilement sur Android). Il ne lit RIEN — tout vient de ses props.
+ */
+export function ProposalListBody({
+  busy,
+  decodedModelFor,
+  onOpenProposal,
+  proposals,
+  threshold,
+  walletAddress,
+  walletCanApprove,
+  walletCanExecute,
+}: {
+  busy: boolean;
+  decodedModelFor?: (index: number) => TransactionReviewModel | null;
+  onOpenProposal?: (proposal: ProposalView) => void;
+  proposals: ProposalsState;
+  threshold: number;
+  walletAddress: string | null;
+  walletCanApprove: boolean;
+  walletCanExecute: boolean;
+}) {
+  const [filter, setFilter] = useState<ProposalFilterGroup>('todo');
+
+  // Classement LOCAL : aucune I/O, aucune valeur inventée.
+  const rows = (proposals.list?.proposals ?? []).map((proposal) => {
+    const input = {
+      index: proposal.index,
+      status: proposal.status,
+      approvals: proposal.approvals,
+      threshold,
+      approvedAddresses: proposal.approvedAddresses,
+      walletAddress,
+      walletCanApprove,
+      walletCanExecute,
+    };
+    const group = classifyProposal(input);
+    const statusLabel = proposalStatusLabel(input);
+    const summary = summarizeOperation(decodedModelFor?.(proposal.index) ?? null);
+    return { proposal, group, statusLabel, summary };
+  });
+
+  const counts: Record<ProposalFilterGroup, number> = {
+    todo: rows.filter((row) => row.group === 'todo').length,
+    open: rows.filter((row) => row.group === 'open').length,
+    done: rows.filter((row) => row.group === 'done').length,
+  };
+  const visible = rows.filter((row) => row.group === filter);
+
+  return (
+    <View>
+      {/* Filtres locaux : To do / Open / Done. */}
+      <View style={styles.filterRow}>
+        {FILTERS.map((entry) => {
+          const active = entry.key === filter;
+          return (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`Show ${entry.label} proposals`}
+              key={entry.key}
+              onPress={() => setFilter(entry.key)}
+              style={({ pressed }) => [
+                styles.filterPill,
+                active && styles.filterPillActive,
+                pressed && !active && styles.filterPillPressed,
+              ]}
+            >
+              <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                {entry.label} {counts[entry.key]}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {busy ? (
+        <View style={styles.centerBlock}>
+          <ActivityIndicator color={colors.mint} />
+          <Text style={styles.note}>Refreshing proposals…</Text>
+        </View>
+      ) : null}
+
+      {/* Liste périmée conservée (jamais supprimée en silence). */}
+      {proposals.stale && proposals.list !== null ? (
+        <InfoBox glyph="⚠" style={styles.infoBox} tone="warning">
+          <InfoText tone="warning">
+            Showing the last successfully read list. Refresh failed:{' '}
+            {proposals.error ?? 'unknown error'}
+          </InfoText>
+        </InfoBox>
+      ) : null}
+
+      {proposals.status === 'error' ? (
+        <InfoBox glyph="⚠" style={styles.infoBox} tone="error">
+          <InfoText tone="error">{proposals.error ?? 'Reading proposals failed.'}</InfoText>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry reading proposals"
+            onPress={proposals.retry}
+            style={styles.inlineAction}
+          >
+            <Text style={styles.inlineActionText}>Retry</Text>
+          </Pressable>
+        </InfoBox>
+      ) : null}
+
+      {proposals.status === 'loaded' ? (
+        <View style={styles.block}>
+          {visible.length === 0 ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyTitle}>{EMPTY_STATE[filter].title}</Text>
+              {EMPTY_STATE[filter].body !== undefined ? (
+                <Text style={styles.emptyText}>{EMPTY_STATE[filter].body}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {visible.map(({ proposal, statusLabel, summary }) => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Open proposal ${proposal.index}`}
+              disabled={onOpenProposal === undefined}
+              key={proposal.index}
+              onPress={() => onOpenProposal?.(proposal)}
+              style={({ pressed }) => [styles.entryCard, pressed && styles.entryCardPressed]}
+            >
+              <View style={styles.entryIndexChip}>
+                <Text style={styles.entryIndexText}>#{proposal.index}</Text>
+              </View>
+              <View style={styles.entryBody}>
+                <Text style={styles.entryTitle}>
+                  {summary === null
+                    ? 'Details available after opening'
+                    : `${summary.amount} → ${summary.destination}`}
+                </Text>
+                <Text style={styles.entryMeta}>
+                  {proposal.approvals} of {threshold} approvals
+                </Text>
+              </View>
+              <View style={styles.entryBadge}>
+                <Text style={styles.entryBadgeText}>{statusLabel}</Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
+          ))}
+
+          {proposals.list !== null && proposals.list.unreadable > 0 ? (
+            <Text style={styles.note}>
+              {proposals.list.unreadable} derived account(s) absent or unreadable (config
+              transactions and batches are not indexed here).
+            </Text>
+          ) : null}
+
+          {__DEV__ ? (
+            <Text style={styles.note}>
+              RPC calls used for this list: {proposals.list?.rpcCalls ?? 0} (one
+              getMultipleAccountsInfo).
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
   );
 }
 

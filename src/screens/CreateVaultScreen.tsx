@@ -516,7 +516,7 @@ export function CreateVaultScreen({
       });
       if (preflight.treasury === null) {
         throw new Error(
-          `Préflight impossible : ${preflight.validationErrors.join(' ') || 'treasury indisponible.'}`,
+          `Preflight failed: ${preflight.validationErrors.join(' ') || 'treasury unavailable.'}`,
         );
       }
       const build = buildMultisigCreationTransaction({
@@ -525,7 +525,7 @@ export function CreateVaultScreen({
         treasury: preflight.treasury,
       });
       if (build.transaction === null) {
-        throw new Error(`Construction impossible : ${build.validationErrors.join(' ')}`);
+        throw new Error(`Construction failed: ${build.validationErrors.join(' ')}`);
       }
       // Blockhash explicite AVANT toute simulation : sans lui, web3.js injecte
       // un blockhash issu du cache de Connection, qui peut etre inconnu de la

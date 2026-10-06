@@ -310,13 +310,41 @@ check('15. aucun invariant metier modifie', () => {
   // 6) src/squads et le theme partage restent intacts sur le fond.
   assert.ok(THEME.includes("background: '#08110F'"), 'tokens du theme intacts');
   assert.ok(PRIM.includes('export function PillButton'));
-  assert.ok(
-    !execSync('git diff --name-only HEAD -- src/squads', { encoding: 'utf8' })
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0).length,
-    'src/squads inchange',
-  );
+  //    EXCEPTION explicitement autorisee par Corentin (06/10) : la traduction en
+  //    ANGLAIS de trois MESSAGES rendus a l'utilisateur (aucune logique, aucun
+  //    invariant metier). Le controle n'est PAS relache : avant de comparer a
+  //    HEAD, on REMET les messages anglais en francais. Tout autre changement
+  //    sous src/squads (logique OU texte) fait donc toujours echouer ce test.
+  const approvedSquadsTranslations: readonly [string, string][] = [
+    [
+      'No account at this address on devnet. Check that it is a Squads v4 multisig deployed on devnet.',
+      'Aucun compte à cette adresse sur devnet. Vérifie qu’il s’agit bien d’un multisig Squads v4 déployé sur devnet.',
+    ],
+    [
+      'This account exists but is not a readable Squads v4 multisig',
+      'Ce compte existe mais n’est pas un multisig Squads v4 lisible',
+    ],
+    ['Could not read the account: ', 'Lecture impossible : '],
+    ['Could not read proposals: ', 'Lecture des propositions impossible : '],
+  ];
+  const changedSquadsFiles = execSync('git diff --name-only HEAD -- src/squads', {
+    encoding: 'utf8',
+  })
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  for (const squadsFile of changedSquadsFiles) {
+    const headContent = execSync(`git show HEAD:${squadsFile}`, { encoding: 'utf8' });
+    let workingContent = readFileSync(squadsFile, 'utf8');
+    for (const [english, french] of approvedSquadsTranslations) {
+      workingContent = workingContent.split(english).join(french);
+    }
+    assert.equal(
+      workingContent,
+      headContent,
+      `${squadsFile} : les 3 messages traduits sont la SEULE difference autorisee`,
+    );
+  }
 });
 
 check('la suite Groupe 4 est enregistree dans npm test', () => {

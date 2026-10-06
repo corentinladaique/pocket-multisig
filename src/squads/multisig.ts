@@ -73,15 +73,15 @@ export async function loadMultisig(
     const raw = caught instanceof Error ? caught.message : String(caught);
     if (/does not exist|no data|AccountNotFound|could not find account|unable to find/i.test(raw)) {
       throw new MultisigLookupError(
-        'Aucun compte à cette adresse sur devnet. Vérifie qu’il s’agit bien d’un multisig Squads v4 déployé sur devnet.',
+        'No account at this address on devnet. Check that it is a Squads v4 multisig deployed on devnet.',
       );
     }
     if (/deserial|beet|range|slice|out of bounds/i.test(raw)) {
       throw new MultisigLookupError(
-        `Ce compte existe mais n’est pas un multisig Squads v4 lisible (${raw}).`,
+        `This account exists but is not a readable Squads v4 multisig (${raw}).`,
       );
     }
-    throw new MultisigLookupError(`Lecture impossible : ${raw}`);
+    throw new MultisigLookupError(`Could not read the account: ${raw}`);
   }
 
   // Dérivation locale (aucun appel RPC) via l'utilitaire officiel.

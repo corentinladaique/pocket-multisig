@@ -67,7 +67,14 @@ check('3/4/5. Refresh relit le multisig puis remplace la liste (on-chain)', () =
   assert.ok(DETAILS_ACTIONS.includes('loadMultisig(connection, key)'), 'transactionIndex relu');
   assert.ok(DETAILS_ACTIONS.includes('setRefreshNonce((previous) => previous + 1)'));
   assert.ok(LIST.includes('onRefresh={reloadFromChain}') || DETAILS.includes('onRefresh={reloadFromChain}'));
-  assert.ok(DETAILS.includes('refreshNonce={refreshNonce}'));
+  // Le nonce ne passe plus par les props de la liste : le hook `useProposals`
+  // vit desormais dans le PARENT, seul proprietaire de la lecture (pour qu'un
+  // onglet puisse reutiliser la meme liste sans seconde lecture). L'intention est
+  // inchangee : c'est bien le nonce du parent qui force la relecture.
+  assert.ok(
+    DETAILS.includes('useProposals(') && DETAILS.includes('refreshNonce,'),
+    'le nonce alimente la lecture des propositions faite par le parent',
+  );
   // La liste est REMPLACÉE par les données on-chain actuelles.
   assert.ok(PROPOSALS.includes('setList(fresh);'));
   assert.ok(PROPOSALS.includes('loadProposals(connection, multisigPda, transactionIndex, staleTransactionIndex)'));

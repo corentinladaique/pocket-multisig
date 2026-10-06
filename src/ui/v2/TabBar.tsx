@@ -19,15 +19,14 @@ import { colors, radii, spacing, typography } from '../theme';
  * clair de la barre.
  */
 
-export type TabKey = 'vault' | 'proposals' | 'activity' | 'account';
+export type TabKey = 'vault' | 'proposals' | 'account';
 
-export const TAB_ORDER: readonly TabKey[] = ['vault', 'proposals', 'activity', 'account'];
+export const TAB_ORDER: readonly TabKey[] = ['vault', 'proposals', 'account'];
 
 /** Libellés : jamais peints, uniquement annoncés aux lecteurs d'écran. */
 export const TAB_LABELS: Record<TabKey, string> = {
   vault: 'Vault',
   proposals: 'Proposals',
-  activity: 'Activity',
   account: 'Account',
 };
 
@@ -52,7 +51,6 @@ const VAULT_LOGO = require('../../../assets/tab-vault-logo.png') as number;
 
 const TAB_ICONS = {
   proposals: { active: 'list', inactive: 'list-outline' },
-  activity: { active: 'pulse', inactive: 'pulse-outline' },
   account: { active: 'person', inactive: 'person-outline' },
 } as const;
 

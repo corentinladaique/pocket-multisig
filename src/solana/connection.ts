@@ -18,7 +18,7 @@ export const RPC_TIMEOUT_MS = 8000;
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      reject(new Error(`RPC timeout après ${timeoutMs} ms`));
+      reject(new Error(`RPC timeout after ${timeoutMs} ms`));
     }, timeoutMs);
     promise.then(
       (value) => {

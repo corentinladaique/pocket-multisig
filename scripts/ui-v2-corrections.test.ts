@@ -111,7 +111,7 @@ check('10. Vault charge, les deux actions sont visibles', () => {
 
 check('11. Roles techniques absents de la carte principale', () => {
   assert.ok(!CONNECT.includes('My multisig · '), 'plus de liste de roles sur la carte');
-  assert.ok(CONNECT.includes("homeIsMember ? 'My multisig' : 'Observed multisig · Read only'"));
+  assert.ok(CONNECT.includes("homeIsMember ? 'You are a signer' : 'Observed multisig · Read only'"));
 });
 
 check('12. Gros Refresh balance absent de la carte principale', () => {

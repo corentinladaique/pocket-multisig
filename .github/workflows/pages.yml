@@ -1,0 +1,48 @@
+# Publie la page de `docs/` sur GitHub Pages.
+#
+# Pourquoi un workflow : GitHub Pages deploie desormais par ARTEFACT, et le mode
+# « Deploy from a branch » est en cours de retrait. Ce workflow publie le
+# contenu de `docs/` tel quel — aucune etape de build.
+#
+# Mise en place (une fois) :
+#   Settings -> Pages -> Build and deployment -> Source = « GitHub Actions ».
+# Ensuite, chaque push sur `main` republie la page :
+#   https://corentinladaique.github.io/pocket-multisig/
+#
+# ⚠️ Volontairement limite a `main` : l'environnement `github-pages` n'autorise
+# que la branche par defaut. Un deploiement depuis une branche d'experimentation
+# echouerait (regle de protection d'environnement).
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4

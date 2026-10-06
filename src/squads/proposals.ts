@@ -381,7 +381,7 @@ export function useProposals(
       setStatus('loaded');
     } catch (caught: unknown) {
       setError(
-        `Lecture des propositions impossible : ${
+        `Could not read proposals: ${
           caught instanceof Error ? caught.message : String(caught)
         }`,
       );
