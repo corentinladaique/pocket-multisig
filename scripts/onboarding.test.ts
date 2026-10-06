@@ -50,8 +50,13 @@ const allText = ONBOARDING_SCREENS.flatMap((lesson) => [
 check('1. Learn visible sans wallet, avant Load multisig', () => {
   assert.ok(HOME.includes('Learn how multisig works'), 'surface Learn presente');
   assert.ok(HOME.includes('styles.learnSurface'), 'zone Learn dediee, une seule surface');
+  // Le bloc de chargement manuel est desormais EXTRAIT dans une constante
+  // declaree avant le rendu : l'ordre dans le FICHIER ne reflete plus l'ordre a
+  // l'ECRAN. L'intention d'origine — Learn visible SANS wallet — est donc
+  // verifiee sur le vrai porteur : la surface est gatee par `account === undefined`.
   const learn = HOME.indexOf('Learn how multisig works');
-  assert.ok(learn < HOME.indexOf('Load multisig'), 'Learn doit preceder Load multisig');
+  const zone = HOME.slice(Math.max(0, learn - 600), learn);
+  assert.ok(zone.includes('account === undefined'), 'Learn vit dans la zone SANS wallet');
   assert.ok(learn > HOME.indexOf('Connect wallet'), 'zone visible au niveau du prompt Connect');
 });
 

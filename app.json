@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Pocket Multisig",
+    "name": "Multisig",
     "slug": "pocket-multisig",
-    "version": "0.2.0",
+    "version": "0.4.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -11,7 +11,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#AEEAC9",
+        "backgroundColor": "#C8E8E4",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png"
       },

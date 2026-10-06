@@ -59,10 +59,18 @@ check('4. Home n affiche pas l adresse de configuration complete', () => {
 });
 
 check('5. View vault details ouvre MultisigDetailsScreen existant', () => {
-  assert.ok(HOME.includes('accessibilityLabel="View vault details"'), 'action presente');
+  // Le libelle VISIBLE n'a pas change. Le repere d'accessibilite porte desormais
+  // l'identite de la vue detaillee (il l'a recu de la tuile Signers retiree) :
+  // l'action reste identifiable et accessible, seule sa cle a change.
+  assert.ok(
+    HOME.includes('accessibilityLabel="Open this multisig in the shared detail screen"'),
+    'action presente (repere de la vue detaillee)',
+  );
   assert.ok(HOME.includes('View vault details ›'), 'libelle visible');
   assert.ok(
-    /View vault details[\s\S]{0,200}setManualDetailsOpen\(true\)/.test(HOME),
+    /Open this multisig in the shared detail screen[\s\S]{0,200}setManualDetailsOpen\(true\)/.test(
+      HOME,
+    ),
     'reutilise le handler de navigation existant',
   );
   assert.ok(HOME.includes('<MultisigDetailsScreen'), 'ouvre la vue existante');

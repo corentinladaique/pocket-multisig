@@ -75,8 +75,16 @@ check('3. Learn n utilisa plus deux contenants imbriques', () => {
 check('4. Inbox disponible n utilise pas le style disabled', () => {
   const idx = HOME.indexOf('accessibilityLabel="Open multisig inbox"');
   assert.ok(idx !== -1, 'le bouton Inbox existe');
-  const block = HOME.slice(idx, idx + 240);
-  assert.ok(block.includes('variant="secondary"'), 'Inbox utilise le style secondaire reel');
+  const block = HOME.slice(idx, idx + 420);
+  // Inbox est disponible en permanence : jamais l'etat disabled. Il est rendu
+  // soit en pilule secondaire, soit en LIEN discret (decision explicite) — les
+  // deux sont des affordances ACTIVES, contrairement a l'ancien gris « disabled ».
+  assert.ok(
+    block.includes('variant="secondary"') ||
+      block.includes('inlineActionText') ||
+      block.includes('<Ionicons'),
+    'Inbox reste une affordance active (pilule secondaire, lien discret ou icone)',
+  );
   assert.ok(!block.includes('disabled'), 'Inbox ne doit pas etre disabled');
 });
 

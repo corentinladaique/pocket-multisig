@@ -534,8 +534,11 @@ export function NewProposalScreen({
 
         <Text style={styles.kicker}>DEVNET · SOL TRANSFER</Text>
         <Text style={styles.title}>New proposal</Text>
+        {/* Sous-titre recentre sur CE QUE FAIT l'ecran. La promesse « rien n'est
+            signe » n'apparait plus qu'UNE fois, sous le bouton Review, au point
+            de decision : l'ancien doublon (haut + bas) diluait le message. */}
         <Text style={styles.subtitle}>
-          Nothing is signed or sent until the pipeline is green and you confirm twice.
+          A SOL transfer paid by the vault. Set the destination and amount, then review.
         </Text>
 
         {/* Indicateur d'étapes : PUREMENT visuel, sans navigation ni état. */}
@@ -1265,7 +1268,11 @@ const styles = StyleSheet.create({
   secondaryText: { color: colors.text, fontSize: typography.bodySmall, fontWeight: '700', textAlign: 'center' },
   createButton: { marginTop: spacing.xl },
   maxButton: { alignSelf: 'flex-start', marginTop: spacing.sm, paddingHorizontal: spacing.xl },
-  disabled: { backgroundColor: colors.disabled, borderColor: colors.disabled },
+  // Etat desactive LISIBLE (WCAG AA) : fond gris-clair + texte presque noir
+  // (colors.onLight) => contraste ~7:1. Avant, fond `colors.disabled` (#1B2925)
+  // sur texte #08110F : le CTA principal disparaissait quand le formulaire etait
+  // vide. Un etat desactive doit rester LISIBLE, jamais invisible.
+  disabled: { backgroundColor: colors.textSecondary, borderColor: colors.textSecondary },
   cancel: {
     alignItems: 'center',
     borderRadius: radii.button,

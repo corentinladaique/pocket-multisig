@@ -50,13 +50,37 @@ check('1. Connect utilise le handler existant', () => {
 });
 
 check('2. Inbox absent de l ecran deconnecte', () => {
+  // L'Inbox est devenue une ENVELOPPE dans l'en-tete, placee AVANT la branche du
+  // vault : sa position dans le fichier ne dit plus si elle est visible.
+  // L'intention est donc verifiee sur son GATE — rendue seulement si le wallet
+  // est connecte — ce qui est plus direct que comparer deux positions.
   const inbox = CONNECT.indexOf('accessibilityLabel="Open multisig inbox"');
-  assert.ok(homeStart > 0 && inbox > homeStart, 'Inbox ne doit vivre que dans le Home connecte');
+  assert.ok(inbox > 0, 'l entree Inbox existe');
+  const gate = CONNECT.slice(Math.max(0, inbox - 400), inbox);
+  assert.ok(
+    gate.includes('account === undefined ? null : ('),
+    'Inbox gatee sur la connexion : jamais sur l ecran deconnecte',
+  );
+  assert.ok(homeStart > 0, 'la frontiere du Home connecte existe toujours');
 });
 
 check('3. Loader manuel absent de l ecran deconnecte', () => {
-  const loader = CONNECT.indexOf('label="Load multisig"');
-  assert.ok(loader > homeStart, 'le loader manuel ne doit vivre que dans le Home connecte');
+  // Le bloc de chargement est desormais EXTRAIT dans une constante declaree
+  // avant le rendu : sa POSITION dans le fichier ne dit plus ou il s'affiche.
+  // L'intention d'origine est donc verifiee sur ses POINTS DE RENDU — il n'est
+  // monte que derriere la frontiere « ecran connecte ».
+  assert.equal(
+    CONNECT.split('multisigLoaderBlock').length - 1,
+    3,
+    'une definition + deux points de rendu',
+  );
+  assert.equal(
+    CONNECT.split('{addMultisigOpen ? multisigLoaderBlock : null}').length - 1,
+    2,
+    'les deux rendus sont conditionnels',
+  );
+  const first = CONNECT.indexOf('{addMultisigOpen ? multisigLoaderBlock : null}');
+  assert.ok(first > homeStart, 'le premier rendu est dans le Home connecte');
 });
 
 check('4. Diagnostics absents du Connect principal', () => {
@@ -146,10 +170,18 @@ check('17. Propose conserve son handler existant', () => {
   assert.ok(CONNECT.slice(propose, propose + 120).includes('setManualDetailsOpen(true)'));
 });
 
-check('18. Signers conserve sa navigation existante', () => {
+check('18. La vue detaillee conserve sa navigation existante', () => {
+  // La tuile Signers est retiree (decision produit) : le MEME ecran est
+  // desormais atteint par « View vault details », qui porte le repere
+  // d'accessibilite ET le meme handler.
   assert.ok(CONNECT.includes('accessibilityLabel="Open this multisig in the shared detail screen"'));
-  const signers = CONNECT.indexOf('label="Signers"');
-  assert.ok(CONNECT.slice(signers, signers + 120).includes('setManualDetailsOpen(true)'));
+  const carrier = CONNECT.indexOf(
+    'accessibilityLabel="Open this multisig in the shared detail screen"',
+  );
+  assert.ok(
+    CONNECT.slice(carrier, carrier + 200).includes('setManualDetailsOpen(true)'),
+    'le handler de navigation reste branche',
+  );
 });
 
 check('19. To do utilise des propositions reelles', () => {

@@ -21,7 +21,9 @@ export const colors = {
   textMuted: '#68736F',
 
   // Accents de marque
-  mint: '#BDEBD3',
+  // `mint` est échantillonné directement sur l'icône native du Solana Phone
+  // (Seeker) — mint des icônes d'app natives, prélevé par pixel : #AFE6D1.
+  mint: '#AFE6D1',
   petrol: '#0E4A4A',
   petrolDeep: '#0A3232',
 

@@ -22,6 +22,7 @@ files=(
   scripts/create-vault-step5.test.ts
   scripts/home-dashboard.test.ts
   scripts/home-hotfix.test.ts
+  scripts/hook-order.test.ts
   scripts/max-transfer.test.ts
   scripts/multisig-creation-build.test.ts
   scripts/multisig-creation-readback.test.ts

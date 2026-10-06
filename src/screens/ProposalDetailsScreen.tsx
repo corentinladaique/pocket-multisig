@@ -801,12 +801,22 @@ export function ProposalDetailsScreen({
         </Card>
 
         {/* --- Étapes Proposed → Approved → Execute : état RÉEL uniquement,
-            aucune étape remplie artificiellement. --- */}
+            aucune étape remplie artificiellement. L'étape « Approved » affiche
+            la progression réelle (1/2) dès la première approbation, pour ne plus
+            apparaitre comme une étape vide — mais le ✓ reste réservé au seuil
+            réellement atteint (`progress.reached`). --- */}
         <View style={styles.stepper}>
           {[
-            { label: 'Proposed', done: true },
-            { label: 'Approved', done: progress.reached },
-            { label: 'Execute', done: executed },
+            { label: 'Proposed', done: true, partial: null },
+            {
+              label: 'Approved',
+              done: progress.reached,
+              partial:
+                !progress.reached && progress.collected > 0
+                  ? `${progress.collected}/${progress.collected + progress.remaining}`
+                  : null,
+            },
+            { label: 'Execute', done: executed, partial: null },
           ].map((step, position) => (
             <View key={step.label} style={styles.stepItem}>
               <View style={[styles.stepDot, step.done && styles.stepDotDone]}>
@@ -815,7 +825,7 @@ export function ProposalDetailsScreen({
                 </Text>
               </View>
               <Text style={[styles.stepLabel, step.done && styles.stepLabelDone]}>
-                {step.label}
+                {step.partial === null ? step.label : `${step.label} ${step.partial}`}
               </Text>
             </View>
           ))}

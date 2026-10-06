@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -42,10 +43,14 @@ import { AddressInput } from '../ui/AddressInput';
 import { useOnboarding } from '../onboarding/useOnboarding';
 import { useMultisigRegistry } from '../vault/useMultisigRegistry';
 import { describeVaultBalance, type BalanceStatus } from '../wallet/vaultBalance';
+import { Accelerometer } from 'expo-sensors';
+import { consumeShake } from '../ui/shake';
 import { ProposalDetailsScreen } from './ProposalDetailsScreen';
 import { buildReviewPreviews } from '../solana/decodeTransactionMessage';
 import type { DecodeStatus } from '../types/transactionReview';
 import { COPIED_MESSAGE, COPY_FAILED_MESSAGE, copyToClipboard } from '../ui/clipboard';
+import { CardsMark } from '../ui/v2/CardsMark';
+import { LaunchSplash } from '../ui/v2/LaunchSplash';
 import { colors, radii, spacing, typography } from '../ui/theme';
 import {
   Card,
@@ -159,6 +164,13 @@ export function ConnectScreen() {
   const inboxAttemptedRef = useRef<number | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
   const multisigInputRef = useRef<TextInput>(null);
+  // Rideau de lancement : le splash natif est un drawable STATIQUE, il ne peut
+  // rien animer. On le prolonge dès que le bundle est prêt par l'ouverture de
+  // l'éventail, puis le rideau s'efface sur l'écran. Vit ici et non dans
+  // `App.tsx`, qui est un fichier protege (test « aucun invariant metier
+  // modifie », ui-v2-group4).
+  const [launching, setLaunching] = useState(true);
+  const finishLaunch = useCallback(() => setLaunching(false), []);
   // Position verticale reelle du bloc multisig (label + champ + bouton Load
   // multisig), mesuree dans le repere du contenu scrollable.
   const multisigBlockYRef = useRef<number | null>(null);
@@ -371,9 +383,10 @@ export function ConnectScreen() {
   const viewAddress = msig.view?.address ?? null;
   const viewVaultAddress = msig.view?.vaultAddress ?? null;
   const view = msig.view ?? null;
-  // La section « More » s'ouvre d'office tant qu'aucun vault n'est chargé :
-  // Create a vault / Add existing multisig restent découvrables dans l'état vide.
-  const manageExpanded = view === null || moreOpen;
+  // La section « More » n'existe QUE quand un vault est chargé (sans vault, la
+  // carte d'etat vide porte deja Create a vault / Add existing multisig) : elle
+  // ne s'ouvre donc plus d'office.
+  const manageExpanded = moreOpen;
 
   // --- Tableau de bord Home -------------------------------------------------
   // Solde du Main vault, chargé en lecture seule AVEC son adresse : changer de
@@ -389,6 +402,51 @@ export function ConnectScreen() {
   // persiste). Masquer n'affecte QUE l'affichage : la valeur reelle reste
   // intacte, aucune incidence sur Max, les propositions ou les calculs.
   const [balanceHidden, setBalanceHidden] = useState(false);
+  /**
+   * SECOUAGE -> masquage du solde.
+   *
+   * Le capteur n'est branche QUE tant que le solde est visible : une fois
+   * masque, l'abonnement est retire (plus aucune mesure, et le geste n'a plus
+   * rien a faire). Conforme a la demande : le secouage ne fait que MASQUER,
+   * c'est le bouton « Show balance » qui remontre. L'etat reste local a la
+   * session, jamais persiste. Un appareil sans accelerometre n'est pas une
+   * erreur : la fonctionnalite est simplement absente.
+   */
+  const shakeStateRef = useRef({ lastTriggerMs: 0 });
+  // Le capteur ne doit etre arme QUE si un vault est charge : sans vault, il n'y
+  // a aucun montant a masquer, et pendant le chargement (on manipule l'appareil)
+  // une secousse masquait le solde sans que l'utilisateur l'ait demande.
+  const hasLoadedVault = msig.view !== null;
+  useEffect(() => {
+    if (balanceHidden || !hasLoadedVault) return undefined;
+    let subscription: { remove: () => void } | null = null;
+    try {
+      Accelerometer.setUpdateInterval(120);
+      subscription = Accelerometer.addListener((sample) => {
+        if (consumeShake(shakeStateRef.current, sample, Date.now()).triggered) {
+          setBalanceHidden(true);
+        }
+      });
+    } catch {
+      return undefined;
+    }
+    return () => subscription?.remove();
+  }, [balanceHidden, hasLoadedVault]);
+  /**
+   * Le solde doit etre VISIBLE des qu'un multisig est charge : demande explicite
+   * de Corentin. Sans ce reset, une secousse detectee pendant la manipulation de
+   * l'appareil au chargement masquait le montant a son insu, et il fallait taper
+   * « Show balance » pour le revoir.
+   */
+  const lastLoadedAddressRef = useRef<string | null>(null);
+  useEffect(() => {
+    const loadedAddress = msig.view?.address ?? null;
+    if (loadedAddress !== null && loadedAddress !== lastLoadedAddressRef.current) {
+      lastLoadedAddressRef.current = loadedAddress;
+      setBalanceHidden(false);
+    }
+  }, [msig.view]);
+
   // Registre LOCAL : sert uniquement à afficher le nom donné au vault par
   // l'utilisateur. Rien n'en est jamais transmis ni synchronisé.
   const registry = useMultisigRegistry();
@@ -434,6 +492,27 @@ export function ConnectScreen() {
     }
     refreshHomeBalance(viewVaultAddress);
   }, [viewVaultAddress, refreshHomeBalance]);
+
+  /**
+   * Tirer vers le bas = relire ce que la page Vault affiche DEJA : le solde
+   * on-chain et les propositions. Reutilise les DEUX handlers existants (les
+   * memes que les liens « Reload balance » et « Refresh ») : aucune logique
+   * nouvelle, aucun appel supplementaire invente.
+   *
+   * CE HOOK DOIT RESTER AVANT TOUS LES `return` ANTICIPES du composant (Inbox,
+   * creation de vault, vue detaillee). Place apres eux, React voyait un nombre
+   * de hooks different selon l'ecran et l'application CRASHAIT des l'ouverture
+   * de l'Inbox. Regle des Hooks : jamais de hook apres un retour conditionnel.
+   */
+  const onPullToRefresh = useCallback(() => {
+    if (viewVaultAddress) {
+      refreshHomeBalance(viewVaultAddress);
+    }
+    proposals.retry();
+  }, [proposals, refreshHomeBalance, viewVaultAddress]);
+
+  // Etat du spinner : derive de l'etat REEL des deux lectures, jamais simule.
+  const pullingToRefresh = homeBalance?.status === 'loading' || proposals.status === 'loading';
 
   const homeBalanceView = describeVaultBalance({
     addressMatches:
@@ -682,26 +761,141 @@ export function ConnectScreen() {
     );
   }
 
+  /**
+   * Bloc de chargement manuel d'un multisig, EXTRAIT ici pour n'exister qu'une
+   * seule fois dans le fichier : il est rendu soit dans la carte d'etat vide
+   * (aucun vault charge), soit dans la section « More » (un vault est deja
+   * charge). Aucune logique nouvelle : handlers et etats existants uniquement.
+   */
+  const multisigLoaderBlock = (
+    <View onLayout={onLoaderLayout} style={styles.loaderBlock}>
+      <View style={loaderWide ? styles.loaderRow : styles.loaderColumn}>
+        <View style={styles.loaderField}>
+          <AddressInput
+            disabled={msig.status === 'loading'}
+            inputRef={multisigInputRef}
+            label="Multisig address"
+            onBlur={onMultisigInputBlur}
+            onChangeText={setMultisigInput}
+            onFocus={onMultisigInputFocus}
+            onSubmitEditing={onLoadMultisig}
+            placeholder="Multisig address"
+            returnKeyType="go"
+            value={multisigInput}
+          />
+        </View>
+        {loaderWide ? (
+          <View style={styles.loaderButtonSlot}>
+            <PillButton
+              accessibilityLabel="Load multisig"
+              busy={msig.status === 'loading'}
+              disabled={msig.status === 'loading'}
+              label="Load"
+              onPress={onLoadMultisig}
+              variant="primary"
+            />
+          </View>
+        ) : null}
+      </View>
+      {loaderWide ? null : (
+        <PillButton
+          accessibilityLabel="Load multisig"
+          busy={msig.status === 'loading'}
+          disabled={msig.status === 'loading'}
+          label="Load multisig"
+          onPress={onLoadMultisig}
+          variant="primary"
+        />
+      )}
+      {msig.status === 'loading' ? (
+        <Text style={styles.vaultCopySmall}>Lecture…</Text>
+      ) : null}
+      {msig.status === 'error' && msig.error ? (
+        <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
+          <InfoText tone="error">{msig.error}</InfoText>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading the multisig"
+            onPress={msig.retry}
+            style={styles.retry}
+          >
+            <Text style={styles.retryTextV2}>Retry</Text>
+          </Pressable>
+        </InfoBox>
+      ) : null}
+      {/* « Close this vault » (et non « Clear ») : ce controle ne CHANGE pas de
+          multisig, il DECHARGE celui en cours (champ vide + vue liberee) et
+          ramene a l'etat vide. Pour changer de vault, le chemin est
+          « Add existing multisig » ou l'Inbox, qui liste le registre local. */}
+      {view !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Close this vault"
+          onPress={() => {
+            setMultisigInput('');
+            msig.clear();
+          }}
+          style={styles.retry}
+        >
+          <Text style={styles.retryTextV2}>Close this vault</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+
   // Android : la fenetre n'etant plus redimensionnee par l'IME en edge-to-edge,
   // le KeyboardAvoidingView en mode "padding" est necessaire sur les deux
   // plateformes (aucune hauteur codee en dur).
   return (
+    <>
     <KeyboardAvoidingView behavior="padding" style={[styles.keyboardAvoider, SAFE_TOP_PADDING]}>
       <ScrollView
         contentContainerStyle={styles.container}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         ref={scrollViewRef}
+        refreshControl={
+          <RefreshControl
+            colors={[colors.text]}
+            onRefresh={onPullToRefresh}
+            progressBackgroundColor={colors.surface}
+            refreshing={pullingToRefresh}
+            tintColor={colors.textSecondary}
+          />
+        }
         style={styles.scrollView}
       >
       {/* Le carre menthe « ◈ » est retire : un faux logo dont personne ne
           comprenait le sens. Il ne reste que la pastille reseau, alignee a droite. */}
       <View style={styles.headerRow}>
+        {/* Inbox = selecteur GLOBAL de multisig : en haut a gauche, face au badge
+            Devnet. Il remplace les DEUX entrees dispersees (carte d'etat vide et
+            section « More »), supprimees dans le meme mouvement.
+            Visible seulement connecte, comme la barre d'onglets. */}
+        {account === undefined ? null : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Open multisig inbox"
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+            onPress={() => setInboxOpen(true)}
+            style={({ pressed }) => [
+              styles.inlineAction,
+              styles.headerInbox,
+              pressed && styles.inlineActionPressed,
+            ]}
+          >
+            <Ionicons color={colors.mint} name="mail-outline" size={22} />
+          </Pressable>
+        )}
         <DevnetPill />
       </View>
 
       {account === undefined ? (
         <>
+          {/* Marque animée : même cycle que le SVG de marque (ouverture,
+              maintien, fermeture, maintien — 3,6 s). Mode tuile : les cartes
+              sont sombres et disparaîtraient sur le fond de l'app. */}
+          <CardsMark loop size={132} style={styles.brandMark} tile />
           <Text style={styles.heroTitle}>Pocket Multisig</Text>
           <Text style={styles.heroTagline}>
             Shared vaults on Solana.{'\n'}Everyone signs, nobody trusts alone.
@@ -809,14 +1003,36 @@ export function ConnectScreen() {
 
       {/* Onglet Vault : le contenu du Home V2, strictement INCHANGÉ. */}
       {account === undefined || tab !== 'vault' ? null : (
-        <View onLayout={onMultisigBlockLayout} style={styles.homeBody}>
-          {/* ÉTAT SANS MULTISIG : message clair, aucune action indisponible. */}
+        <View
+          onLayout={onMultisigBlockLayout}
+          style={view === null && !addMultisigOpen ? styles.homeBodyEmpty : styles.homeBody}
+        >
+          {/* ÉTAT SANS MULTISIG : la carte porte les DEUX seules actions utiles,
+              avec `Create a vault` en principal. Auparavant, six boutons de poids
+              égal se disputaient l'écran ; les actions de gestion (Learn,
+              Disconnect, Reset) vivent désormais dans l'onglet Account, et
+              « Your wallet » aussi. */}
           {view === null ? (
             <Card elevated style={styles.vaultCard}>
               <Text style={styles.vaultName}>No multisig loaded</Text>
               <Text style={styles.vaultCopy}>
-                Add an existing multisig, or create a vault, to see its balance and actions.
+                Create a vault, or load one you are a signer of, to see its balance and actions.
               </Text>
+              <View style={styles.manageBody}>
+                <PillButton
+                  accessibilityLabel="Create a vault"
+                  label="Create a vault"
+                  onPress={() => setVaultCreationOpen(true)}
+                />
+                <PillButton
+                  accessibilityLabel="Add an existing multisig"
+                  disabled={msig.status === 'loading'}
+                  label="Add existing multisig"
+                  onPress={() => setAddMultisigOpen((previous) => !previous)}
+                  variant="secondary"
+                />
+              </View>
+              {addMultisigOpen ? multisigLoaderBlock : null}
             </Card>
           ) : (
             <Card elevated style={styles.vaultCard}>
@@ -839,16 +1055,22 @@ export function ConnectScreen() {
                 {/* Confidentialite du solde : etat LOCAL de session, aucune
                     persistance, aucune modification de la valeur reelle ni des
                     calculs (Max / propositions). */}
+                {/* OEIL au lieu du texte (demande explicite) : plus commun, et ca
+                    debarrasse la carte d'un lien texte de plus. L'etiquette
+                    INVISIBLE reste : une icone seule ne se lit pas a voix haute. */}
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel={balanceHidden ? 'Show balance' : 'Hide balance'}
                   accessibilityState={{ selected: balanceHidden }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                   onPress={() => setBalanceHidden((previous) => !previous)}
                   style={({ pressed }) => [styles.inlineAction, pressed && styles.inlineActionPressed]}
                 >
-                  <Text style={styles.inlineActionText}>
-                    {balanceHidden ? 'Show balance' : 'Hide balance'}
-                  </Text>
+                  <Ionicons
+                    color={colors.textSecondary}
+                    name={balanceHidden ? 'eye-off-outline' : 'eye-outline'}
+                    size={20}
+                  />
                 </Pressable>
               </View>
               {homeBalanceView.title === 'Main vault not funded' ? (
@@ -873,32 +1095,35 @@ export function ConnectScreen() {
                 <Text selectable style={styles.vaultAddressText}>
                   {shortenAddress(view.vaultAddress)}
                 </Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Refresh the Main vault balance"
-                  disabled={homeBalance?.status === 'loading'}
-                  onPress={() => {
-                    refreshHomeBalance(viewVaultAddress ?? '');
-                  }}
-                  style={({ pressed }) => [
-                    styles.inlineAction,
-                    pressed && styles.inlineActionPressed,
-                  ]}
-                >
-                  <Text style={styles.inlineActionText}>
-                    {homeBalance?.status === 'loading'
-                      ? 'Loading…'
-                      : homeBalanceError
-                        ? 'Retry'
-                        : 'Refresh'}
-                  </Text>
-                </Pressable>
+                {/* Plus de lien « Reload balance » au quotidien : la relecture du
+                    solde passe par la fleche circulaire de « To do » (et par le
+                    geste de traction), qui relisent LES DEUX. Il ne reste ici
+                    qu'un « Retry » en cas d'echec de lecture — la seule situation
+                    ou une action dediee est reellement utile. */}
+                {homeBalanceError ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry reading the Main vault balance"
+                    disabled={homeBalance?.status === 'loading'}
+                    onPress={() => {
+                      refreshHomeBalance(viewVaultAddress ?? '');
+                    }}
+                    style={({ pressed }) => [
+                      styles.inlineAction,
+                      pressed && styles.inlineActionPressed,
+                    ]}
+                  >
+                    <Text style={styles.inlineActionText}>Retry</Text>
+                  </Pressable>
+                ) : null}
               </View>
               {/* Objectif B : action secondaire vers l'UNIQUE vue detaillee
-                  (MultisigDetailsScreen V2), meme handler que le chemin Inbox. */}
+                  (MultisigDetailsScreen V2), meme handler que le chemin Inbox.
+                  Porte desormais le repere d'accessibilite de la vue detaillee,
+                  depuis le retrait de la tuile « Signers ». */}
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="View vault details"
+                accessibilityLabel="Open this multisig in the shared detail screen"
                 onPress={() => setManualDetailsOpen(true)}
                 style={({ pressed }) => [
                   styles.inlineAction,
@@ -915,12 +1140,9 @@ export function ConnectScreen() {
             <View style={styles.actionRow}>
               <HomeAction glyph="↓" label="Receive" onPress={() => setReceiveOpen(true)} />
               <HomeAction glyph="↗" label="Propose" onPress={() => setManualDetailsOpen(true)} />
-              <HomeAction
-                accessibilityLabel="Open this multisig in the shared detail screen"
-                glyph="◎"
-                label="Signers"
-                onPress={() => setManualDetailsOpen(true)}
-              />
+              {/* Tuile « Signers » RETIREE (decision produit de Corentin) : elle
+                  menait au MEME ecran que « View vault details », qui porte
+                  desormais le repere d'accessibilite de la vue detaillee. */}
             </View>
           )}
 
@@ -929,19 +1151,26 @@ export function ConnectScreen() {
             <>
               <View style={styles.sectionRow}>
                 <Text style={styles.sectionTitle}>To do</Text>
+                {/* FLECHE CIRCULAIRE (choix « C ») : elle fait EXACTEMENT ce que
+                    fait le geste de traction — solde ET propositions — et
+                    remplace les deux liens texte. Le geste reste un raccourci,
+                    jamais une obligation : sans lui, l'action reste visible. */}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Refresh proposals from the chain"
-                  disabled={proposals.status === 'loading'}
-                  onPress={proposals.retry}
+                  accessibilityLabel="Refresh balance and proposals"
+                  disabled={pullingToRefresh}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  onPress={onPullToRefresh}
                   style={({ pressed }) => [
                     styles.inlineAction,
                     pressed && styles.inlineActionPressed,
                   ]}
                 >
-                  <Text style={styles.inlineActionText}>
-                    {proposals.status === 'loading' ? 'Refreshing…' : 'Refresh'}
-                  </Text>
+                  <Ionicons
+                    color={pullingToRefresh ? colors.textSecondary : colors.mint}
+                    name="refresh-outline"
+                    size={20}
+                  />
                 </Pressable>
               </View>
               {/* Compteurs derives des propositions deja lues (donnee conservee) :
@@ -1014,170 +1243,43 @@ export function ConnectScreen() {
             </>
           )}
 
-          {/* YOUR WALLET — ligne compacte. */}
-          <Text style={styles.sectionTitle}>Your wallet</Text>
-          <View style={styles.walletRow}>
-            <View style={styles.walletRowBody}>
-              <Text style={styles.walletLabel}>
-                {walletIdentity?.label ?? 'Wallet without label'}
-              </Text>
-              <Text style={styles.walletAddress}>{shortenAddress(account.address.toString())}</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Copy the wallet address"
-              onPress={onCopyWallet}
-              style={({ pressed }) => [styles.inlineAction, pressed && styles.inlineActionPressed]}
-            >
-              <Text style={styles.inlineActionText}>Copy</Text>
-            </Pressable>
-          </View>
-          {walletCopyFeedback !== null ? (
-            <Text style={styles.copyFeedback}>{walletCopyFeedback}</Text>
-          ) : null}
+          {/* « YOUR WALLET » A ETE RETIRE du Home : le portefeuille n'a rien a
+              faire AVANT l'action principale, et l'information vit deja dans
+              l'onglet Account (nom, adresse courte, copie). */}
 
-          {/* MORE — gestion repliée ; ouverte d'office si AUCUN vault chargé
-              (Create a vault et Add existing multisig restent découvrables). */}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded: manageExpanded }}
-            accessibilityLabel="Toggle more actions"
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            onPress={() => setMoreOpen((previous) => !previous)}
-            style={styles.detailsToggle}
-          >
-            <Text style={styles.detailsToggleText}>{manageExpanded ? '▾ More' : '▸ More'}</Text>
-          </Pressable>
-          {manageExpanded ? (
-            <View style={styles.manageBody}>
-              <PillButton
-                accessibilityLabel="Add an existing multisig"
-                disabled={msig.status === 'loading'}
-                label="Add existing multisig"
-                onPress={() => setAddMultisigOpen((previous) => !previous)}
-                variant="secondary"
-              />
-              {addMultisigOpen ? (
-                <View onLayout={onLoaderLayout} style={styles.loaderBlock}>
-                  <View style={loaderWide ? styles.loaderRow : styles.loaderColumn}>
-                    <View style={styles.loaderField}>
-                      <AddressInput
-                        disabled={msig.status === 'loading'}
-                        inputRef={multisigInputRef}
-                        label="Multisig address"
-                        onBlur={onMultisigInputBlur}
-                        onChangeText={setMultisigInput}
-                        onFocus={onMultisigInputFocus}
-                        onSubmitEditing={onLoadMultisig}
-                        placeholder="Multisig address"
-                        returnKeyType="go"
-                        value={multisigInput}
-                      />
-                    </View>
-                    {loaderWide ? (
-                      <View style={styles.loaderButtonSlot}>
-                        <PillButton
-                          accessibilityLabel="Load multisig"
-                          busy={msig.status === 'loading'}
-                          disabled={msig.status === 'loading'}
-                          label="Load"
-                          onPress={onLoadMultisig}
-                          variant="primary"
-                        />
-                      </View>
-                    ) : null}
-                  </View>
-                  {loaderWide ? null : (
-                    <PillButton
-                      accessibilityLabel="Load multisig"
-                      busy={msig.status === 'loading'}
-                      disabled={msig.status === 'loading'}
-                      label="Load multisig"
-                      onPress={onLoadMultisig}
-                      variant="primary"
-                    />
-                  )}
-                  {msig.status === 'loading' ? (
-                    <Text style={styles.vaultCopySmall}>Lecture…</Text>
-                  ) : null}
-                  {msig.status === 'error' && msig.error ? (
-                    <InfoBox glyph="⚠" style={styles.errorBoxV2} tone="error">
-                      <InfoText tone="error">{msig.error}</InfoText>
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Retry loading the multisig"
-                        onPress={msig.retry}
-                        style={styles.retry}
-                      >
-                        <Text style={styles.retryTextV2}>Retry</Text>
-                      </Pressable>
-                    </InfoBox>
-                  ) : null}
-                  {view !== null ? (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel="Clear the loaded multisig"
-                      onPress={() => {
-                        setMultisigInput('');
-                        msig.clear();
-                      }}
-                      style={styles.retry}
-                    >
-                      <Text style={styles.retryTextV2}>Clear</Text>
-                    </Pressable>
-                  ) : null}
+          {/* MORE — gestion repliée, UNIQUEMENT quand un vault est chargé : sans
+              vault, la carte d'état vide porte déjà les deux actions utiles.
+              Elle ne garde que le chargement d'un AUTRE multisig et l'accès à
+              l'Inbox. Learn, Disconnect et Reset wallet session vivent désormais
+              dans l'onglet Account. */}
+          {view === null ? null : (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded: manageExpanded }}
+                accessibilityLabel="Toggle more actions"
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                onPress={() => setMoreOpen((previous) => !previous)}
+                style={styles.detailsToggle}
+              >
+                <Text style={styles.detailsToggleText}>
+                  {manageExpanded ? '▾ More' : '▸ More'}
+                </Text>
+              </Pressable>
+              {manageExpanded ? (
+                <View style={styles.manageBody}>
+                  <PillButton
+                    accessibilityLabel="Add an existing multisig"
+                    disabled={msig.status === 'loading'}
+                    label="Add existing multisig"
+                    onPress={() => setAddMultisigOpen((previous) => !previous)}
+                    variant="secondary"
+                  />
+                  {addMultisigOpen ? multisigLoaderBlock : null}
                 </View>
               ) : null}
-              <PillButton
-                accessibilityLabel="Create a vault"
-                label="Create a vault"
-                onPress={() => setVaultCreationOpen(true)}
-                variant="secondary"
-              />
-              <PillButton
-                accessibilityLabel="Open multisig inbox"
-                label="Inbox"
-                onPress={() => setInboxOpen(true)}
-                variant="secondary"
-              />
-              <PillButton
-                accessibilityLabel="Open the multisig learning guide"
-                label="Learn"
-                onPress={onboarding.open}
-                variant="secondary"
-              />
-              <PillButton
-                accessibilityLabel="Disconnect the wallet"
-                busy={phase === 'disconnecting'}
-                disabled={busy}
-                label="Disconnect"
-                onPress={onDisconnect}
-                variant="ghost"
-              />
-              <PillButton
-                accessibilityLabel="Reset the mobile wallet adapter session"
-                disabled={busy}
-                label="Reset wallet session"
-                onPress={() => {
-                  void onResetWalletSession();
-                }}
-                variant="ghost"
-              />
-              <Text style={styles.vaultCopySmall}>
-                Clears the local authorization and revokes the session on the wallet when possible.
-                Nothing is signed and no transaction is sent.
-              </Text>
-              {resetReport !== null ? (
-                <Text style={styles.vaultCopySmall}>{resetReport}</Text>
-              ) : null}
-              {onboarding.storageFailed ? (
-                <Text style={styles.vaultCopySmall}>
-                  Your answers could not be saved on this device: the app keeps working with the
-                  default learning mode, and nothing is sent anywhere.
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
+            </>
+          )}
 
           {/* Hotfix de coherence : le bloc technique complet du Home est
               SUPPRIME. Les identifiants complets (Main vault, configuration,
@@ -1244,9 +1346,21 @@ export function ConnectScreen() {
               ) : null}
 
               <ListRow title="Network" subtitle="Devnet · nothing real is at stake" />
+              <ListRow
+                accessibilityLabel="Learn how multisig works"
+                onPress={onboarding.open}
+                subtitle="What a shared vault is, and how approvals work"
+                title="Learn how multisig works"
+              />
               <ListRow title="About" subtitle="Pocket Multisig" />
+              {onboarding.storageFailed ? (
+                <Text style={styles.vaultCopySmall}>
+                  Your answers could not be saved on this device: the app keeps working with the
+                  default learning mode, and nothing is sent anywhere.
+                </Text>
+              ) : null}
 
-              {/* Seule action de l'onglet : se déconnecter. */}
+              {/* Seule action principale de l'onglet : se déconnecter. */}
               <View style={styles.accountActions}>
                 <PillButton
                   accessibilityLabel="Disconnect the wallet"
@@ -1257,6 +1371,26 @@ export function ConnectScreen() {
                   variant="danger"
                 />
               </View>
+
+              {/* Session MWA : action TECHNIQUE, déplacée du Home vers Account. */}
+              <View style={styles.accountActions}>
+                <PillButton
+                  accessibilityLabel="Reset the mobile wallet adapter session"
+                  disabled={busy}
+                  label="Reset wallet session"
+                  onPress={() => {
+                    void onResetWalletSession();
+                  }}
+                  variant="ghost"
+                />
+              </View>
+              <Text style={styles.vaultCopySmall}>
+                Clears the local authorization and revokes the session on the wallet when possible.
+                Nothing is signed and no transaction is sent.
+              </Text>
+              {resetReport !== null ? (
+                <Text style={styles.vaultCopySmall}>{resetReport}</Text>
+              ) : null}
             </>
           ) : null}
         </View>
@@ -1287,6 +1421,8 @@ export function ConnectScreen() {
           que changer l'onglet ACTIF — aucun handler métier n'est appelé ici. */}
       {account === undefined ? null : <TabBar active={tab} onSelect={setTab} />}
     </KeyboardAvoidingView>
+    {launching ? <LaunchSplash onDone={finishLaunch} /> : null}
+    </>
   );
 }
 
@@ -1673,6 +1809,18 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     marginBottom: spacing.lg,
   },
+  // Enveloppe Inbox, en haut a gauche. `marginRight: 'auto'` la pousse a GAUCHE
+  // dans la rangee, sans toucher au `justifyContent: 'flex-end'` qui garde le
+  // badge Devnet a droite : deux enfants, un a chaque bout, sans nouveau layout.
+  headerInbox: {
+    marginRight: 'auto',
+    paddingVertical: spacing.xs,
+  },
+  brandMark: {
+    alignSelf: 'center',
+    marginBottom: spacing.lg,
+    marginTop: spacing.lg,
+  },
   heroTitle: {
     color: colors.text,
     fontSize: typography.screenTitle,
@@ -1717,6 +1865,18 @@ const styles = StyleSheet.create({
   },
   homeBody: {
     alignSelf: 'stretch',
+    marginTop: spacing.lg,
+  },
+  // Etat VIDE (aucun vault, champ de chargement FERME) : le contenu est recentre
+  // dans la hauteur disponible, au lieu de rester colle en haut avec 60 % d'ecran
+  // noir en dessous. Retour direct de Corentin sur capture.
+  // JAMAIS applique quand le champ de chargement est ouvert : la mesure
+  // `onMultisigBlockLayout` (position du champ, pour le remonter sous le clavier)
+  // doit rester exacte.
+  homeBodyEmpty: {
+    alignSelf: 'stretch',
+    flex: 1,
+    justifyContent: 'center',
     marginTop: spacing.lg,
   },
   vaultCard: {

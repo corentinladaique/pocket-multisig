@@ -68,16 +68,27 @@ check('6. Sans multisig, Propose est absent', () => {
   assert.ok(CONNECT.indexOf('label="Propose"') > ACTIONS_GATE);
 });
 
-check('7. Sans multisig, Signers est absent', () => {
-  assert.equal(CONNECT.split('label="Signers"').length - 1, 1);
-  assert.ok(CONNECT.indexOf('label="Signers"') > ACTIONS_GATE);
+check('7. Signers a ete retire de l ecran', () => {
+  // Decision produit explicite de Corentin : la tuile Signers est retiree des
+  // actions du vault. L'ancienne assertion verifiait qu'elle etait GATEE
+  // (absente sans multisig, presente avec) ; elle est desormais PLUS STRICTE :
+  // la tuile n'existe plus du tout, dans aucune branche.
+  assert.equal(
+    CONNECT.split('label="Signers"').length - 1,
+    0,
+    'aucune tuile Signers dans l ecran',
+  );
 });
 
 check('8. Sans multisig, Add existing multisig est disponible', () => {
-  assert.ok(
-    CONNECT.includes('const manageExpanded = view === null || moreOpen;'),
-    'la section More soccupe si aucun vault',
-  );
+  // La section « More » ne s'ouvre plus d'office : sans vault, c'est la CARTE
+  // D'ETAT VIDE qui porte les deux actions. L'intention est conservee — Add
+  // existing reste atteignable sans vault — verifiee sur son nouveau porteur.
+  const start = CONNECT.indexOf('{view === null ? (');
+  assert.ok(start > 0, 'la carte d etat vide existe');
+  const card = CONNECT.slice(start, start + 3500);
+  assert.ok(card.includes('label="Add existing multisig"'), 'Add existing dans la carte vide');
+  assert.ok(card.includes('label="Create a vault"'), 'Create a vault dans la carte vide');
   assert.ok(CONNECT.includes('accessibilityLabel="Add an existing multisig"'));
 });
 
@@ -86,10 +97,16 @@ check('9. Sans multisig, Create a vault est disponible', () => {
   assert.ok(CONNECT.includes('label="Create a vault"'));
 });
 
-check('10. Vault charge, les trois actions sont visibles', () => {
+check('10. Vault charge, les deux actions sont visibles', () => {
   assert.ok(CONNECT.includes('label="Receive"'));
   assert.ok(CONNECT.includes('label="Propose"'));
-  assert.ok(CONNECT.includes('label="Signers"'));
+  // Signers est retire : la vue detaillee reste atteignable par
+  // « View vault details », qui porte desormais son repere d'accessibilite.
+  assert.ok(!CONNECT.includes('label="Signers"'), 'Signers retire des actions');
+  assert.ok(
+    CONNECT.includes('accessibilityLabel="Open this multisig in the shared detail screen"'),
+    'la vue detaillee reste atteignable',
+  );
 });
 
 check('11. Roles techniques absents de la carte principale', () => {
@@ -99,7 +116,11 @@ check('11. Roles techniques absents de la carte principale', () => {
 
 check('12. Gros Refresh balance absent de la carte principale', () => {
   assert.ok(!CONNECT.includes(": 'Refresh balance'"), 'plus de libelle long pleine largeur');
-  assert.ok(CONNECT.includes("? 'Retry'"), 'action inline compacte');
+  // La relecture du solde n'est plus un lien permanent : elle passe par l'icone
+  // de « To do » (et par le geste). Il ne reste qu'un « Retry » COMPACT, gate sur
+  // l'echec de lecture — l'intention « action inline compacte » est conservee.
+  assert.ok(CONNECT.includes('accessibilityLabel="Retry reading the Main vault balance"'));
+  assert.ok(CONNECT.includes('{homeBalanceError ? ('), 'gatee sur l erreur de lecture');
   assert.ok(CONNECT.includes('styles.inlineAction'));
 });
 
@@ -108,9 +129,19 @@ check('13. To do utilise des cartes compactes', () => {
   assert.ok(!CONNECT.includes('styles.todoCard'), 'plus de grande carte to-do');
 });
 
-check('14. Refresh proposals n est plus un gros CTA principal', () => {
+check('14. La relecture est une ICONE, plus un gros CTA texte', () => {
+  // Decision « C » : la fleche circulaire remplace les DEUX liens texte et fait
+  // exactement ce que fait le geste de traction (solde + propositions).
+  // L'intention d'origine — relire depuis l'en-tete « To do », sans gros bouton
+  // pleine largeur — est conservee, verifiee sur le handler et l'etat d'occupation.
   assert.ok(!CONNECT.includes('label="Refresh proposals"'), 'plus de bouton pleine largeur');
-  assert.ok(CONNECT.includes("'Refreshing…' : 'Refresh'"), 'action inline dans l en-tete To do');
+  assert.ok(!CONNECT.includes("'Refreshing…' : 'Refresh'"), 'plus de lien texte Refresh');
+  assert.ok(
+    CONNECT.includes('accessibilityLabel="Refresh balance and proposals"'),
+    'icone de relecture presente',
+  );
+  assert.ok(CONNECT.includes('onPress={onPullToRefresh}'), 'meme handler que le geste');
+  assert.ok(CONNECT.includes('disabled={pullingToRefresh}'), 'etat d occupation reutilise');
 });
 
 check('15. Your wallet utilise une ligne compacte', () => {

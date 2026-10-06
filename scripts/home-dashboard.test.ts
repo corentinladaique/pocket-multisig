@@ -100,7 +100,13 @@ check('6. erreur RPC : dernier solde du meme vault conserve, marque stale', () =
   assert.equal(stale.stale, true);
   assert.ok(HOME.includes('setHomeBalanceError(true)'));
   // V2 : action de relecture compacte (petite action inline, pas une ligne pleine).
-  assert.ok(HOME.includes("? 'Retry'"), 'une relecture doit etre proposee');
+  // Elle n'apparait desormais QUE sur echec de lecture — la relecture passant
+  // sinon par l'icone de « To do » ou le geste de traction. L'intention
+  // (une relecture est PROPOSEE sur erreur) est donc verifiee sur son gate et
+  // sur son handler, ce qui est plus precis qu'un ternaire de libelle.
+  assert.ok(HOME.includes('Retry reading the Main vault balance'), 'une relecture doit etre proposee');
+  assert.ok(HOME.includes('{homeBalanceError ? ('), 'gatee sur l erreur de lecture');
+  assert.ok(HOME.includes("refreshHomeBalance(viewVaultAddress ?? '')"), 'meme handler de relecture');
   assert.ok(HOME.includes('Balance unavailable'), 'letat doit etre explicite');
 });
 

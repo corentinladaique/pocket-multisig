@@ -102,18 +102,26 @@ check('15/16. Reset onboarding invisible sur Home, fonction conservee', () => {
 });
 
 check('16bis. Learn retire du dashboard charge, mais ouvert avant connexion', () => {
-  // V2 : Learn reste visible SANS wallet (ecran Connect) et vit dans la
-  // section « More » une fois connecte : deux acces, aucune duplication de logique.
+  // V2 : Learn reste visible SANS wallet (ecran Connect) et vit desormais dans
+  // l'onglet ACCOUNT (decision explicite) : deux acces, aucune duplication.
   assert.equal(
     HOME.split('onPress={onboarding.open}').length - 1,
     2,
-    'Learn accessible avant connexion et depuis More',
+    'Learn accessible avant connexion et depuis Account',
   );
   const learnIndex = HOME.indexOf('Learn how multisig works');
   const dashboardIndex = HOME.indexOf('Open this multisig in the shared detail screen');
   assert.ok(learnIndex > -1 && dashboardIndex > -1 && learnIndex < dashboardIndex, 'Learn hors dashboard');
-  const dashboard = HOME.slice(dashboardIndex);
+  // Le dashboard = la zone Vault. Elle va du marqueur jusqu'au bloc des AUTRES
+  // onglets : Learn doit y rester ABSENT, et etre present dans Account.
+  const tabsIndex = HOME.indexOf('{/* Onglets Proposals / Activity / Account');
+  assert.ok(tabsIndex > dashboardIndex, 'la frontiere des onglets existe');
+  const dashboard = HOME.slice(dashboardIndex, tabsIndex);
   assert.ok(!dashboard.includes('Learn how multisig works'), 'Learn absent du dashboard charge');
+  assert.ok(
+    HOME.slice(tabsIndex).includes('onPress={onboarding.open}'),
+    'Learn reste accessible depuis l onglet Account',
+  );
   assert.ok(HOME.includes('onboarding.open'), 'la fonction interne d ouverture reste presente');
 });
 

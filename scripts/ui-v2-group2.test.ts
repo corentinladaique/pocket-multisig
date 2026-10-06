@@ -262,10 +262,14 @@ const changed = execSync(`git diff --name-only HEAD -- ${GROUP1_FILES.join(' ')}
   .map((line) => line.trim())
   .filter((line) => line.length > 0);
 
-check('30. theme.ts inchange', () => {
+check('30. theme.ts : mint aligne sur les apps natives Solana', () => {
   assert.ok(THEME.includes("background: '#08110F'"), 'tokens du theme intacts');
-  assert.ok(THEME.includes("mint: '#BDEBD3'"));
-  assert.ok(!changed.includes('src/ui/theme.ts'), 'aucune modification du theme');
+  // Décision explicite de Corentin : l'accent `mint` est échantillonné sur les
+  // icônes natives du Solana Phone (Seeker) — valeur relevée par pixel : #AFE6D1.
+  assert.ok(THEME.includes("mint: '#AFE6D1'"), 'mint natif Solana (#AFE6D1)');
+  // Le token `mint` est désormais réglable sur décision de marque. Le garde-fou
+  // anti-dérive vise donc les PRIMITIVES V2 (partagées, figées), pas le thème.
+  assert.ok(!changed.includes('src/ui/v2/primitives.tsx'), 'les primitives V2 restent figees');
 });
 
 check('31. primitives.tsx inchange', () => {

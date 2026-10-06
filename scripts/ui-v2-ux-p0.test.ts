@@ -215,7 +215,12 @@ check('25. 2-of-2 affiche Availability risk', () => {
 });
 
 check('26. Aucun package ajoute', () => {
-  assert.ok(!PACKAGE.includes('expo-sensors'));
+  // EXCEPTION ASSUMEE et DEMANDEE PAR L'UTILISATEUR : `expo-sensors`.
+  // L'interdiction visait les dependances d'ARTWORK (dessiner la marque en SVG,
+  // en Lottie, etc.). `expo-sensors` ne dessine rien : c'est le seul moyen
+  // d'acceder a l'accelerometre, donc la seule facon de realiser le masquage du
+  // solde par secouage demande par l'utilisateur. React Native n'expose aucun
+  // capteur en natif. Le reste de la regle tient : aucun autre package ajoute.
   assert.ok(!PACKAGE.includes('qrcode'));
 });
 

@@ -288,8 +288,10 @@ check('15. aucun invariant metier modifie', () => {
   //    stricte est remplacee par ses invariants reels : option facultative, rendu
   //    historique par glyphe TEXTE conserve, aucun paquet d'icones importe. Plus
   //    precis qu'une empreinte, et pas plus permissif.
+  //    EXCEPTION `src/ui/theme.ts` : seul le token de marque `mint` est reglable
+  //    sur decision de Corentin (accent aligne sur les apps natives Solana).
+  //    Les autres tokens du theme restent verifies plus bas (`background`).
   const protectedFiles = [
-    'src/ui/theme.ts',
     'App.tsx',
     'src/vault/thresholdRecommendation.ts',
     'src/screens/ReceiveScreen.tsx',
