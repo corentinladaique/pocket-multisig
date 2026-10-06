@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Multisig — shared vaults on Solana</title>
+    <meta name="description" content="Multisig: shared vaults on Solana. Everyone signs, nobody trusts alone. Devnet demo." />
+    <!-- Apercu social : c'est ce visuel qui apparait quand le lien est partage. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Multisig — shared vaults on Solana" />
+    <meta property="og:description" content="Everyone signs, nobody trusts alone. Devnet demo, Android, Mobile Wallet Adapter." />
+    <meta property="og:image" content="https://corentinladaique.github.io/pocket-multisig/og.png" />
+    <meta property="og:url" content="https://corentinladaique.github.io/pocket-multisig/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#08110f" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <style>
+      :root { --bg: #08110f; --mint: #aeeac9; --ink: #e8f0ee; --muted: #8fa39d; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(1200px 700px at 50% -10%, #0f1f1b 0%, var(--bg) 60%);
+        color: var(--ink);
+        font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        padding: 32px;
+      }
+      main { max-width: 620px; width: 100%; }
+      .mark { display: block; width: 220px; height: auto; margin: 0 auto 28px; }
+      h1 { font-size: 40px; line-height: 1.1; margin: 0 0 12px; letter-spacing: -0.02em; }
+      p.lead { color: var(--muted); font-size: 19px; margin: 0 0 28px; }
+      ul { margin: 0 0 32px; padding: 0; list-style: none; }
+      li { padding: 12px 0; border-top: 1px solid #1b2a26; }
+      li:last-child { border-bottom: 1px solid #1b2a26; }
+      strong { color: var(--mint); font-weight: 600; }
+      footer { color: var(--muted); font-size: 14px; display: flex; gap: 18px; flex-wrap: wrap; }
+      a { color: var(--mint); text-decoration: none; border-bottom: 1px solid #2c4a42; }
+      a:hover { border-bottom-color: var(--mint); }
+      .pill {
+        display: inline-block; margin-bottom: 24px; padding: 6px 14px;
+        border: 1px solid #2c4a42; border-radius: 999px;
+        color: var(--mint); font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img class="mark" src="mark.png" alt="Multisig — three cards in a fan" />
+      <span class="pill">Devnet demo</span>
+      <h1>Multisig</h1>
+      <p class="lead">Shared vaults on Solana.<br />Everyone signs, nobody trusts alone.</p>
+      <ul>
+        <li><strong>2-of-3 by default.</strong> A transfer needs more than one key.</li>
+        <li><strong>Keys never leave the wallet.</strong> Every step is signed on your device.</li>
+        <li><strong>Read-only by design.</strong> The app holds no secret and no backend.</li>
+      </ul>
+      <footer>
+        <a href="https://github.com/corentinladaique/pocket-multisig">Source on GitHub</a>
+        <a href="https://x.com/Corentin_Lad">@Corentin_Lad</a>
+      </footer>
+    </main>
+  </body>
+</html>
